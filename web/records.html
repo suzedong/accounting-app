@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 记账 - 记录列表</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 20px; border-radius: 12px; margin-bottom: 20px; }
+        .header h1 { font-size: 2em; margin-bottom: 10px; }
+        .nav-links { display: flex; gap: 15px; margin-top: 20px; }
+        .nav-links a { color: white; text-decoration: none; padding: 10px 20px; background: rgba(255,255,255,0.2); border-radius: 8px; }
+        .nav-links a:hover { background: rgba(255,255,255,0.3); }
+        .filters { background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; }
+        .filters select, .filters input { padding: 10px 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+        .filters button { padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        .filters button:hover { background: #5568d3; }
+        .records-table { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .records-table table { width: 100%; border-collapse: collapse; }
+        .records-table th { background: #f8f9fa; padding: 15px; text-align: left; font-weight: 600; color: #666; border-bottom: 2px solid #eee; }
+        .records-table td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; white-space: nowrap; }
+        .records-table td:nth-child(6) { white-space: normal; max-width: 300px; word-break: break-all; }
+        .records-table tr:hover { background: #f8f9fa; }
+        .type-expense { color: #FF6B6B; font-weight: 500; }
+        .type-income { color: #52C41A; font-weight: 500; }
+        .amount-expense { color: #FF6B6B; font-weight: bold; }
+        .amount-income { color: #52C41A; font-weight: bold; }
+        .actions { display: flex; gap: 10px; }
+        .actions button { padding: 5px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .btn-edit { background: #1890FF; color: white; }
+        .btn-delete { background: #FF4D4F; color: white; }
+        .loading { text-align: center; padding: 40px; color: #999; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+
+        .nav-links a.active {
+            background: rgba(255,255,255,0.3);
+            font-weight: bold;
+        }
+
+        /* 分页器样式 */
+        .pagination {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .pagination-info { color: #666; font-size: 14px; }
+        .pagination-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .pagination-controls button {
+            padding: 8px 15px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.3s;
+        }
+        .pagination-controls button:hover:not(:disabled) { background: #667eea; color: white; border-color: #667eea; }
+        .pagination-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .pagination-current { color: #666; font-size: 14px; font-weight: 500; }
+        .pagination-controls select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; background: white; cursor: pointer; }
+
+        /* 模态框样式 */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: none; align-items: center; justify-content: center; z-index: 1000;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal { background: white; border-radius: 12px; padding: 30px; max-width: 600px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }
+        .modal h2 { margin-bottom: 20px; color: #333; font-size: 1.5em; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; color: #555; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 15px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px; transition: border-color 0.3s; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #667eea; }
+        .form-group textarea { resize: vertical; min-height: 80px; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .modal-actions { display: flex; gap: 15px; justify-content: flex-end; margin-top: 25px; }
+        .modal-actions button { padding: 12px 25px; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.3s; }
+        .btn-cancel { background: #f0f0f0; color: #666; }
+        .btn-cancel:hover { background: #e0e0e0; }
+        .btn-save { background: #667eea; color: white; }
+        .btn-save:hover { background: #5568d3; }
+        .btn-delete-modal { background: #FF4D4F; color: white; }
+        .btn-delete-modal:hover { background: #e04343; }
+        .modal-error { background: #fff3cd; color: #856404; padding: 12px; border-radius: 8px; margin-bottom: 15px; display: none; }
+        .modal-success { background: #d4edda; color: #155724; padding: 12px; border-radius: 8px; margin-bottom: 15px; display: none; }
+
+        /* 移动端适配 */
+        @media (max-width: 768px) {
+            .container { padding: 10px; }
+            .header { padding: 20px 15px; border-radius: 8px; }
+            .header h1 { font-size: 1.5em; }
+            .nav-links { flex-wrap: wrap; gap: 8px; }
+            .nav-links a { padding: 8px 12px; font-size: 0.85em; }
+            .filters { flex-direction: column; padding: 15px; }
+            .filters select, .filters input { width: 100%; }
+            .filters button { width: 100%; padding: 12px; margin-top: 10px; }
+            .records-table { display: block; overflow-x: auto; white-space: nowrap; }
+            .records-table th, .records-table td { padding: 10px 8px; font-size: 0.85em; }
+            .pagination { flex-wrap: wrap; justify-content: center; }
+            .modal { width: 95%; padding: 20px; }
+            .form-row { grid-template-columns: 1fr; }
+            .modal-actions { flex-direction: column; }
+            .modal-actions button { width: 100%; }
+        }
+
+        @media (max-width: 480px) {
+            .header h1 { font-size: 1.3em; }
+            .nav-links a { padding: 6px 10px; font-size: 0.8em; }
+            .records-table th, .records-table td { padding: 8px 5px; font-size: 0.8em; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>记账记录</h1>
+            <p>查看和管理所有记账记录</p>
+            <div class="nav-links">
+                <a href="./index.html">首页</a>
+                <a href="./records.html" class="active">记录</a>
+                <a href="./budget.html">预算</a>
+                <a href="./stats.html">统计</a>
+                <a href="./trip_allowance.html">差旅补助</a>
+            </div>
+        </div>
+
+        <div class="filters">
+            <select id="filter-type">
+                <option value="">全部类型</option>
+                <option value="支出">支出</option>
+                <option value="收入">收入</option>
+            </select>
+            <select id="filter-category">
+                <option value="">全部分类</option>
+            </select>
+            <input type="date" id="filter-datetime-from" placeholder="开始日期">
+            <input type="date" id="filter-datetime-to" placeholder="结束日期">
+            <button onclick="loadRecords()">筛选</button>
+            <button onclick="resetFilters()" style="background:#999">重置</button>
+        </div>
+        <div id="error-message" style="background:#fff3cd;color:#856404;padding:15px;border-radius:8px;margin-bottom:20px;display:none;"></div>
+
+        <div class="records-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>类型</th>
+                        <th>分类</th>
+                        <th>金额</th>
+                        <th>账户</th>
+                        <th>备注</th>
+                        <th>支付方式</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="records-body">
+                    <tr><td colspan="8" class="loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="pagination-container"></div>
+    </div>
+
+    <div id="edit-modal-overlay" class="modal-overlay">
+        <div class="modal">
+            <h2>编辑记录</h2>
+
+            <div id="modal-error" class="modal-error"></div>
+            <div id="modal-success" class="modal-success"></div>
+
+            <form id="edit-form" onsubmit="saveRecord(event)">
+                <input type="hidden" id="edit-id">
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="edit-datetime">时间 *</label>
+                        <input type="datetime-local" id="edit-datetime" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-type">类型 *</label>
+                        <select id="edit-type" required onchange="updateCategories()">
+                            <option value="支出">支出</option>
+                            <option value="收入">收入</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="edit-category">分类 *</label>
+                        <select id="edit-category" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-amount">金额 *</label>
+                        <input type="number" id="edit-amount" step="0.01" min="0" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="edit-account">账户</label>
+                        <select id="edit-account">
+                            <option value="个人">个人</option>
+                            <option value="家庭">家庭</option>
+                            <option value="公司">公司</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-payment-method">支付方式</label>
+                        <select id="edit-payment-method">
+                            <option value="">请选择</option>
+                            <option value="微信支付">微信支付</option>
+                            <option value="支付宝">支付宝</option>
+                            <option value="银行卡">银行卡</option>
+                            <option value="现金">现金</option>
+                            <option value="信用卡">信用卡</option>
+                            <option value="花呗">花呗</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="edit-note">备注</label>
+                    <textarea id="edit-note" placeholder="输入备注信息..."></textarea>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn-delete-modal" onclick="deleteCurrentRecord()">删除</button>
+                    <button type="button" class="btn-cancel" onclick="closeEditModal()">取消</button>
+                    <button type="submit" class="btn-save">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="./static/config.js"></script>
+    <script src="./static/utils.js"></script>
+    <script src="./static/nocobase-api.js"></script>
+    <link rel="stylesheet" href="./static/chat-widget.css">
+    <script src="./static/chat-widget.js"></script>
+    <script>
+        ChatWidget.init();
+
+        let allCategories = [];
+        let currentRecordId = null;
+        let currentFilters = {};
+
+        setActiveNav('./records.html');
+
+        // 加载分类列表
+        async function loadCategories() {
+            try {
+                const result = await NocobaseAPI.getCategories();
+                allCategories = result.data || [];
+
+                const select = document.getElementById('filter-category');
+                allCategories.forEach(cat => {
+                    const option = document.createElement('option');
+                    option.value = cat.name;
+                    option.textContent = cat.name;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('加载分类失败:', error);
+            }
+        }
+
+        // 更新编辑模态框中的分类选项
+        function updateCategories() {
+            const type = document.getElementById('edit-type').value;
+            const categorySelect = document.getElementById('edit-category');
+            categorySelect.innerHTML = '';
+
+            const filteredCategories = allCategories.filter(cat => cat.type === type);
+            filteredCategories.forEach(cat => {
+                const option = document.createElement('option');
+                option.value = cat.name;
+                option.textContent = cat.name;
+                categorySelect.appendChild(option);
+            });
+        }
+
+        // 加载记录列表（支持分页）
+        async function loadRecords(page = 1, pageSize = 20) {
+            const type = document.getElementById('filter-type').value;
+            const category = document.getElementById('filter-category').value;
+            const datetimeFrom = document.getElementById('filter-datetime-from').value;
+            const datetimeTo = document.getElementById('filter-datetime-to').value;
+            const errorDiv = document.getElementById('error-message');
+
+            currentFilters = { type, category, datetimeFrom, datetimeTo };
+            errorDiv.style.display = 'none';
+            errorDiv.textContent = '';
+
+            try {
+                const filters = {};
+                if (type) filters.type = type;
+                if (category) filters.category = category;
+                if (datetimeFrom) filters['datetime'] = { $gte: datetimeFrom + ' 00:00:00' };
+                if (datetimeTo) { filters['datetime'] = filters['datetime'] || {}; filters['datetime']['$lte'] = datetimeTo + ' 23:59:59'; }
+
+                const result = await NocobaseAPI.getRecords({ page, pageSize, filters });
+                const records = result.data || [];
+                const total = result.meta?.count || records.length;
+
+                const tbody = document.getElementById('records-body');
+
+                if (records.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="empty">暂无记录</td></tr>';
+                    if (window.paginator) {
+                        window.paginator.total = 0;
+                        window.paginator.render();
+                    }
+                    return;
+                }
+
+                tbody.innerHTML = records.map(r => `
+                    <tr>
+                        <td>${formatDatetime(r.datetime || r.created_at)}</td>
+                        <td class="type-${r.type === '支出' ? 'expense' : 'income'}">${r.type}</td>
+                        <td>${r.category}</td>
+                        <td class="amount-${r.type === '支出' ? 'expense' : 'income'}">${formatMoney(r.amount)}</td>
+                        <td>${r.account || '-'}</td>
+                        <td>${r.note || '-'}</td>
+                        <td>${r.payment_method || '-'}</td>
+                        <td class="actions">
+                            <button class="btn-edit" onclick="editRecord(${r.id})">编辑</button>
+                            <button class="btn-delete" onclick="deleteRecord(${r.id})">删除</button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                if (window.paginator) {
+                    window.paginator.total = total;
+                    window.paginator.currentPage = page;
+                    window.paginator.pageSize = pageSize;
+                    window.paginator.render();
+                }
+            } catch (error) {
+                console.error('加载记录失败:', error);
+                errorDiv.textContent = '加载失败: ' + error.message;
+                errorDiv.style.display = 'block';
+
+                const tbody = document.getElementById('records-body');
+                tbody.innerHTML = '<tr><td colspan="8" class="empty">加载失败</td></tr>';
+            }
+        }
+
+        // 重置筛选
+        function resetFilters() {
+            document.getElementById('filter-type').value = '';
+            document.getElementById('filter-category').value = '';
+            document.getElementById('filter-datetime-from').value = '';
+            document.getElementById('filter-datetime-to').value = '';
+            document.getElementById('error-message').style.display = 'none';
+            if (window.paginator) {
+                window.paginator.currentPage = 1;
+                window.paginator.render();
+            }
+            loadRecords(1, 20);
+        }
+
+        // 打开编辑模态框
+        async function editRecord(id) {
+            currentRecordId = id;
+
+            try {
+                const result = await NocobaseAPI.getRecord(id);
+                const record = result.data;
+
+                document.getElementById('edit-id').value = record.id;
+                const datetime = record.datetime.replace(' ', 'T').substring(0, 16);
+                document.getElementById('edit-datetime').value = datetime;
+                document.getElementById('edit-type').value = record.type;
+                updateCategories();
+                document.getElementById('edit-category').value = record.category;
+                document.getElementById('edit-amount').value = record.amount;
+                document.getElementById('edit-account').value = record.account || '个人';
+                document.getElementById('edit-payment-method').value = record.payment_method || '';
+                document.getElementById('edit-note').value = record.note || '';
+
+                document.getElementById('edit-modal-overlay').classList.add('active');
+                document.getElementById('modal-error').style.display = 'none';
+                document.getElementById('modal-success').style.display = 'none';
+
+            } catch (error) {
+                console.error('加载记录失败:', error);
+                alert('加载记录失败: ' + error.message);
+            }
+        }
+
+        function closeEditModal() {
+            document.getElementById('edit-modal-overlay').classList.remove('active');
+            currentRecordId = null;
+        }
+
+        // 保存记录
+        async function saveRecord(event) {
+            event.preventDefault();
+
+            const errorDiv = document.getElementById('modal-error');
+            const successDiv = document.getElementById('modal-success');
+            errorDiv.style.display = 'none';
+            successDiv.style.display = 'none';
+
+            const data = {
+                datetime: document.getElementById('edit-datetime').value.replace('T', ' ') + ':00',
+                type: document.getElementById('edit-type').value,
+                category: document.getElementById('edit-category').value,
+                amount: parseFloat(document.getElementById('edit-amount').value),
+                account: document.getElementById('edit-account').value,
+                note: document.getElementById('edit-note').value,
+                payment_method: document.getElementById('edit-payment-method').value
+            };
+
+            try {
+                await NocobaseAPI.updateRecord(currentRecordId, data);
+
+                successDiv.textContent = '记录已更新';
+                successDiv.style.display = 'block';
+
+                setTimeout(() => {
+                    closeEditModal();
+                    loadRecords();
+                }, 1000);
+
+            } catch (error) {
+                errorDiv.textContent = '保存失败: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        async function deleteCurrentRecord() {
+            if (!confirm('确定要删除这条记录吗？')) return;
+            await deleteRecord(currentRecordId);
+        }
+
+        async function deleteRecord(id) {
+            if (!confirm('确定要删除这条记录吗？此操作不可恢复。')) return;
+
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.style.display = 'none';
+
+            try {
+                await NocobaseAPI.deleteRecord(id);
+                if (currentRecordId === id) {
+                    closeEditModal();
+                }
+                loadRecords();
+            } catch (error) {
+                errorDiv.textContent = '删除失败: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        document.getElementById('edit-modal-overlay').addEventListener('click', function(e) {
+            if (e.target === this) closeEditModal();
+        });
+
+        loadCategories();
+
+        window.paginator = new Paginator({
+            container: document.getElementById('pagination-container'),
+            total: 0,
+            pageSize: 20,
+            currentPage: 1,
+            onPageChange: (page, pageSize) => {
+                loadRecords(page, pageSize);
+            }
+        });
+
+        loadRecords();
+    </script>
+</body>
+</html>
