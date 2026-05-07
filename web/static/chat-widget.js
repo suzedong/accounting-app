@@ -104,6 +104,7 @@ const ChatWidget = (function () {
         toggle.addEventListener('click', () => {
             panel.classList.toggle('open');
             if (panel.classList.contains('open')) {
+                renderMessages();
                 input.focus();
                 scrollToBottom();
             }
@@ -163,6 +164,12 @@ const ChatWidget = (function () {
                 return renderMissingFields(msg.data, msg.id);
             } else if (msg.type === 'duplicate-warning') {
                 return renderDuplicateWarning(msg.data, msg.id);
+            } else if (msg.type === 'query-result') {
+                return renderSkillResult(msg.data, '查询结果');
+            } else if (msg.type === 'stats-result') {
+                return renderSkillResult(msg.data, '统计结果');
+            } else if (msg.type === 'budget-result') {
+                return renderSkillResult(msg.data, '预算状态');
             }
             return '';
         }).join('');
@@ -230,6 +237,19 @@ const ChatWidget = (function () {
         `;
     }
 
+    function renderSkillResult(data, title) {
+        const content = escapeHtml(data.content || '').replace(/\n/g, '<br>');
+        const details = data.details ? escapeHtml(data.details).replace(/\n/g, '<br>') : '';
+        return `
+            <div class="chat-msg ai">
+                <div class="chat-msg-bubble">
+                    <div class="chat-skill-title">${escapeHtml(title)}</div>
+                    <div class="chat-skill-content">${content}${details ? '<br><br><pre class="chat-skill-details">' + details + '</pre>' : ''}</div>
+                </div>
+            </div>
+        `;
+    }
+
     function addMessage(type, content, data = null) {
         const msg = { type, content, data, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now() };
         chatHistory.push(msg);
@@ -276,19 +296,28 @@ const ChatWidget = (function () {
         showTyping();
 
         try {
-            const parsed = await parseInput(text);
+            // 通过 AgentCore 进行意图识别和执行
+            const dispatchResult = await AgentCore.dispatch(text);
+            dispatchResult._inputText = text; // 保存原始文本用于学习
+            const result = await AgentCore.execute(dispatchResult);
             hideTyping();
 
-            if (!parsed.success) {
-                if (parsed.missing.length > 0) {
-                    addMessage('missing-fields', null, parsed.missing);
-                } else {
-                    addMessage('ai', '抱歉，我没理解你的意思。请告诉我金额和类型（收入或支出）。');
-                }
-            } else {
-                conversationState.pendingRecord = parsed.data;
+            if (result.type === 'auto-save') {
+                // 高置信度直接保存
+                await saveRecordToDB(result.fields, 'msg_auto_' + Date.now());
+            } else if (result.type === 'confirm') {
+                // 低置信度弹确认卡片
+                conversationState.pendingRecord = result.fields;
                 conversationState.waitingForConfirm = true;
-                addMessage('record-card', null, parsed.data);
+                addMessage('record-card', null, result.fields);
+            } else if (result.type === 'query-result') {
+                addMessage('query-result', result.content, result);
+            } else if (result.type === 'stats-result') {
+                addMessage('stats-result', result.content, result);
+            } else if (result.type === 'budget-result') {
+                addMessage('budget-result', result.content, result);
+            } else if (result.type === 'text') {
+                addMessage('ai', result.content);
             }
         } catch (error) {
             hideTyping();
@@ -304,6 +333,9 @@ const ChatWidget = (function () {
     async function confirmRecord(msgId) {
         const record = conversationState.pendingRecord;
         if (!record) return;
+
+        // 保存原始解析用于学习
+        conversationState._originalParse = { ...record };
 
         const dupResult = await checkDuplicate(record);
         if (dupResult.isDuplicate) {
@@ -337,8 +369,23 @@ const ChatWidget = (function () {
             const typeIcon = data.type === '支出' ? '' : '📥';
             addMessage('ai', `${typeIcon} 已记录：${formatMoney(data.amount)} - ${data.category}`);
 
+            // 触发学习记录（如果用户修改过字段）
+            if (conversationState.pendingRecord && conversationState._originalParse) {
+                AgentCore.learn(
+                    conversationState._inputText || '',
+                    conversationState._originalParse,
+                    {
+                        category: data.category !== conversationState._originalParse.category ? data.category : null,
+                        payment: data.payment_method !== conversationState._originalParse.payment ? data.payment_method : null,
+                        account: data.account !== conversationState._originalParse.account ? data.account : null
+                    }
+                );
+            }
+
             conversationState.pendingRecord = null;
             conversationState.waitingForConfirm = false;
+            conversationState._originalParse = null;
+            conversationState._inputText = null;
         } catch (error) {
             addMessage('ai', '记录失败：' + error.message);
         }

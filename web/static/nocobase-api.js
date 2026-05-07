@@ -164,6 +164,18 @@ const NocobaseAPI = (function () {
         return request('GET', `/${C.RECORDS}`, null, params);
     }
 
+    // ==================== Generic Collection Operations ====================
+
+    async function getCollection(collectionName, options = {}) {
+        const { pageSize = 20, sort = '-created_at', filters = {} } = options;
+        const params = { pageSize, sort, ...buildFilterParams(filters) };
+        return request('GET', `/${collectionName}`, null, params);
+    }
+
+    async function createRecordInCollection(collectionName, data) {
+        return request('POST', `/${collectionName}`, data);
+    }
+
     return {
         request,
         // Records
@@ -180,6 +192,9 @@ const NocobaseAPI = (function () {
         getBusinessTrips,
         // Stats
         aggregate,
-        getRecordsForStats
+        getRecordsForStats,
+        // Generic collection operations (for learning_data etc.)
+        getCollection,
+        createRecordInCollection
     };
 })();

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/szd/.claude/**)",
+      "Bash(python3 server.py 18080)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:18080/index.html)",
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"帮我查本月支出\"}')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"今天中午吃饭花了35元\"}')",
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"中移金科官网\\(虚拟\\)\\\\n-¥50.00\\\\n交易卡号\\\\n交易时间\\\\n入账时间\\\\n交易渠道\\\\n国家或地区\\\\n银行交易类型\\\\n信用卡4392********7502\\\\n2026-05-02 08:17:08\\\\n2026-05-03\\\\n中国移动\\\\n中国\\\\n消费\"}')",
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"预算还剩多少\"}')",
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"你好\"}')",
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"本月分类统计\"}')",
+      "Bash(curl -s http://localhost:18080/index.html)",
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"茜茜\\\\n-83.47\\\\n代付成功\\\\n支付时间\\\\n2026-05-04 10:03:58\\\\n付款方式\\\\n花呗\\\\narrow\\\\n商品说明\\\\n担保交易–GirlsCrush/gc全能五色遮瑕盘遮瑕膏提亮凹陷遮盖斑点黑眼圈泪沟\\\\n申请人\\\\n茜茜\\\\n150******65\\\\n家庭支出\"}')"
+    ]
+  }
+}

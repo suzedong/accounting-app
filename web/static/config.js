@@ -19,7 +19,8 @@ const NOCOBASE_CONFIG = {
         ACCOUNTS: 'accounts',
         PAYMENT_METHODS: 'payment_methods',
         BUDGETS: 'budgets',
-        BUSINESS_TRIP: 'business_trip'
+        BUSINESS_TRIP: 'business_trip',
+        LEARNING_DATA: 'learning_data'
     },
 
     // 阿里云百炼 AI 配置（用于智能记账解析）
