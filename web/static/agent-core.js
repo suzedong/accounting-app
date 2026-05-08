@@ -68,6 +68,8 @@ const AgentCore = (function () {
                 return executeStats(params || {});
             case 'budget':
                 return executeBudget();
+            case 'prompt':
+                return executePromptUpdate(params || {}, dispatchResult._inputText);
             case 'chitchat':
                 return { type: 'text', content: response || '你好！我是你的 AI 记账助手，请告诉我你的收支情况。' };
             default:
@@ -277,6 +279,36 @@ const AgentCore = (function () {
         }
     }
 
+    /**
+     * Prompt 修改 Skill
+     */
+    async function executePromptUpdate(params, inputText) {
+        try {
+            const promptName = params.promptName || 'dispatch';
+            const newContent = params.content;
+
+            if (!newContent) {
+                return { type: 'text', content: '请提供要更新的 prompt 内容。' };
+            }
+
+            const response = await fetch(`/api/ai/prompt/${promptName}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: newContent })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                return { type: 'text', content: 'Prompt 更新失败：' + (err.error || '未知错误') };
+            }
+
+            const result = await response.json();
+            return { type: 'text', content: `Prompt 已更新：${result.file}` };
+        } catch (error) {
+            return { type: 'text', content: 'Prompt 更新失败：' + error.message };
+        }
+    }
+
     // ==================== 辅助函数 ====================
 
     function buildDateRange(timeRange) {
@@ -333,6 +365,7 @@ const AgentCore = (function () {
     return {
         dispatch,
         execute,
-        learn
+        learn,
+        updatePrompt: executePromptUpdate
     };
 })();

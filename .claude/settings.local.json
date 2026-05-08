@@ -12,7 +12,14 @@
       "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"你好\"}')",
       "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"本月分类统计\"}')",
       "Bash(curl -s http://localhost:18080/index.html)",
-      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"茜茜\\\\n-83.47\\\\n代付成功\\\\n支付时间\\\\n2026-05-04 10:03:58\\\\n付款方式\\\\n花呗\\\\narrow\\\\n商品说明\\\\n担保交易–GirlsCrush/gc全能五色遮瑕盘遮瑕膏提亮凹陷遮盖斑点黑眼圈泪沟\\\\n申请人\\\\n茜茜\\\\n150******65\\\\n家庭支出\"}')"
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"茜茜\\\\n-83.47\\\\n代付成功\\\\n支付时间\\\\n2026-05-04 10:03:58\\\\n付款方式\\\\n花呗\\\\narrow\\\\n商品说明\\\\n担保交易–GirlsCrush/gc全能五色遮瑕盘遮瑕膏提亮凹陷遮盖斑点黑眼圈泪沟\\\\n申请人\\\\n茜茜\\\\n150******65\\\\n家庭支出\"}')",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\('server.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\('/Users/szd/Documents/Code/accounting-app/web/server.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(curl -s -X PUT http://localhost:18080/api/ai/prompt/dispatch -H 'Content-Type: application/json' -d '{\"content\": \"# test\\\\n\\\\n测试内容\"}')",
+      "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"今天吃饭花了30元\"}')",
+      "Bash(git rm *)",
+      "Bash(git restore *)",
+      "Bash(git add *)"
     ]
   }
 }

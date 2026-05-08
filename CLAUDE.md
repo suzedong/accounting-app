@@ -40,6 +40,19 @@ python3 scripts/migrate_nocobase_to_nocobase.py  # NocoBase 实例间迁移
 1. 静态文件服务（HTML/CSS/JS）
 2. NocoBase API 代理：`/api/*` 转发
 3. AI 代理：`/api/ai/parse`（纯记账解析）、`/api/ai/dispatch`（意图识别+Skill路由）
+4. Prompt 管理：`PUT /api/ai/prompt/:name`（Agent 自修改解析规则）
+
+### Prompt 文件
+
+SYSTEM_PROMPT 存储在 `web/prompts/` 目录下，每次请求动态读取，修改后无需重启服务：
+
+| 文件 | 用途 |
+|---|---|
+| `web/prompts/dispatch.md` | 意图识别 + 参数提取 + Skill 路由规则 |
+| `web/prompts/record.md` | 纯记账解析规则（降级方案） |
+| `web/prompts/README.md` | prompt 编写规范 |
+
+Agent 可通过自然语言修改 prompt："把 '瑞幸' 加到餐饮分类关键词里"
 
 ### 数据模型 (NocoBase Collections)
 
@@ -72,7 +85,7 @@ config.js → nocobase-api.js → utils.js → parse.js → ai-parser.js → lea
 
 **Agent 工作流程**：
 1. 用户输入 → `AgentCore.dispatch(text)` 调用 `/api/ai/dispatch`（LLM 意图识别 + 参数提取）
-2. 根据 intent 路由：`record` → 解析记账 / `query` → 查询记录 / `stats` → 统计分析 / `budget` → 预算 / `chitchat` → 闲聊
+2. 根据 intent 路由：`record` → 解析记账 / `query` → 查询记录 / `stats` → 统计分析 / `budget` → 预算 / `prompt` → 修改 prompt 文件 / `chitchat` → 闲聊
 3. 记账高置信度（≥0.85）自动保存，低置信度弹确认卡片
 4. 用户修改字段时触发 `AgentCore.learn()` 记录学习数据
 5. 下次 LLM 调用时学习数据注入 SYSTEM_PROMPT
