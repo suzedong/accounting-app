@@ -19,7 +19,20 @@
       "Bash(curl -s -X POST http://localhost:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"今天吃饭花了30元\"}')",
       "Bash(git rm *)",
       "Bash(git restore *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 all_proxy=socks5://127.0.0.1:7890)",
+      "Bash(python3 server.py 18082)",
+      "Bash(curl -s http://localhost:18082/)",
+      "Bash(curl -s -X POST http://localhost:18082/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"今天吃饭花了30元\"}')",
+      "Bash(curl -s -X POST http://localhost:18082/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"支付方式都有哪些\"}')",
+      "Bash(curl -s -X POST http://localhost:18082/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"帮我查本月支出\"}')",
+      "Bash(curl -s -X POST http://localhost:18082/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"预算还剩多少\"}')",
+      "Bash(curl -s -X POST http://localhost:18082/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"新增一个查询商家的Skill\"}')",
+      "Bash(open http://localhost:18082/index.html)",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e 'try { require\\(\"/Users/szd/Documents/Code/accounting-app/web/static/agent-core.js\"\\); console.log\\(\"OK\"\\); } catch\\(e\\) { console.log\\(\"ERROR:\", e.message\\); process.exit\\(1\\); }')"
     ]
   }
 }

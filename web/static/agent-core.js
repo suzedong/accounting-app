@@ -63,19 +63,24 @@ const AgentCore = (function () {
             case 'record':
                 return executeRecord(fields, confidence, dispatchResult._inputText);
             case 'query':
-                return executeQuery(params || {});
+                return executeQuery(params || {}, confidence);
             case 'stats':
-                return executeStats(params || {});
+                return executeStats(params || {}, confidence);
             case 'budget':
-                return executeBudget();
+                return executeBudget(confidence);
             case 'prompt':
                 return executePromptUpdate(params || {}, dispatchResult._inputText);
+            case 'data_query':
+                return executeDataQuery(params || {}, confidence);
+            case 'create-skill':
+                return executeCreateSkill(params || {}, dispatchResult._inputText);
             case 'chitchat':
-                return { type: 'text', content: response || '你好！我是你的 AI 记账助手，请告诉我你的收支情况。' };
+                return { type: 'text', content: response || '你好！我是你的 AI 记账助手，请告诉我你的收支情况。', _skill: { name: 'chitchat', displayName: '闲聊', confidence } };
             default:
                 return {
                     type: 'text',
-                    content: '抱歉，我没理解你的意思。你可以试试说："今天吃饭花了30元" 或 "帮我查本月支出"。'
+                    content: '抱歉，我没理解你的意思。你可以试试说："今天吃饭花了30元" 或 "帮我查本月支出"。',
+                    _skill: { name: 'unknown', displayName: '未知', confidence: 0 }
                 };
         }
     }
@@ -99,19 +104,19 @@ const AgentCore = (function () {
         const threshold = 0.85;
 
         if (confidence >= threshold) {
-            return { type: 'auto-save', fields, confidence };
+            return { type: 'auto-save', fields, confidence, _skill: { name: 'record', displayName: '记账', confidence } };
         }
 
-        return { type: 'confirm', fields, confidence };
+        return { type: 'confirm', fields, confidence, _skill: { name: 'record', displayName: '记账', confidence } };
     }
 
     /**
      * 查询 Skill
      */
-    async function executeQuery(params) {
+    async function executeQuery(params, confidence) {
         try {
             if (typeof NocobaseAPI === 'undefined') {
-                return { type: 'text', content: 'API 未加载，请稍后重试。' };
+                return { type: 'text', content: 'API 未加载，请稍后重试。', _skill: { name: 'query', displayName: '查询记录', confidence } };
             }
 
             const dateRange = buildDateRange(params.timeRange || 'month');
@@ -119,7 +124,7 @@ const AgentCore = (function () {
             const records = result.data || [];
 
             if (records.length === 0) {
-                return { type: 'text', content: `${dateRange.label}暂无记录。` };
+                return { type: 'text', content: `${dateRange.label}暂无记录。`, _skill: { name: 'query', displayName: '查询记录', confidence } };
             }
 
             // 按类型过滤
@@ -128,7 +133,7 @@ const AgentCore = (function () {
             else if (params.type === 'income') filtered = records.filter(r => r.type === '收入');
 
             if (filtered.length === 0) {
-                return { type: 'text', content: `${dateRange.label}暂无${params.type === 'expense' ? '支出' : '收入'}记录。` };
+                return { type: 'text', content: `${dateRange.label}暂无${params.type === 'expense' ? '支出' : '收入'}记录。`, _skill: { name: 'query', displayName: '查询记录', confidence } };
             }
 
             const totals = calcTotals ? calcTotals(filtered) : { incomeTotal: 0, expenseTotal: 0 };
@@ -145,20 +150,21 @@ const AgentCore = (function () {
                 type: 'query-result',
                 content: summary,
                 details: recent,
-                total: filtered.length
+                total: filtered.length,
+                _skill: { name: 'query', displayName: '查询记录', confidence }
             };
         } catch (error) {
-            return { type: 'text', content: '查询失败：' + error.message };
+            return { type: 'text', content: '查询失败：' + error.message, _skill: { name: 'query', displayName: '查询记录', confidence } };
         }
     }
 
     /**
      * 统计 Skill
      */
-    async function executeStats(params) {
+    async function executeStats(params, confidence) {
         try {
             if (typeof NocobaseAPI === 'undefined') {
-                return { type: 'text', content: 'API 未加载，请稍后重试。' };
+                return { type: 'text', content: 'API 未加载，请稍后重试。', _skill: { name: 'stats', displayName: '统计分析', confidence } };
             }
 
             const dateRange = buildDateRange(params.timeRange || 'month');
@@ -166,7 +172,7 @@ const AgentCore = (function () {
             const records = result.data || [];
 
             if (records.length === 0) {
-                return { type: 'text', content: `${dateRange.label}暂无数据，无法统计。` };
+                return { type: 'text', content: `${dateRange.label}暂无数据，无法统计。`, _skill: { name: 'stats', displayName: '统计分析', confidence } };
             }
 
             const type = params.type === 'income' ? '收入' : '支出';
@@ -183,7 +189,8 @@ const AgentCore = (function () {
                     return {
                         type: 'stats-result',
                         title: `${dateRange.label}${type}分类统计`,
-                        content: lines.join('\n')
+                        content: lines.join('\n'),
+                        _skill: { name: 'stats', displayName: '统计分析', confidence }
                     };
                 }
                 case 'account': {
@@ -194,7 +201,8 @@ const AgentCore = (function () {
                     return {
                         type: 'stats-result',
                         title: `${dateRange.label}账户统计`,
-                        content: lines.join('\n')
+                        content: lines.join('\n'),
+                        _skill: { name: 'stats', displayName: '统计分析', confidence }
                     };
                 }
                 case 'comparison': {
@@ -203,7 +211,8 @@ const AgentCore = (function () {
                         return {
                             type: 'stats-result',
                             title: '本月 vs 上月对比',
-                            content: `本月: 收入${formatMoney(comp.current.income)} 支出${formatMoney(comp.current.expense)}\n上月: 收入${formatMoney(comp.previous.income)} 支出${formatMoney(comp.previous.expense)}`
+                            content: `本月: 收入${formatMoney(comp.current.income)} 支出${formatMoney(comp.current.expense)}\n上月: 收入${formatMoney(comp.previous.income)} 支出${formatMoney(comp.previous.expense)}`,
+                            _skill: { name: 'stats', displayName: '统计分析', confidence }
                         };
                     }
                     break;
@@ -217,7 +226,8 @@ const AgentCore = (function () {
                         return {
                             type: 'stats-result',
                             title: '月度收支趋势',
-                            content: lines.join('\n')
+                            content: lines.join('\n'),
+                            _skill: { name: 'stats', displayName: '统计分析', confidence }
                         };
                     }
                     break;
@@ -233,22 +243,23 @@ const AgentCore = (function () {
                     return {
                         type: 'stats-result',
                         title: `${dateRange.label}${type}统计`,
-                        content: lines.join('\n')
+                        content: lines.join('\n'),
+                        _skill: { name: 'stats', displayName: '统计分析', confidence }
                     };
                 }
             }
         } catch (error) {
-            return { type: 'text', content: '统计失败：' + error.message };
+            return { type: 'text', content: '统计失败：' + error.message, _skill: { name: 'stats', displayName: '统计分析', confidence } };
         }
     }
 
     /**
      * 预算 Skill
      */
-    async function executeBudget() {
+    async function executeBudget(confidence) {
         try {
             if (typeof NocobaseAPI === 'undefined' || typeof analyzeBudget === 'undefined') {
-                return { type: 'text', content: 'API 未加载，请稍后重试。' };
+                return { type: 'text', content: 'API 未加载，请稍后重试。', _skill: { name: 'budget', displayName: '预算管理', confidence } };
             }
 
             const budgetMonthly = NOCOBASE_CONFIG ? NOCOBASE_CONFIG.BUDGET_MONTHLY : 3500;
@@ -272,11 +283,135 @@ const AgentCore = (function () {
                 type: 'budget-result',
                 title: '预算状态',
                 content: lines.join('\n'),
-                data: analysis
+                data: analysis,
+                _skill: { name: 'budget', displayName: '预算管理', confidence }
             };
         } catch (error) {
-            return { type: 'text', content: '预算查询失败：' + error.message };
+            return { type: 'text', content: '预算查询失败：' + error.message, _skill: { name: 'budget', displayName: '预算管理', confidence } };
         }
+    }
+
+    /**
+     * 通用 Collection 查询 Skill
+     */
+    async function executeDataQuery(params, confidence) {
+        try {
+            if (typeof NocobaseAPI === 'undefined') {
+                return { type: 'text', content: 'API 未加载，请稍后重试。', _skill: { name: 'data_query', displayName: '数据查询', confidence } };
+            }
+
+            const collection = params.collection;
+            if (!collection) {
+                return { type: 'text', content: '无法识别要查询的数据。', _skill: { name: 'data_query', displayName: '数据查询', confidence } };
+            }
+
+            // 检查是否已注册为该 Collection 的专用动态 Skill
+            const skillName = `list_${collection}`;
+            const dynamicSkill = getDynamicSkill(skillName);
+            const displayName = dynamicSkill ? dynamicSkill.displayName : '数据查询';
+
+            const options = params.query || { pageSize: 20, sort: '-created_at' };
+            const result = await NocobaseAPI.getCollection(collection, options);
+            const items = result.data || [];
+
+            if (items.length === 0) {
+                return { type: 'text', content: `${params.label || collection}暂无数据。`, _skill: { name: skillName, displayName, confidence } };
+            }
+
+            const fields = params.fields || Object.keys(items[0] || {});
+            const displayFields = fields.filter(f => !f.startsWith('created') && !f.startsWith('updated') && f !== 'id');
+
+            // 格式化输出
+            const lines = items.slice(0, 15).map(item => {
+                return displayFields.map(f => {
+                    const val = item[f];
+                    if (val !== null && val !== undefined && val !== '') {
+                        return `${f}: ${val}`;
+                    }
+                    return null;
+                }).filter(Boolean).join(' | ');
+            });
+
+            const summary = `共 ${items.length} 条${params.label || collection}：`;
+
+            return {
+                type: 'collection-list',
+                content: summary,
+                details: lines.join('\n'),
+                total: items.length,
+                _skill: { name: skillName, displayName, confidence }
+            };
+        } catch (error) {
+            return { type: 'text', content: '数据查询失败：' + error.message, _skill: { name: 'data_query', displayName: '数据查询', confidence } };
+        }
+    }
+
+    /**
+     * 创建动态 Skill
+     */
+    async function executeCreateSkill(params, inputText) {
+        try {
+            const skillDef = params.skill || {};
+            const name = skillDef.name || `skill_${Date.now()}`;
+
+            if (!skillDef.collection) {
+                return { type: 'text', content: '创建 Skill 失败：缺少 collection 字段。' };
+            }
+
+            // 注册到 localStorage
+            const key = 'accounting_dynamic_skills';
+            let skills = {};
+            try {
+                const saved = localStorage.getItem(key);
+                if (saved) skills = JSON.parse(saved);
+            } catch (e) {}
+
+            skills[name] = {
+                name: name,
+                displayName: skillDef.displayName || name,
+                description: skillDef.description || '',
+                collection: skillDef.collection,
+                query: skillDef.query || { pageSize: 20 },
+                fields: skillDef.fields || [],
+                displayFormat: skillDef.displayFormat || '列表',
+                triggerKeywords: skillDef.triggerKeywords || [],
+                createdAt: new Date().toISOString()
+            };
+
+            localStorage.setItem(key, JSON.stringify(skills));
+
+            return {
+                type: 'text',
+                content: `✅ 已创建 Skill「${skills[name].displayName}」，现在可以查询「${skillDef.collection}」了。`
+            };
+        } catch (error) {
+            return { type: 'text', content: 'Skill 创建失败：' + error.message };
+        }
+    }
+
+    /**
+     * 获取已注册的动态 Skill
+     */
+    function getDynamicSkill(name) {
+        try {
+            const saved = localStorage.getItem('accounting_dynamic_skills');
+            if (saved) {
+                const skills = JSON.parse(saved);
+                return skills[name] || null;
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    /**
+     * 获取所有动态 Skill 列表（用于注入 dispatch prompt）
+     */
+    function getDynamicSkillsList() {
+        try {
+            const saved = localStorage.getItem('accounting_dynamic_skills');
+            if (saved) return JSON.parse(saved);
+        } catch (e) {}
+        return {};
     }
 
     /**
@@ -366,6 +501,8 @@ const AgentCore = (function () {
         dispatch,
         execute,
         learn,
-        updatePrompt: executePromptUpdate
+        updatePrompt: executePromptUpdate,
+        getDynamicSkillsList,
+        getDynamicSkill
     };
 })();

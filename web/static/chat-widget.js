@@ -157,19 +157,29 @@ const ChatWidget = (function () {
             if (msg.type === 'user') {
                 return `<div class="chat-msg user"><div class="chat-msg-bubble">${escapeHtml(msg.content)}</div></div>`;
             } else if (msg.type === 'ai') {
-                return `<div class="chat-msg ai"><div class="chat-msg-bubble">${msg.content}</div></div>`;
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}<div class="chat-msg-bubble">${msg.content}</div></div>`;
             } else if (msg.type === 'record-card') {
-                return renderRecordCard(msg.data, msg.id);
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderRecordCard(msg.data, msg.id)}</div>`;
             } else if (msg.type === 'missing-fields') {
-                return renderMissingFields(msg.data, msg.id);
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderMissingFields(msg.data, msg.id)}</div>`;
             } else if (msg.type === 'duplicate-warning') {
-                return renderDuplicateWarning(msg.data, msg.id);
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderDuplicateWarning(msg.data, msg.id)}</div>`;
             } else if (msg.type === 'query-result') {
-                return renderSkillResult(msg.data, '查询结果');
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderSkillResult(msg.data, '查询结果')}</div>`;
             } else if (msg.type === 'stats-result') {
-                return renderSkillResult(msg.data, '统计结果');
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderSkillResult(msg.data, msg.data?.title || '统计结果')}</div>`;
             } else if (msg.type === 'budget-result') {
-                return renderSkillResult(msg.data, '预算状态');
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderSkillResult(msg.data, msg.data?.title || '预算状态')}</div>`;
+            } else if (msg.type === 'collection-list') {
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderCollectionList(msg.data || msg)}</div>`;
             }
             return '';
         }).join('');
@@ -241,17 +251,33 @@ const ChatWidget = (function () {
         const content = escapeHtml(data.content || '').replace(/\n/g, '<br>');
         const details = data.details ? escapeHtml(data.details).replace(/\n/g, '<br>') : '';
         return `
-            <div class="chat-msg ai">
-                <div class="chat-msg-bubble">
-                    <div class="chat-skill-title">${escapeHtml(title)}</div>
-                    <div class="chat-skill-content">${content}${details ? '<br><br><pre class="chat-skill-details">' + details + '</pre>' : ''}</div>
-                </div>
+            <div class="chat-msg-bubble">
+                <div class="chat-skill-title">${escapeHtml(title)}</div>
+                <div class="chat-skill-content">${content}${details ? '<br><br><pre class="chat-skill-details">' + details + '</pre>' : ''}</div>
             </div>
         `;
     }
 
-    function addMessage(type, content, data = null) {
-        const msg = { type, content, data, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now() };
+    function renderSkillTag(skillMeta) {
+        if (!skillMeta || !skillMeta.name) return '';
+        const name = skillMeta.displayName || skillMeta.name;
+        const confidence = skillMeta.confidence;
+        const confidenceText = confidence && confidence < 1 ? ` (${confidence.toFixed(2)})` : '';
+        return `<span class="chat-skill-tag">⚙️ ${escapeHtml(name)}${confidenceText}</span>`;
+    }
+
+    function renderCollectionList(data) {
+        const content = escapeHtml(data.content || '');
+        const details = data.details ? escapeHtml(data.details).replace(/\n/g, '<br>') : '';
+        return `
+            <div class="chat-msg-bubble">
+                <div class="chat-skill-content">${content}${details ? '<br><br><div class="chat-list-items">' + details + '</div>' : ''}</div>
+            </div>
+        `;
+    }
+
+    function addMessage(type, content, data = null, skillMeta = null) {
+        const msg = { type, content, data, skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now() };
         chatHistory.push(msg);
         saveHistory();
         renderMessages();
@@ -304,20 +330,23 @@ const ChatWidget = (function () {
 
             if (result.type === 'auto-save') {
                 // 高置信度直接保存
-                await saveRecordToDB(result.fields, 'msg_auto_' + Date.now());
+                await saveRecordToDB(result.fields, 'msg_auto_' + Date.now(), result._skill);
             } else if (result.type === 'confirm') {
                 // 低置信度弹确认卡片
                 conversationState.pendingRecord = result.fields;
                 conversationState.waitingForConfirm = true;
-                addMessage('record-card', null, result.fields);
+                conversationState._recordSkill = result._skill; // 保存 skill 元数据用于确认时传递
+                addMessage('record-card', null, result.fields, result._skill);
             } else if (result.type === 'query-result') {
-                addMessage('query-result', result.content, result);
+                addMessage('query-result', result.content, result, result._skill);
             } else if (result.type === 'stats-result') {
-                addMessage('stats-result', result.content, result);
+                addMessage('stats-result', result.content, result, result._skill);
             } else if (result.type === 'budget-result') {
-                addMessage('budget-result', result.content, result);
+                addMessage('budget-result', result.content, result, result._skill);
+            } else if (result.type === 'collection-list') {
+                addMessage('collection-list', result.content, result, result._skill);
             } else if (result.type === 'text') {
-                addMessage('ai', result.content);
+                addMessage('ai', result.content, null, result._skill);
             }
         } catch (error) {
             hideTyping();
@@ -343,16 +372,16 @@ const ChatWidget = (function () {
             return;
         }
 
-        await saveRecordToDB(record, msgId);
+        await saveRecordToDB(record, msgId, conversationState._recordSkill);
     }
 
     async function forceSaveRecord(msgId) {
         const record = conversationState.pendingRecord;
         if (!record) return;
-        await saveRecordToDB(record, msgId);
+        await saveRecordToDB(record, msgId, conversationState._recordSkill);
     }
 
-    async function saveRecordToDB(record, msgId) {
+    async function saveRecordToDB(record, msgId, skillMeta = null) {
         try {
             const data = {
                 datetime: record.datetime,
@@ -367,7 +396,7 @@ const ChatWidget = (function () {
             await NocobaseAPI.createRecord(data);
 
             const typeIcon = data.type === '支出' ? '' : '📥';
-            addMessage('ai', `${typeIcon} 已记录：${formatMoney(data.amount)} - ${data.category}`);
+            addMessage('ai', `${typeIcon} 已记录：${formatMoney(data.amount)} - ${data.category}`, null, skillMeta);
 
             // 触发学习记录（如果用户修改过字段）
             if (conversationState.pendingRecord && conversationState._originalParse) {
@@ -386,6 +415,7 @@ const ChatWidget = (function () {
             conversationState.waitingForConfirm = false;
             conversationState._originalParse = null;
             conversationState._inputText = null;
+            conversationState._recordSkill = null;
         } catch (error) {
             addMessage('ai', '记录失败：' + error.message);
         }

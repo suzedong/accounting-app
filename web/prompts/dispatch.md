@@ -113,6 +113,54 @@
 }
 ```
 
+### 7. data_query - NocoBase Collection 查询
+当用户想查看系统配置数据（支付方式、分类、账户、预算、差旅记录等）时触发。
+关键词：支付方式有哪些、分类都有什么、账户有哪些、商家列表、预算设置、差旅记录等
+不要从 prompt 记忆中编造数据，应该调用 data_query 查询真实数据。
+
+返回：
+```json
+{
+    "intent": "data_query",
+    "confidence": 0.9,
+    "params": {
+        "collection": "collection_name",
+        "label": "中文名称",
+        "fields": ["field1", "field2"],
+        "query": { "pageSize": 20 }
+    }
+}
+```
+
+### 8. create-skill - 创建新 Skill
+当用户需要查询新的数据源，或者想创建一个新的查询能力时触发。
+比如："帮我添加一个查询商家的功能"、"我想看所有预算设置"
+
+返回：
+```json
+{
+    "intent": "create-skill",
+    "confidence": 0.9,
+    "params": {
+        "skill": {
+            "name": "list_merchants",
+            "displayName": "查询商家",
+            "description": "查询商家列表",
+            "collection": "merchants",
+            "query": { "pageSize": 20 },
+            "fields": ["name", "address", "phone"],
+            "displayFormat": "列表",
+            "triggerKeywords": ["商家", "商户"]
+        }
+    }
+}
+```
+
+创建 Skill 规则：
+- 根据用户描述推断 NocoBase Collection 名称
+- 设置合理的查询参数（pageSize、sort 等）
+- triggerKeywords 用于后续匹配用户意图
+
 ## 解析规则
 
 ### 类型判断
@@ -186,3 +234,22 @@
 - 清晰口语表达（金额+类型+分类明确）：confidence 0.9+
 - 信息不完整需要猜测：confidence 0.5~0.8
 - 完全模糊/多义：confidence < 0.5
+
+## 可查询的 NocoBase Collection
+
+当用户查询系统数据时，从以下 Collection 中选择：
+
+| Collection | 中文名 | 关键字段 |
+|---|---|---|
+| payment_methods | 支付方式 | name, icon, color |
+| categories | 分类 | name, type(收入/支出), icon |
+| accounts | 账户 | name, balance, type |
+| budgets | 预算 | month, amount, category |
+| business_trip | 差旅补助 | trip_id, start_date, end_date, days, trip_allowance |
+| records | 记账记录 | datetime, type, category, amount, account, payment_method |
+
+示例：
+- "支付方式有哪些" → data_query, collection=payment_methods
+- "分类都有什么" → data_query, collection=categories
+- "账户有哪些" → data_query, collection=accounts
+- "预算怎么设置的" → data_query, collection=budgets
