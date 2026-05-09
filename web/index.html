@@ -8,6 +8,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; }
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
         .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 20px; border-radius: 12px; margin-bottom: 20px; }
         .header h1 { font-size: 2em; margin-bottom: 10px; }
@@ -72,6 +73,7 @@
             .chart-container { padding: 12px; }
         }
     </style>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 </head>
 <body>
     <div class="container">
@@ -93,6 +95,7 @@
         <div class="quick-add">
             <h2>快速添加</h2>
             <div class="quick-add-form">
+                <label for="quick-input" class="sr-only">记账信息</label>
                 <input type="text" id="quick-input" placeholder="例如：今天中午吃饭花了 35 元，微信支付" onkeydown="if(event.key==='Enter')quickAdd()">
                 <button onclick="quickAdd()">添加</button>
             </div>
@@ -158,7 +161,7 @@
     <link rel="stylesheet" href="./static/chat-widget.css">
     <script src="./static/learning-engine.js?v=1778147962"></script>
     <script src="./static/agent-core.js?v=1778147962"></script>
-    <script src="./static/chat-widget.js?v=1778147962"></script>
+    <script src="./static/chat-widget.js?v=1778226383"></script>
     <script>
         // 初始化悬浮对话组件
         LearningEngine.init();

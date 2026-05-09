@@ -167,8 +167,9 @@ const NocobaseAPI = (function () {
     // ==================== Generic Collection Operations ====================
 
     async function getCollection(collectionName, options = {}) {
-        const { pageSize = 20, sort = '-created_at', filters = {} } = options;
-        const params = { pageSize, sort, ...buildFilterParams(filters) };
+        const { pageSize = 20, sort = '-id', filters = {} } = options;
+        const params = { pageSize, ...buildFilterParams(filters) };
+        if (sort) params.sort = sort;
         return request('GET', `/${collectionName}`, null, params);
     }
 

@@ -215,6 +215,8 @@
 
 #chat-widget .chat-msg.ai {
     align-self: flex-start;
+    flex-direction: column;
+    align-items: flex-start;
 }
 
 #chat-widget .chat-msg-bubble {
@@ -451,6 +453,91 @@
 
 #chat-widget .chat-skill-tag:hover {
     opacity: 1;
+}
+
+/* 思考过程展示 */
+#chat-widget .chat-thinking-box {
+    padding: 10px 14px;
+    background: #f0f2ff;
+    border-radius: 12px;
+    margin: 0;
+    border: 1px solid #e0e4ff;
+}
+
+#chat-widget .chat-thinking-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 0.8em;
+    color: #888;
+    animation: chatFadeIn 0.3s ease;
+}
+
+#chat-widget .chat-thinking-step.active {
+    color: #667eea;
+    font-weight: 500;
+}
+
+#chat-widget .chat-thinking-step .step-icon {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9em;
+    flex-shrink: 0;
+}
+
+#chat-widget .chat-thinking-step .step-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid #667eea;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: chatSpin 0.8s linear infinite;
+    margin-left: 6px;
+}
+
+@keyframes chatSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* 思考过程展示（展开中） */
+#chat-widget .chat-thinking-active {
+    animation: chatFadeIn 0.3s ease;
+}
+
+/* 思考过程折叠 */
+#chat-widget .chat-thinking-collapsed {
+    animation: chatFadeIn 0.3s ease;
+}
+
+#chat-widget .chat-thinking-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: rgba(102, 126, 234, 0.08);
+    border-radius: 12px;
+    font-size: 0.78em;
+    color: #667eea;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+#chat-widget .chat-thinking-toggle:hover {
+    background: rgba(102, 126, 234, 0.15);
+}
+
+#chat-widget .chat-thinking-toggle .toggle-arrow {
+    font-size: 0.8em;
+    transition: transform 0.2s;
+}
+
+#chat-widget .chat-thinking-collapsed:hover .toggle-arrow {
+    transform: rotate(90deg);
 }
 
 /* 列表展示 */

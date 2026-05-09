@@ -90,7 +90,7 @@ class Paginator {
                     <button onclick="paginator.lastPage()" ${this.currentPage === totalPages ? 'disabled' : ''}>
                         末页 ⏭️
                     </button>
-                    <select onchange="paginator.changePageSize(this.value)" style="margin-left: 15px;">
+                    <select name="page-size" onchange="paginator.changePageSize(this.value)" style="margin-left: 15px;">
                         <option value="20" ${this.pageSize === 20 ? 'selected' : ''}>20 条/页</option>
                         <option value="50" ${this.pageSize === 50 ? 'selected' : ''}>50 条/页</option>
                         <option value="100" ${this.pageSize === 100 ? 'selected' : ''}>100 条/页</option>

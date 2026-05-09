@@ -32,7 +32,8 @@
       "Bash(curl -s -X POST http://localhost:18082/api/ai/dispatch -H 'Content-Type: application/json' -d '{\"text\": \"新增一个查询商家的Skill\"}')",
       "Bash(open http://localhost:18082/index.html)",
       "Bash(python3 -c ' *)",
-      "Bash(node -e 'try { require\\(\"/Users/szd/Documents/Code/accounting-app/web/static/agent-core.js\"\\); console.log\\(\"OK\"\\); } catch\\(e\\) { console.log\\(\"ERROR:\", e.message\\); process.exit\\(1\\); }')"
+      "Bash(node -e 'try { require\\(\"/Users/szd/Documents/Code/accounting-app/web/static/agent-core.js\"\\); console.log\\(\"OK\"\\); } catch\\(e\\) { console.log\\(\"ERROR:\", e.message\\); process.exit\\(1\\); }')",
+      "Bash(node -e 'try { require\\(\"/Users/szd/Documents/Code/accounting-app/web/static/chat-widget.js\"\\); console.log\\(\"OK\"\\); } catch\\(e\\) { console.log\\(\"ERROR:\", e.message\\); process.exit\\(1\\); }')"
     ]
   }
 }
