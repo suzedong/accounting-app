@@ -33,7 +33,21 @@
       "Bash(open http://localhost:18082/index.html)",
       "Bash(python3 -c ' *)",
       "Bash(node -e 'try { require\\(\"/Users/szd/Documents/Code/accounting-app/web/static/agent-core.js\"\\); console.log\\(\"OK\"\\); } catch\\(e\\) { console.log\\(\"ERROR:\", e.message\\); process.exit\\(1\\); }')",
-      "Bash(node -e 'try { require\\(\"/Users/szd/Documents/Code/accounting-app/web/static/chat-widget.js\"\\); console.log\\(\"OK\"\\); } catch\\(e\\) { console.log\\(\"ERROR:\", e.message\\); process.exit\\(1\\); }')"
+      "Bash(node -e 'try { require\\(\"/Users/szd/Documents/Code/accounting-app/web/static/chat-widget.js\"\\); console.log\\(\"OK\"\\); } catch\\(e\\) { console.log\\(\"ERROR:\", e.message\\); process.exit\\(1\\); }')",
+      "Bash(node -c static/chat-widget.js)",
+      "Bash(node -c static/agent-core.js)",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\('server.py', doraise=True\\)\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:18080/static/chat-widget.css)",
+      "Bash(npm install *)",
+      "Bash(npx vite *)",
+      "Bash(curl -s http://localhost:5175/index.html)",
+      "Bash(curl -s http://localhost:5175/static/globals.js)",
+      "Bash(curl -s http://localhost:5175/static/chat-widget.js)",
+      "Bash(curl -s http://localhost:5173/static/globals.js)",
+      "Bash(rm d:/Code/accounting-app/web/static/entry-index.js)"
+    ],
+    "additionalDirectories": [
+      "d:\\Code\\accounting-app\\web\\static"
     ]
   }
 }

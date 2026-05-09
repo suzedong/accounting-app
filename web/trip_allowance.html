@@ -116,10 +116,13 @@
         </div>
     </div>
 
-    <script src="./static/config.js"></script>
-    <script src="./static/utils.js"></script>
-    <script src="./static/nocobase-api.js"></script>
+    <script type="module" src="./static/globals.js"></script>
     <script>
+        function whenGlobalsReady(fn) {
+            if (window.__globalsLoaded) { fn(); return; }
+            const check = setInterval(() => { if (window.__globalsLoaded) { clearInterval(check); fn(); } }, 10);
+        }
+
         async function loadStats() {
             try {
                 const result = await NocobaseAPI.getBusinessTrips();
@@ -222,8 +225,7 @@
             return '';
         }
 
-        loadStats();
-        loadTrips();
+        whenGlobalsReady(() => { loadStats(); loadTrips(); });
     </script>
 </body>
 </html>

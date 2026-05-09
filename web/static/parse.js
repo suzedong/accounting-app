@@ -3,6 +3,9 @@
  * 从 Python 脚本 parse_input.py 移植到 JavaScript
  */
 
+import { formatDate } from './utils.js';
+import { parse as aiParse } from './ai-parser.js';
+
 const CATEGORY_KEYWORDS = {
     '餐饮': ['吃饭', '餐', '饭', '外卖', '咖啡', '奶茶', '饮料', '早餐', '午餐', '晚餐', '食堂', '餐厅'],
     '交通出行': ['打车', '地铁', '公交', '火车', '飞机', '加油', '停车', '车费', '交通', '乘车', '网约车'],
@@ -165,13 +168,6 @@ function extractDatetime(text) {
     return { datetime: formatCurrentTime(now), remaining: text };
 }
 
-function formatDate(date, timeStr) {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d} ${timeStr}`;
-}
-
 function formatCurrentTime(date) {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -293,7 +289,7 @@ function parseInputRule(text) {
     return result;
 }
 
-async function parseInput(text) {
+export async function parseInput(text) {
     // 1. 先用规则解析
     const ruleResult = parseInputRule(text);
     console.log('[规则解析] 置信度:', ruleResult.confidence.toFixed(2), '分类:', ruleResult.data.category || '缺失', '缺失:', ruleResult.missing);
@@ -305,28 +301,24 @@ async function parseInput(text) {
     }
 
     // 3. 否则使用 AI 兜底
-    if (typeof AIParser !== 'undefined') {
+    try {
         console.log('[解析] 规则解析置信度不足，调用 AI...');
-        try {
-            const aiResult = await AIParser.parse(text);
-            console.log('[AI 解析] 置信度:', aiResult.confidence.toFixed(2), '分类:', aiResult.data.category || '缺失');
-            // AI 结果更好则返回 AI 结果
-            if (aiResult.success && aiResult.confidence > ruleResult.confidence) {
-                console.log('[解析] 使用 AI 解析结果');
-                return aiResult;
-            }
-            console.log('[解析] AI 结果不如规则解析，使用规则结果');
-        } catch (e) {
-            console.warn('[解析] AI 解析失败，使用规则解析结果:', e);
+        const aiResult = await aiParse(text);
+        console.log('[AI 解析] 置信度:', aiResult.confidence.toFixed(2), '分类:', aiResult.data.category || '缺失');
+        // AI 结果更好则返回 AI 结果
+        if (aiResult.success && aiResult.confidence > ruleResult.confidence) {
+            console.log('[解析] 使用 AI 解析结果');
+            return aiResult;
         }
-    } else {
-        console.warn('[解析] AIParser 未加载');
+        console.log('[解析] AI 结果不如规则解析，使用规则结果');
+    } catch (e) {
+        console.warn('[解析] AI 解析失败，使用规则解析结果:', e);
     }
 
     return ruleResult;
 }
 
-function formatRecord(data) {
+export function formatRecord(data) {
     const lines = [
         `📅 时间：${data.datetime || 'N/A'}`,
         `📝 类型：${data.type || 'N/A'}`,

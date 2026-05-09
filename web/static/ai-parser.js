@@ -4,8 +4,8 @@
  * 支持：银行通知、交易截图 OCR、自然语言等
  */
 
-const AIParser = (function () {
-    const config = NOCOBASE_CONFIG.AI_CONFIG;
+import { NOCOBASE_CONFIG } from './config.js';
+const config = NOCOBASE_CONFIG.AI_CONFIG;
 
     const SYSTEM_PROMPT = `你是一个专业的记账助手。请解析用户的输入，提取记账信息。
 
@@ -30,7 +30,7 @@ const AIParser = (function () {
 3. 如果无法确定某个字段，使用 null
 4. 只返回 JSON，不要包含 markdown 代码块标记`;
 
-    async function callAI(text) {
+export async function callAI(text) {
         const response = await fetch('/api/ai/parse', {
             method: 'POST',
             headers: {
@@ -63,7 +63,7 @@ const AIParser = (function () {
         return JSON.parse(jsonStr);
     }
 
-    function normalizeAIResult(aiResult) {
+export function normalizeAIResult(aiResult) {
         const result = {
             success: false,
             data: {},
@@ -110,7 +110,7 @@ const AIParser = (function () {
         return result;
     }
 
-    async function parse(text) {
+export async function parse(text) {
         try {
             const aiResult = await callAI(text);
             return normalizeAIResult({ ...aiResult, originalText: text });
@@ -127,6 +127,3 @@ const AIParser = (function () {
             };
         }
     }
-
-    return { parse };
-})();

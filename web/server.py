@@ -11,17 +11,32 @@ import urllib.error
 import os
 import sys
 
-# AI 配置
+def load_env():
+    """从项目根目录的 .env 文件加载环境变量（纯标准库实现）"""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            os.environ.setdefault(key.strip(), value.strip())
+
+load_env()
+
+# AI 配置（环境变量优先，无则用默认值）
 AI_CONFIG = {
-    'API_URL': 'https://coding.dashscope.aliyuncs.com/v1',
-    'API_KEY': 'sk-sp-4cf0ff7b598444949af23ee397b4cdf9',
-    'MODEL': 'qwen3.6-plus'
+    'API_URL': os.environ.get('AI_API_URL', 'https://coding.dashscope.aliyuncs.com/v1'),
+    'API_KEY': os.environ.get('AI_API_KEY', ''),
+    'MODEL': os.environ.get('AI_MODEL', 'qwen3.6-plus')
 }
 
 # NocoBase 配置
 NOCOBASE_CONFIG = {
-    'API_URL': 'http://121.17.49.100:13000/api',
-    'API_TOKEN': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGVOYW1lIjoicm9vdCIsImlhdCI6MTc3Nzk2NDY0NiwiZXhwIjoxODA5NTAwNjQ2LCJqdGkiOiIyMzhkYjk1Mi1hOWU0LTRjZmUtODM2NC05MTQzMDRhMDMzYzIifQ.CsK-Tj2kkfGr0DSR6QgcobwFJvy64s4fAYn3hEMjHS4'
+    'API_URL': os.environ.get('NOCOBASE_API_URL', 'http://121.17.49.100:13000/api'),
+    'API_TOKEN': os.environ.get('NOCOBASE_API_TOKEN', '')
 }
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'prompts')
@@ -35,6 +50,9 @@ def load_prompt(name):
     except FileNotFoundError:
         print(f"[Prompt] 文件未找到: {filepath}")
         return ""
+
+
+MAX_CONTEXT_CHARS = 2000
 
 
 def build_learning_context(learning_data):
@@ -57,6 +75,58 @@ def build_learning_context(learning_data):
         context += f"- 用户默认账户：{prefs['defaultAccount']}\n"
     if prefs.get('defaultPayment'):
         context += f"- 用户默认支付方式：{prefs['defaultPayment']}\n"
+
+    return context
+
+
+def build_conversation_context(history_entries, max_entries=10):
+    """将最近对话历史格式化为 LLM 可读的上下文文本"""
+    if not history_entries:
+        return ""
+
+    recent = history_entries[-max_entries:]
+
+    context = "\n\n## 最近对话上下文（供参考，不要重复执行已完成的记录）\n"
+    for entry in recent:
+        msg_type = entry.get('type', '')
+        content = entry.get('content', '')
+        data = entry.get('data', {})
+
+        if msg_type == 'user':
+            context += f"[用户] {content}\n"
+        elif msg_type == 'ai':
+            truncated = content[:200] + '...' if len(content) > 200 else content
+            context += f"[助手] {truncated}\n"
+        elif msg_type == 'record-card':
+            if data:
+                context += (
+                    f"[助手-已记录] {data.get('type', '')} "
+                    f"{data.get('amount', '')}元 - {data.get('category', '')} "
+                    f"({data.get('note', '')})\n"
+                )
+        # 跳过 query-result, stats-result, thinking 等冗长内容
+
+    # 控制总长度
+    if len(context) > MAX_CONTEXT_CHARS:
+        while len(context) > MAX_CONTEXT_CHARS and len(recent) > 3:
+            recent.pop(0)
+            context = "\n\n## 最近对话上下文（供参考，不要重复执行已完成的记录）\n"
+            for entry in recent:
+                msg_type = entry.get('type', '')
+                content = entry.get('content', '')
+                data = entry.get('data', {})
+                if msg_type == 'user':
+                    context += f"[用户] {content}\n"
+                elif msg_type == 'ai':
+                    truncated = content[:200] + '...' if len(content) > 200 else content
+                    context += f"[助手] {truncated}\n"
+                elif msg_type == 'record-card':
+                    if data:
+                        context += (
+                            f"[助手-已记录] {data.get('type', '')} "
+                            f"{data.get('amount', '')}元 - {data.get('category', '')} "
+                            f"({data.get('note', '')})\n"
+                        )
 
     return context
 
@@ -239,6 +309,11 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
             system_prompt = load_prompt('dispatch')
             if learning_context:
                 system_prompt += learning_context
+
+            conversation_history = data.get('conversation_history', [])
+            conversation_context = build_conversation_context(conversation_history)
+            if conversation_context:
+                system_prompt += conversation_context
 
             # 调用阿里云百炼 API
             request_data = {

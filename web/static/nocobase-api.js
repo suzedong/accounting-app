@@ -3,9 +3,8 @@
  * 替代原有 Flask API 调用
  */
 
-const NocobaseAPI = (function () {
-    const config = NOCOBASE_CONFIG;
-    const C = config.COLLECTIONS;
+import { NOCOBASE_CONFIG } from './config.js';
+const C = NOCOBASE_CONFIG.COLLECTIONS;
 
     /**
      * 通用请求函数
@@ -33,8 +32,8 @@ const NocobaseAPI = (function () {
         };
 
         // 认证
-        if (config.API_TOKEN) {
-            headers['Authorization'] = `Bearer ${config.API_TOKEN}`;
+        if (NOCOBASE_CONFIG.API_TOKEN) {
+            headers['Authorization'] = `Bearer ${NOCOBASE_CONFIG.API_TOKEN}`;
         }
 
         const options = {
@@ -177,25 +176,24 @@ const NocobaseAPI = (function () {
         return request('POST', `/${collectionName}`, data);
     }
 
-    return {
-        request,
-        // Records
-        getRecords,
-        getRecord,
-        createRecord,
-        updateRecord,
-        deleteRecord,
-        // Config data
-        getCategories,
-        getAccounts,
-        getPaymentMethods,
-        // Business trip
-        getBusinessTrips,
-        // Stats
-        aggregate,
-        getRecordsForStats,
-        // Generic collection operations (for learning_data etc.)
-        getCollection,
-        createRecordInCollection
-    };
-})();
+export {
+    request,
+    // Records
+    getRecords,
+    getRecord,
+    createRecord,
+    updateRecord,
+    deleteRecord,
+    // Config data
+    getCategories,
+    getAccounts,
+    getPaymentMethods,
+    // Business trip
+    getBusinessTrips,
+    // Stats
+    aggregate,
+    getRecordsForStats,
+    // Generic collection operations (for learning_data etc.)
+    getCollection,
+    createRecordInCollection
+};

@@ -3,12 +3,22 @@
  * 右悬浮弹窗式对话记账，支持历史记录、可学习修改
  */
 
-const ChatWidget = (function () {
-    let chatHistory = [];
-    let conversationState = {
+import * as NocobaseAPI from './nocobase-api.js';
+import * as AgentCore from './agent-core.js';
+import { getPromptContext } from './learning-engine.js';
+import { formatMoney } from './utils.js';
+import './chat-widget.css';
+
+let chatHistory = [];
+let debugLog = [];
+let thinkingMsgId = null;
+let conversationState = {
         waitingForConfirm: false,
         pendingRecord: null,
-        missingFields: []
+        missingFields: [],
+        awaitingFollowUp: false,       // 是否在等待用户补充信息
+        pendingFollowUp: null,         // follow_up 数据
+        editingField: null
     };
 
     const STORAGE_KEY = 'accounting_chat_history';
@@ -54,6 +64,151 @@ const ChatWidget = (function () {
         }
     }
 
+    function getConversationHistoryForLLM() {
+        const relevantTypes = ['user', 'ai', 'record-card'];
+        return chatHistory
+            .filter(msg => relevantTypes.includes(msg.type))
+            .map(msg => ({
+                type: msg.type,
+                content: msg.content,
+                data: msg.type === 'record-card' ? (msg.data || {}) : null
+            }))
+            .slice(-10);
+    }
+
+    function addDebugLog(userText, dispatchRequest, dispatchResponse, executeResult, error) {
+        debugLog.push({
+            timestamp: new Date().toLocaleString('zh-CN'),
+            userInput: userText,
+            request: dispatchRequest,
+            response: dispatchResponse,
+            result: executeResult,
+            error: error
+        });
+    }
+
+    function formatDebugMarkdown() {
+        let md = '# 对话调试日志\n\n';
+        debugLog.forEach((entry, i) => {
+            md += `## [${entry.timestamp}] #${i + 1}\n\n`;
+            md += `**用户输入**: ${entry.userInput}\n\n`;
+            if (entry.request) {
+                md += '**发送给 LLM 的请求**:\n```json\n' + JSON.stringify(entry.request, null, 2) + '\n```\n\n';
+            }
+            if (entry.response) {
+                md += '**LLM 返回**:\n```json\n' + JSON.stringify(entry.response, null, 2) + '\n```\n\n';
+            }
+            if (entry.result) {
+                md += '**执行结果**:\n```json\n' + JSON.stringify(entry.result, null, 2) + '\n```\n\n';
+            }
+            if (entry.error) {
+                md += '**错误**:\n```\n' + entry.error + '\n```\n\n';
+            }
+            md += '---\n\n';
+        });
+        return md;
+    }
+
+    function copyDebugLog(index) {
+        let entry;
+        if (index !== undefined) {
+            entry = debugLog[index];
+        } else {
+            entry = null; // all
+        }
+
+        let md;
+        if (entry) {
+            md = `## 对话调试日志 [${entry.timestamp}]\n\n`;
+            md += `**用户输入**: ${entry.userInput}\n\n`;
+            if (entry.request) md += '**发送给 LLM 的请求**:\n```json\n' + JSON.stringify(entry.request, null, 2) + '\n```\n\n';
+            if (entry.response) md += '**LLM 返回**:\n```json\n' + JSON.stringify(entry.response, null, 2) + '\n```\n\n';
+            if (entry.result) md += '**执行结果**:\n```json\n' + JSON.stringify(entry.result, null, 2) + '\n```\n\n';
+            if (entry.error) md += '**错误**:\n```\n' + entry.error + '\n```\n\n';
+        } else {
+            md = formatDebugMarkdown();
+        }
+
+        navigator.clipboard.writeText(md).then(() => {
+            alert('已复制到剪贴板');
+        }).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = md;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            alert('已复制到剪贴板');
+        });
+    }
+
+    function showDebugPanel() {
+        const existing = document.getElementById('chat-debug-panel');
+        if (existing) {
+            existing.remove();
+            return;
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'chat-debug-panel';
+        overlay.innerHTML = `
+            <div class="chat-debug-content">
+                <div class="chat-debug-header">
+                    <span>调试日志 (${debugLog.length} 条)</span>
+                    <div class="chat-debug-actions">
+                        <button onclick="ChatWidget.copyAllDebug()" title="复制全部">📋 复制全部</button>
+                        <button onclick="ChatWidget.clearDebug()" title="清空">🗑️ 清空</button>
+                        <button onclick="ChatWidget.closeDebugPanel()" title="关闭" class="chat-debug-close">✕</button>
+                    </div>
+                </div>
+                <div class="chat-debug-body">
+                    ${debugLog.length === 0 ? '<div class="chat-debug-empty">暂无调试日志</div>' :
+                        debugLog.map((entry, i) => renderDebugEntry(i, entry)).join('')}
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        // 点击遮罩关闭
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.remove();
+            }
+        });
+    }
+
+    function renderDebugEntry(index, entry) {
+        const intent = (entry.response && entry.response.intent) || '未知';
+        const confidence = (entry.response && entry.response.confidence) || 0;
+        const reqShort = entry.request ? JSON.stringify(entry.request, null, 2) : '';
+        const respShort = entry.response ? JSON.stringify(entry.response, null, 2) : '';
+        const resultShort = entry.result ? JSON.stringify(entry.result, null, 2) : '';
+        return `
+            <div class="chat-debug-entry">
+                <div class="chat-debug-entry-header">
+                    <span class="chat-debug-index">#${index + 1}</span>
+                    <span class="chat-debug-time">${entry.timestamp}</span>
+                    <span class="chat-debug-intent">${intent} (${confidence.toFixed(2)})</span>
+                    <button onclick="ChatWidget.copyDebugLog(${index})" title="复制单条">📋</button>
+                </div>
+                <div class="chat-debug-user">用户: ${escapeHtml(entry.userInput)}</div>
+                <details class="chat-debug-details">
+                    <summary>📤 请求</summary>
+                    <pre>${escapeHtml(reqShort)}</pre>
+                </details>
+                <details class="chat-debug-details">
+                    <summary>📥 LLM 返回</summary>
+                    <pre>${escapeHtml(respShort)}</pre>
+                </details>
+                <details class="chat-debug-details">
+                    <summary>🎯 执行结果</summary>
+                    <pre>${escapeHtml(resultShort)}</pre>
+                </details>
+                ${entry.error ? `<details class="chat-debug-details" open><summary>❌ 错误</summary><pre>${escapeHtml(entry.error)}</pre></details>` : ''}
+            </div>
+        `;
+    }
+
     function renderWidget() {
         const widget = document.createElement('div');
         widget.id = 'chat-widget';
@@ -74,6 +229,7 @@ const ChatWidget = (function () {
                         </div>
                     </div>
                     <div class="chat-header-actions">
+                        <button class="chat-action-btn" id="chat-debug" aria-label="调试信息" title="调试信息">🔧</button>
                         <button class="chat-action-btn" id="chat-clear" aria-label="清空历史" title="清空历史">🗑️</button>
                         <button class="chat-action-btn" id="chat-minimize" aria-label="最小化" title="最小化">—</button>
                     </div>
@@ -98,6 +254,7 @@ const ChatWidget = (function () {
         const panel = document.getElementById('chat-panel');
         const minimize = document.getElementById('chat-minimize');
         const clearBtn = document.getElementById('chat-clear');
+        const debugBtn = document.getElementById('chat-debug');
         const sendBtn = document.getElementById('chat-send');
         const input = document.getElementById('chat-input');
 
@@ -120,6 +277,10 @@ const ChatWidget = (function () {
                 saveHistory();
                 renderMessages();
             }
+        });
+
+        debugBtn.addEventListener('click', () => {
+            showDebugPanel();
         });
 
         sendBtn.addEventListener('click', sendMessage);
@@ -165,6 +326,9 @@ const ChatWidget = (function () {
             } else if (msg.type === 'missing-fields') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
                 return `<div class="chat-msg ai">${skillTag}${renderMissingFieldsContent(msg.data, msg.id)}</div>`;
+            } else if (msg.type === 'missing-fields') {
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderMissingFieldsCardContent(msg.data || {}, msg.id)}</div>`;
             } else if (msg.type === 'duplicate-warning') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
                 return `<div class="chat-msg ai">${skillTag}${renderDuplicateWarningContent(msg.data, msg.id)}</div>`;
@@ -227,6 +391,22 @@ const ChatWidget = (function () {
                 <div class="chat-quick-options">${options}</div>
             </div>
         `;
+    }
+
+    function renderMissingFieldsCardContent(data) {
+        const question = escapeHtml(data.question || '请补充信息');
+        return `
+            <div class="chat-msg-bubble">
+                <div class="chat-follow-up-question">${question}</div>
+                <div class="chat-hint-text">直接输入回答即可</div>
+            </div>
+        `;
+    }
+
+    function cancelFollowUp() {
+        conversationState.awaitingFollowUp = false;
+        conversationState.pendingFollowUp = null;
+        addMessage('ai', '好的，请重新输入你的记账信息。');
     }
 
     function renderDuplicateWarningContent(data, msgId) {
@@ -303,68 +483,99 @@ const ChatWidget = (function () {
         return new Promise(r => setTimeout(r, ms));
     }
 
-    function renderThinkingHTML(dispatchResult, step, detail) {
-        const intent = dispatchResult.intent || '未知';
-        const confidence = dispatchResult.confidence || 0;
-        const intentIcon = step === 'intent' || step === 'execute' || step === 'done' ? '✅' : '';
-        const executeIcon = step === 'execute' ? '' : (step === 'done' ? '✅' : '');
+    const INTENT_LABELS = {
+        'record': '记账', 'query': '查询记录', 'stats': '统计分析',
+        'budget': '预算管理', 'prompt': '修改规则', 'data_query': '数据查询',
+        'create-skill': '创建 Skill', 'chitchat': '闲聊', 'follow_up': '追问补充'
+    };
 
-        return `
-            <div class="chat-thinking-box">
-                <div class="chat-thinking-step done">
-                    <span class="step-icon">${intentIcon}</span>
-                    <span>意图识别：<strong>${escapeHtml(intent)}</strong>${confidence ? ` (${confidence.toFixed(2)})` : ''}</span>
-                </div>
-                <div class="chat-thinking-step ${step === 'execute' ? 'active' : 'done'}">
-                    <span class="step-icon">${executeIcon}</span>
-                    <span>执行 Skill：${escapeHtml(detail || '加载中...')}</span>
-                    ${step === 'execute' ? '<span class="step-spinner"></span>' : ''}
-                </div>
-            </div>
-        `;
+    const FIELD_LABELS = {
+        type: '类型', amount: '金额', category: '分类', account: '账户',
+        payment: '支付', datetime: '时间', note: '备注'
+    };
+
+    function formatFieldVal(key, val) {
+        if (val === null || val === undefined || val === '') return null;
+        if (key === 'amount') return '¥' + parseFloat(val).toFixed(2);
+        return val;
     }
 
-    function renderThinkingCollapsedHTML(dispatchResult, detail) {
-        const intent = dispatchResult.intent || '未知';
-        const confidence = dispatchResult.confidence || 0;
-        const displayName = detail || intent;
+    function buildIntentDetail(dispatchResult) {
+        const { intent, fields, params, follow_up, response } = dispatchResult;
+        let html = '';
 
-        return `
-            <div class="chat-thinking-toggle" onclick="
-                var box = this.parentElement;
-                box.classList.toggle('expanded');
-                var arrow = this.querySelector('.toggle-arrow');
-                var content = box.querySelector('.thinking-content');
-                if (box.classList.contains('expanded')) {
-                    arrow.style.transform = 'rotate(90deg)';
-                    content.style.display = 'block';
-                } else {
-                    arrow.style.transform = '';
-                    content.style.display = 'none';
+        switch (intent) {
+            case 'record':
+                if (fields) {
+                    const items = [
+                        { label: '类型', value: fields.type },
+                        { label: '金额', value: formatFieldVal('amount', fields.amount) },
+                        { label: '分类', value: fields.category },
+                        { label: '账户', value: fields.account },
+                        { label: '支付', value: fields.payment },
+                        { label: '时间', value: fields.datetime },
+                        { label: '备注', value: fields.note }
+                    ].filter(f => f.value);
+                    html = renderDetailRows(items);
                 }
-            ">
-                <span>⚙️ ${escapeHtml(displayName)}</span>
-                <span class="toggle-arrow">▶</span>
-            </div>
-            <div class="thinking-content" style="display:none">
-                <div class="chat-thinking-step done">
-                    <span class="step-icon">✅</span>
-                    <span>意图识别：<strong>${escapeHtml(intent)}</strong> (${confidence.toFixed(2)})</span>
-                </div>
-                <div class="chat-thinking-step done">
-                    <span class="step-icon">✅</span>
-                    <span>执行 Skill：${escapeHtml(displayName)}</span>
-                </div>
-            </div>
-        `;
+                break;
+            case 'query':
+                if (params) {
+                    const items = [
+                        { label: '时间范围', value: params.timeRange || '默认' },
+                        { label: '类型', value: params.type === 'expense' ? '支出' : params.type === 'income' ? '收入' : '全部' },
+                        { label: '分类', value: params.category },
+                        { label: '账户', value: params.account }
+                    ].filter(f => f.value);
+                    html = renderDetailRows(items);
+                }
+                break;
+            case 'stats':
+                if (params) {
+                    const dimMap = { category: '分类', account: '账户', payment: '支付方式', trend: '趋势', comparison: '对比' };
+                    const items = [
+                        { label: '维度', value: dimMap[params.dimension] || params.dimension },
+                        { label: '时间范围', value: params.timeRange || '默认' },
+                        { label: '类型', value: params.type === 'expense' ? '支出' : '收入' }
+                    ].filter(f => f.value);
+                    html = renderDetailRows(items);
+                }
+                break;
+            case 'follow_up':
+                if (follow_up) {
+                    html += '<div class="chat-thinking-section-label">已识别：</div>';
+                    const known = Object.entries(follow_up.original_fields || {})
+                        .map(([k, v]) => ({ label: FIELD_LABELS[k] || k, value: v }));
+                    html += renderDetailRows(known);
+                    const missing = follow_up.missing_fields || [];
+                    if (missing.length) {
+                        html += `<div class="chat-thinking-section-label chat-thinking-missing">缺少：${missing.map(f => FIELD_LABELS[f] || f).join('、')}</div>`;
+                    }
+                    html += `<div class="chat-thinking-question">💬 ${escapeHtml(follow_up.question || '')}</div>`;
+                }
+                break;
+            case 'budget':
+                html = '<div class="chat-thinking-detail-row"><span class="chat-thinking-detail-label">查询</span><span class="chat-thinking-detail-value">当月预算状态</span></div>';
+                break;
+            case 'chitchat':
+                if (response) {
+                    html = `<div class="chat-thinking-detail-row"><span class="chat-thinking-detail-label">回复</span><span class="chat-thinking-detail-value">${escapeHtml(response)}</span></div>`;
+                }
+                break;
+        }
+        return html;
     }
 
-    // 思考过程展示：使用 chatHistory 存储，避免被 renderMessages() 覆盖
-    let thinkingMsgId = null; // 当前思考消息的 id
+    function renderDetailRows(items) {
+        return items.map(f =>
+            `<div class="chat-thinking-detail-row"><span class="chat-thinking-detail-label">${f.label}</span><span class="chat-thinking-detail-value">${escapeHtml(String(f.value))}</span></div>`
+        ).join('');
+    }
 
     function renderThinkingHTML(dispatchResult, step, detail) {
         const intent = dispatchResult.intent || '未知';
         const confidence = dispatchResult.confidence || 0;
+        const label = INTENT_LABELS[intent] || intent;
         const intentIcon = step === 'done' ? '✅' : '💭';
         const executeIcon = step === 'execute' ? '⚙️' : (step === 'done' ? '✅' : '');
 
@@ -372,8 +583,9 @@ const ChatWidget = (function () {
             <div class="chat-thinking-box">
                 <div class="chat-thinking-step done">
                     <span class="step-icon">${intentIcon}</span>
-                    <span>意图识别：<strong>${escapeHtml(intent)}</strong>${confidence ? ` (${confidence.toFixed(2)})` : ''}</span>
+                    <span>意图识别：<strong>${escapeHtml(label)}</strong> (${confidence.toFixed(2)})</span>
                 </div>
+                ${step !== 'intent' ? buildIntentDetail(dispatchResult) : ''}
                 <div class="chat-thinking-step ${step === 'execute' ? 'active' : 'done'}">
                     <span class="step-icon">${executeIcon}</span>
                     <span>执行 Skill：${escapeHtml(detail || '加载中...')}</span>
@@ -386,22 +598,24 @@ const ChatWidget = (function () {
     function renderThinkingCollapsedHTML(dispatchResult, detail) {
         const intent = dispatchResult.intent || '未知';
         const confidence = dispatchResult.confidence || 0;
-        const displayName = detail || intent;
+        const label = INTENT_LABELS[intent] || intent;
+        const detailHtml = buildIntentDetail(dispatchResult);
 
         return `
             <div class="chat-thinking-collapsed">
                 <div class="chat-thinking-toggle" onclick="this.parentElement.classList.toggle('expanded'); var c=this.parentElement.querySelector('.thinking-content'); c.style.display=c.style.display==='none'?'block':'none'; var a=this.querySelector('.toggle-arrow'); a.style.transform=c.style.display==='none'?'':'rotate(90deg)';">
                     <span class="toggle-arrow">▶</span>
-                    <span>⚙️ ${escapeHtml(displayName)}</span>
+                    <span>⚙️ ${escapeHtml(label)} (${confidence.toFixed(2)})</span>
                 </div>
                 <div class="thinking-content" style="display:none">
                     <div class="chat-thinking-step done">
                         <span class="step-icon">✅</span>
-                        <span>意图识别：<strong>${escapeHtml(intent)}</strong> (${confidence.toFixed(2)})</span>
+                        <span>意图识别：<strong>${escapeHtml(label)}</strong> (${confidence.toFixed(2)})</span>
                     </div>
+                    ${detailHtml}
                     <div class="chat-thinking-step done">
                         <span class="step-icon">✅</span>
-                        <span>执行 Skill：${escapeHtml(displayName)}</span>
+                        <span>执行 Skill：${escapeHtml(detail || label)}</span>
                     </div>
                 </div>
             </div>
@@ -493,6 +707,9 @@ const ChatWidget = (function () {
         } else if (type === 'budget-result') {
             const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
             html = `<div class="chat-msg ai">${skillTag}${renderSkillResultContent(data, data?.title || '预算状态')}</div>`;
+        } else if (type === 'missing-fields') {
+            const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
+            html = `<div class="chat-msg ai">${skillTag}${renderMissingFieldsCardContent(data)}</div>`;
         } else if (type === 'collection-list') {
             const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
             html = `<div class="chat-msg ai">${skillTag}${renderCollectionListContent(data || {})}</div>`;
@@ -519,88 +736,143 @@ const ChatWidget = (function () {
             conversationState.pendingRecord[field] = text;
             conversationState.editingField = null;
             addMessage('ai', `已更新${getFieldLabel(field)}为：${text}`);
-            // 重新显示确认卡片
             addMessage('record-card', null, conversationState.pendingRecord);
             return;
         }
 
+        // 如果正在追问，将输入合并到 pendingFollowUp
+        if (conversationState.awaitingFollowUp && conversationState.pendingFollowUp) {
+            const followUp = conversationState.pendingFollowUp;
+            const missingField = followUp.missing_fields?.[0];
+
+            const mergedFields = { ...followUp.original_fields };
+            if (missingField === 'amount') {
+                const amountMatch = text.match(/(\d+\.?\d*)/);
+                if (amountMatch) mergedFields.amount = parseFloat(amountMatch[1]);
+            } else if (missingField) {
+                mergedFields[missingField] = text;
+            }
+
+            conversationState.awaitingFollowUp = false;
+            conversationState.pendingFollowUp = null;
+
+            // 构造合成文本重新 dispatch
+            const synthesized = `${mergedFields.datetime || ''}${mergedFields.type === '支出' ? '花费' : '收入'}${mergedFields.amount || ''}元 ${mergedFields.category || ''} ${mergedFields.note || ''}`.trim();
+            await dispatchAndProcess(synthesized, mergedFields);
+            return;
+        }
+
         hideTyping();
+        await dispatchAndProcess(text);
+    }
+
+    async function dispatchAndProcess(text, mergedFields = null) {
+        const conversationHistory = getConversationHistoryForLLM();
+        const dispatchRequest = { text, learning_context: getPromptContext(), conversation_history: conversationHistory };
+        let dispatchResponse = null;
+        let executeResult = null;
+        let error = null;
 
         try {
             // 1. 显示思考中
             showThinking({ intent: '分析中...', confidence: 0 });
             await delay(200);
 
-            const dispatchResult = await AgentCore.dispatch(text);
-            dispatchResult._inputText = text;
+            dispatchResponse = await AgentCore.dispatch(text, conversationHistory);
+            dispatchResponse._inputText = text;
+
+            // 如果有合并的字段（追问回复），直接补充到 fields 中
+            if (mergedFields && dispatchResponse.fields) {
+                dispatchResponse.fields = { ...dispatchResponse.fields, ...mergedFields };
+            }
 
             // 2. 更新意图识别结果
-            updateThinking(dispatchResult, 'intent');
+            updateThinking(dispatchResponse, 'intent');
             await delay(300);
 
             // 3. 显示 Skill 执行
-            const skillMeta = dispatchResult._skill || { displayName: '处理中' };
-            updateThinking(dispatchResult, 'execute', skillMeta.displayName);
+            const skillMeta = dispatchResponse._skill || { displayName: '处理中' };
+            updateThinking(dispatchResponse, 'execute', skillMeta.displayName);
             await delay(200);
 
             // 4. 执行
-            const result = await AgentCore.execute(dispatchResult);
+            executeResult = await AgentCore.execute(dispatchResponse);
 
             // 5. 折叠思考过程
-            collapseThinking(dispatchResult, skillMeta.displayName);
+            collapseThinking(dispatchResponse, skillMeta.displayName);
 
-            // 6. 追加结果消息（使用 appendSingleMessage 避免全量重渲染）
-            if (result.type === 'auto-save') {
-                await saveRecordToDB(result.fields, 'msg_auto_' + Date.now(), result._skill);
-            } else if (result.type === 'confirm') {
-                conversationState.pendingRecord = result.fields;
-                conversationState.waitingForConfirm = true;
-                conversationState._recordSkill = result._skill;
-                appendSingleMessage('record-card', null, result.fields, result._skill);
-                chatHistory.push({
-                    type: 'record-card', content: null, data: result.fields,
-                    skillMeta: result._skill, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
-                });
-                saveHistory();
-            } else if (result.type === 'query-result') {
-                appendSingleMessage('query-result', result.content, result, result._skill);
-                chatHistory.push({
-                    type: 'query-result', content: result.content, data: result,
-                    skillMeta: result._skill, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
-                });
-                saveHistory();
-            } else if (result.type === 'stats-result') {
-                appendSingleMessage('stats-result', result.content, result, result._skill);
-                chatHistory.push({
-                    type: 'stats-result', content: result.content, data: result,
-                    skillMeta: result._skill, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
-                });
-                saveHistory();
-            } else if (result.type === 'budget-result') {
-                appendSingleMessage('budget-result', result.content, result, result._skill);
-                chatHistory.push({
-                    type: 'budget-result', content: result.content, data: result,
-                    skillMeta: result._skill, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
-                });
-                saveHistory();
-            } else if (result.type === 'collection-list') {
-                appendSingleMessage('collection-list', result.content, result, result._skill);
-                chatHistory.push({
-                    type: 'collection-list', content: result.content, data: result,
-                    skillMeta: result._skill, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
-                });
-                saveHistory();
-            } else if (result.type === 'text') {
-                appendSingleMessage('ai', result.content, null, result._skill);
-                chatHistory.push({
-                    type: 'ai', content: result.content, data: null,
-                    skillMeta: result._skill, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
-                });
-                saveHistory();
-            }
-        } catch (error) {
+            // 6. 追加结果消息
+            appendResultMessage(executeResult, dispatchResponse);
+
+            // 记录调试日志
+            addDebugLog(text, dispatchRequest, dispatchResponse, executeResult, error);
+        } catch (e) {
+            error = e.message;
             hideThinking();
-            addMessage('ai', '解析出错：' + error.message);
+            addMessage('ai', '解析出错：' + e.message);
+            addDebugLog(text, dispatchRequest, dispatchResponse, executeResult, error);
+        }
+    }
+
+    function appendResultMessage(result, dispatchResult) {
+        const skillMeta = result._skill || dispatchResult._skill;
+        if (result.type === 'auto-save') {
+            saveRecordToDB(result.fields, 'msg_auto_' + Date.now(), skillMeta);
+        } else if (result.type === 'confirm') {
+            conversationState.pendingRecord = result.fields;
+            conversationState.waitingForConfirm = true;
+            conversationState._recordSkill = skillMeta;
+            appendSingleMessage('record-card', null, result.fields, skillMeta);
+            chatHistory.push({
+                type: 'record-card', content: null, data: result.fields,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
+        } else if (result.type === 'follow-up') {
+            conversationState.awaitingFollowUp = true;
+            conversationState.pendingFollowUp = result.followUp;
+            const question = result.followUp.question || '请补充信息';
+            appendSingleMessage('missing-fields', question, { question, missingFields: result.followUp.missing_fields }, skillMeta);
+            chatHistory.push({
+                type: 'missing-fields', content: question, data: { question, missingFields: result.followUp.missing_fields },
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
+        } else if (result.type === 'query-result') {
+            appendSingleMessage('query-result', result.content, result, skillMeta);
+            chatHistory.push({
+                type: 'query-result', content: result.content, data: result,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
+        } else if (result.type === 'stats-result') {
+            appendSingleMessage('stats-result', result.content, result, skillMeta);
+            chatHistory.push({
+                type: 'stats-result', content: result.content, data: result,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
+        } else if (result.type === 'budget-result') {
+            appendSingleMessage('budget-result', result.content, result, skillMeta);
+            chatHistory.push({
+                type: 'budget-result', content: result.content, data: result,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
+        } else if (result.type === 'collection-list') {
+            appendSingleMessage('collection-list', result.content, result, skillMeta);
+            chatHistory.push({
+                type: 'collection-list', content: result.content, data: result,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
+        } else if (result.type === 'text') {
+            appendSingleMessage('ai', result.content, null, skillMeta);
+            chatHistory.push({
+                type: 'ai', content: result.content, data: null,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
         }
     }
 
@@ -735,6 +1007,8 @@ const ChatWidget = (function () {
         conversationState.pendingRecord = null;
         conversationState.waitingForConfirm = false;
         conversationState.editingField = null;
+        conversationState.awaitingFollowUp = false;
+        conversationState.pendingFollowUp = null;
         addMessage('ai', '好的，请重新输入你的记账信息。');
     }
 
@@ -784,18 +1058,22 @@ const ChatWidget = (function () {
         return div.innerHTML;
     }
 
-    function formatMoney(amount) {
-        return '¥' + parseFloat(amount || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    }
+export {
+    init,
+    sendQuick,
+    confirmRecord,
+    forceSaveRecord,
+    cancelRecord,
+    editRecord,
+    editField,
+    fillMissing,
+    copyDebugLog,
+    showDebugPanel,
+    closeDebugPanel,
+    copyAllDebug,
+    clearDebug
+};
 
-    return {
-        init,
-        sendQuick,
-        confirmRecord,
-        forceSaveRecord,
-        cancelRecord,
-        editRecord,
-        editField,
-        fillMissing
-    };
-})();
+function copyAllDebug() { copyDebugLog(); }
+function clearDebug() { debugLog = []; showDebugPanel(); }
+function closeDebugPanel() { const p = document.getElementById('chat-debug-panel'); if (p) p.remove(); }

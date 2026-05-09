@@ -131,20 +131,20 @@
         </div>
     </div>
 
-    <script src="./static/config.js"></script>
-    <script src="./static/utils.js"></script>
-    <script src="./static/nocobase-api.js"></script>
-    <link rel="stylesheet" href="./static/chat-widget.css">
-    <script src="./static/learning-engine.js"></script>
-    <script src="./static/agent-core.js"></script>
-    <script src="./static/chat-widget.js"></script>
+    <script type="module" src="./static/globals.js"></script>
     <script>
-        LearningEngine.init();
-        ChatWidget.init();
+        function whenGlobalsReady(fn) {
+            if (window.__globalsLoaded) { fn(); return; }
+            const check = setInterval(() => { if (window.__globalsLoaded) { clearInterval(check); fn(); } }, 10);
+        }
 
-        setActiveNav('./budget.html');
+        whenGlobalsReady(() => {
+            LearningEngine.init();
+            ChatWidget.init();
+            setActiveNav('./budget.html');
+        });
 
-        let currentBudget = NOCOBASE_CONFIG.BUDGET_MONTHLY;
+        let currentBudget = NOCOBASE_CONFIG ? NOCOBASE_CONFIG.BUDGET_MONTHLY : 3500;
 
         function showError(message) {
             const errorEl = document.getElementById('error-message');
@@ -227,7 +227,7 @@
             }
         }
 
-        loadMonthlyBudgetStats();
+        whenGlobalsReady(() => { loadMonthlyBudgetStats(); });
     </script>
 </body>
 </html>

@@ -2,17 +2,21 @@
  * Agent 核心：LLM 意图识别 + Skill 执行 + 学习闭环
  */
 
-const AgentCore = (function () {
+import { getPromptContext, getCorrectionsForInput, recordCorrection as learnCorrection } from './learning-engine.js';
+import * as NocobaseAPI from './nocobase-api.js';
+import { parseInput } from './parse.js';
+import { NOCOBASE_CONFIG } from './config.js';
+import { calcTotals, statsByCategory, statsByAccount, comparison, monthlyTrend, analyzeBudget, formatMoney } from './utils.js';
     // ==================== 意图识别 ====================
 
-    async function dispatch(text) {
+    async function dispatch(text, conversationHistory = []) {
         try {
-            const learningContext = LearningEngine ? LearningEngine.getPromptContext() : '';
+            const learningContext = getPromptContext();
 
             const response = await fetch('/api/ai/dispatch', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, learning_context: learningContext })
+                body: JSON.stringify({ text, learning_context: learningContext, conversation_history: conversationHistory })
             });
 
             if (!response.ok) {
@@ -43,13 +47,11 @@ const AgentCore = (function () {
      * 降级方案：使用规则解析
      */
     async function fallbackParse(text) {
-        if (typeof parseInput === 'function') {
-            try {
-                const result = await parseInput(text);
-                return result.data || {};
-            } catch (e) {
-                console.warn('[Agent] 规则解析降级失败:', e);
-            }
+        try {
+            const result = await parseInput(text);
+            return result.data || {};
+        } catch (e) {
+            console.warn('[Agent] 规则解析降级失败:', e);
         }
         return {};
     }
@@ -76,6 +78,8 @@ const AgentCore = (function () {
                 return executeCreateSkill(params || {}, dispatchResult._inputText);
             case 'chitchat':
                 return { type: 'text', content: response || '你好！我是你的 AI 记账助手，请告诉我你的收支情况。', _skill: { name: 'chitchat', displayName: '闲聊', confidence } };
+            case 'follow_up':
+                return executeFollowUp(dispatchResult.follow_up || {}, confidence);
             default:
                 return {
                     type: 'text',
@@ -90,8 +94,8 @@ const AgentCore = (function () {
      */
     async function executeRecord(fields, confidence, inputText) {
         // 应用学习数据的本地修正
-        if (typeof LearningEngine !== 'undefined' && inputText) {
-            const localCorrections = LearningEngine.getCorrectionsForInput(inputText);
+        if (inputText) {
+            const localCorrections = getCorrectionsForInput(inputText);
             if (localCorrections.category && fields.category !== localCorrections.category) {
                 fields.category = localCorrections.category;
             }
@@ -115,10 +119,6 @@ const AgentCore = (function () {
      */
     async function executeQuery(params, confidence) {
         try {
-            if (typeof NocobaseAPI === 'undefined') {
-                return { type: 'text', content: 'API 未加载，请稍后重试。', _skill: { name: 'query', displayName: '查询记录', confidence } };
-            }
-
             const dateRange = buildDateRange(params.timeRange || 'month');
             const result = await NocobaseAPI.getRecordsForStats(dateRange.from, dateRange.to);
             const records = result.data || [];
@@ -136,7 +136,7 @@ const AgentCore = (function () {
                 return { type: 'text', content: `${dateRange.label}暂无${params.type === 'expense' ? '支出' : '收入'}记录。`, _skill: { name: 'query', displayName: '查询记录', confidence } };
             }
 
-            const totals = calcTotals ? calcTotals(filtered) : { incomeTotal: 0, expenseTotal: 0 };
+            const totals = calcTotals(filtered);
             const summary = `${dateRange.label}共 ${filtered.length} 笔记录` +
                 (totals.expenseTotal > 0 ? `，支出 ${formatMoney(totals.expenseTotal)}` : '') +
                 (totals.incomeTotal > 0 ? `，收入 ${formatMoney(totals.incomeTotal)}` : '') + '。';
@@ -163,10 +163,6 @@ const AgentCore = (function () {
      */
     async function executeStats(params, confidence) {
         try {
-            if (typeof NocobaseAPI === 'undefined') {
-                return { type: 'text', content: 'API 未加载，请稍后重试。', _skill: { name: 'stats', displayName: '统计分析', confidence } };
-            }
-
             const dateRange = buildDateRange(params.timeRange || 'month');
             const result = await NocobaseAPI.getRecordsForStats(dateRange.from, dateRange.to);
             const records = result.data || [];
@@ -179,7 +175,7 @@ const AgentCore = (function () {
 
             switch (params.dimension) {
                 case 'category': {
-                    const stats = statsByCategory ? statsByCategory(records, type) : [];
+                    const stats = statsByCategory(records, type);
                     const total = stats.reduce((sum, s) => sum + s.total, 0);
                     const lines = stats.slice(0, 8).map(s => {
                         const pct = total > 0 ? (s.total / total * 100).toFixed(1) : 0;
@@ -194,7 +190,7 @@ const AgentCore = (function () {
                     };
                 }
                 case 'account': {
-                    const stats = statsByAccount ? statsByAccount(records) : { byAccount: [] };
+                    const stats = statsByAccount(records);
                     const lines = stats.byAccount.slice(0, 5).map(s =>
                         `${s.account} ${formatMoney(s.total)} (${s.count}笔)`
                     );
@@ -206,35 +202,28 @@ const AgentCore = (function () {
                     };
                 }
                 case 'comparison': {
-                    if (typeof comparison === 'function') {
-                        const comp = comparison(records);
-                        return {
-                            type: 'stats-result',
-                            title: '本月 vs 上月对比',
-                            content: `本月: 收入${formatMoney(comp.current.income)} 支出${formatMoney(comp.current.expense)}\n上月: 收入${formatMoney(comp.previous.income)} 支出${formatMoney(comp.previous.expense)}`,
-                            _skill: { name: 'stats', displayName: '统计分析', confidence }
-                        };
-                    }
-                    break;
+                    const comp = comparison(records);
+                    return {
+                        type: 'stats-result',
+                        title: '本月 vs 上月对比',
+                        content: `本月: 收入${formatMoney(comp.current.income)} 支出${formatMoney(comp.current.expense)}\n上月: 收入${formatMoney(comp.previous.income)} 支出${formatMoney(comp.previous.expense)}`,
+                        _skill: { name: 'stats', displayName: '统计分析', confidence }
+                    };
                 }
                 case 'trend': {
-                    if (typeof monthlyTrend === 'function') {
-                        const trend = monthlyTrend(records, 6);
-                        const lines = trend.map(m =>
-                            `${m.month} 收入${formatMoney(m.income)} 支出${formatMoney(m.expense)}`
-                        );
-                        return {
-                            type: 'stats-result',
-                            title: '月度收支趋势',
-                            content: lines.join('\n'),
-                            _skill: { name: 'stats', displayName: '统计分析', confidence }
-                        };
-                    }
-                    break;
+                    const trend = monthlyTrend(records, 6);
+                    const lines = trend.map(m =>
+                        `${m.month} 收入${formatMoney(m.income)} 支出${formatMoney(m.expense)}`
+                    );
+                    return {
+                        type: 'stats-result',
+                        title: '月度收支趋势',
+                        content: lines.join('\n'),
+                        _skill: { name: 'stats', displayName: '统计分析', confidence }
+                    };
                 }
                 default: {
-                    // 默认显示分类统计
-                    const stats = statsByCategory ? statsByCategory(records, type) : [];
+                    const stats = statsByCategory(records, type);
                     const total = stats.reduce((sum, s) => sum + s.total, 0);
                     const lines = stats.slice(0, 8).map(s => {
                         const pct = total > 0 ? (s.total / total * 100).toFixed(1) : 0;
@@ -258,11 +247,7 @@ const AgentCore = (function () {
      */
     async function executeBudget(confidence) {
         try {
-            if (typeof NocobaseAPI === 'undefined' || typeof analyzeBudget === 'undefined') {
-                return { type: 'text', content: 'API 未加载，请稍后重试。', _skill: { name: 'budget', displayName: '预算管理', confidence } };
-            }
-
-            const budgetMonthly = NOCOBASE_CONFIG ? NOCOBASE_CONFIG.BUDGET_MONTHLY : 3500;
+            const budgetMonthly = NOCOBASE_CONFIG.BUDGET_MONTHLY;
             const result = await NocobaseAPI.getRecordsForStats(
                 `${new Date().getFullYear()}-01-01 00:00:00`,
                 null
@@ -292,17 +277,24 @@ const AgentCore = (function () {
     }
 
     /**
+     * 追问 Skill — 信息不完整时要求用户补充
+     */
+    async function executeFollowUp(followUpData, confidence) {
+        return {
+            type: 'follow-up',
+            followUp: followUpData,
+            _skill: { name: 'follow_up', displayName: '追问补充', confidence }
+        };
+    }
+
+    /**
      * 通用 Collection 查询 Skill
      */
     async function executeDataQuery(params, confidence) {
         try {
-            if (typeof NocobaseAPI === 'undefined') {
-                return { type: 'text', content: 'API 未加载，请稍后重试。', _skill: { name: 'data_query', displayName: '数据查询', confidence } };
-            }
-
             const collection = params.collection;
             if (!collection) {
-                return { type: 'text', content: '无法识别要查询的数据。', _skill: { name: 'data_query', displayName: '数据查询', confidence } };
+                return { type: 'text', content: '无法识别要查询的数据。', _skill: { name: `list_${params.collection || 'unknown'}`, displayName: '数据查询', confidence } };
             }
 
             // 检查是否已注册为该 Collection 的专用动态 Skill
@@ -492,17 +484,14 @@ const AgentCore = (function () {
     // ==================== 学习 ====================
 
     function learn(inputText, originalFields, correctedFields) {
-        if (typeof LearningEngine !== 'undefined') {
-            LearningEngine.recordCorrection(inputText, originalFields, correctedFields);
-        }
+        learnCorrection(inputText, originalFields, correctedFields);
     }
 
-    return {
-        dispatch,
-        execute,
-        learn,
-        updatePrompt: executePromptUpdate,
-        getDynamicSkillsList,
-        getDynamicSkill
-    };
-})();
+export {
+    dispatch,
+    execute,
+    learn,
+    executePromptUpdate as updatePrompt,
+    getDynamicSkillsList,
+    getDynamicSkill
+};

@@ -3,7 +3,7 @@
  */
 
 // 格式化金额（千分位分隔符）
-function formatMoney(amount, currency = '¥') {
+export function formatMoney(amount, currency = '¥') {
     const num = typeof amount === 'number' ? amount : parseFloat(amount);
     if (isNaN(num)) return currency + '0.00';
     return currency + num.toLocaleString('zh-CN', {
@@ -13,7 +13,7 @@ function formatMoney(amount, currency = '¥') {
 }
 
 // 格式化日期时间（处理 ISO 8601 格式）
-function formatDatetime(datetimeStr) {
+export function formatDatetime(datetimeStr) {
     if (!datetimeStr) return '-';
     // 如果是 ISO 8601 格式（含 T 和 Z），转换为本地时间
     if (datetimeStr.includes('T')) {
@@ -32,7 +32,7 @@ function formatDatetime(datetimeStr) {
 }
 
 // 设置导航链接 active 状态
-function setActiveNav(currentPath) {
+export function setActiveNav(currentPath) {
     const navLinks = document.querySelectorAll('.nav-links a');
     navLinks.forEach(link => {
         const href = link.getAttribute('href');
@@ -46,7 +46,7 @@ function setActiveNav(currentPath) {
 }
 
 // 分页器类
-class Paginator {
+export class Paginator {
     constructor(options = {}) {
         this.container = options.container;
         this.total = options.total || 0;
@@ -150,7 +150,7 @@ class Paginator {
 /**
  * 计算日期范围字符串
  */
-function getDateRange(period) {
+export function getDateRange(period) {
     const now = new Date();
     let dateFrom;
 
@@ -181,7 +181,7 @@ function getDateRange(period) {
 /**
  * 格式化日期
  */
-function formatDate(date, timeStr = '00:00:00') {
+export function formatDate(date, timeStr = '00:00:00') {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
     const d = String(date.getDate()).padStart(2, '0');
@@ -191,7 +191,7 @@ function formatDate(date, timeStr = '00:00:00') {
 /**
  * 过滤记录
  */
-function filterRecords(records, { dateFrom, dateTo, type, category, account }) {
+export function filterRecords(records, { dateFrom, dateTo, type, category, account }) {
     return records.filter(r => {
         if (dateFrom && r.datetime < dateFrom) return false;
         if (dateTo && r.datetime > dateTo) return false;
@@ -205,7 +205,7 @@ function filterRecords(records, { dateFrom, dateTo, type, category, account }) {
 /**
  * 按分类统计
  */
-function statsByCategory(records, type) {
+export function statsByCategory(records, type) {
     const filtered = records.filter(r => r.type === type);
     const map = {};
     for (const r of filtered) {
@@ -221,7 +221,7 @@ function statsByCategory(records, type) {
 /**
  * 计算总收支
  */
-function calcTotals(records) {
+export function calcTotals(records) {
     let incomeTotal = 0, expenseTotal = 0, incomeCount = 0, expenseCount = 0;
     for (const r of records) {
         if (r.type === '收入') {
@@ -238,7 +238,7 @@ function calcTotals(records) {
 /**
  * 按账户统计
  */
-function statsByAccount(records) {
+export function statsByAccount(records) {
     const byAccount = {};
     const byType = { '个人': 0, '家庭': 0, '公司': 0 };
 
@@ -269,7 +269,7 @@ function statsByAccount(records) {
 /**
  * 预算分析
  */
-function analyzeBudget(records, period, budgetMonthly) {
+export function analyzeBudget(records, period, budgetMonthly) {
     const now = new Date();
     const calendar = {
         monthRange: (y, m) => new Date(y, m + 1, 0).getDate(),
@@ -338,7 +338,7 @@ function analyzeBudget(records, period, budgetMonthly) {
 /**
  * 月度预算统计
  */
-function monthlyBudgetStats(records, budgetMonthly) {
+export function monthlyBudgetStats(records, budgetMonthly) {
     // 获取所有有数据的月份
     const months = [...new Set(records
         .filter(r => r.type === '支出')
@@ -395,7 +395,7 @@ function monthlyBudgetStats(records, budgetMonthly) {
 /**
  * 月度收支趋势
  */
-function monthlyTrend(records, months = 6) {
+export function monthlyTrend(records, months = 6) {
     const now = new Date();
     const startMonth = new Date(now.getFullYear(), now.getMonth() - months + 1, 1);
 
@@ -421,7 +421,7 @@ function monthlyTrend(records, months = 6) {
 /**
  * 本月 vs 上月对比
  */
-function comparison(records) {
+export function comparison(records) {
     const now = new Date();
     const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -449,7 +449,7 @@ function comparison(records) {
 /**
  * 消费热力图数据
  */
-function heatmapData(records, months = 3) {
+export function heatmapData(records, months = 3) {
     const now = new Date();
     const startDate = new Date(now);
     startDate.setDate(startDate.getDate() - months * 30);
@@ -508,20 +508,3 @@ function heatmapData(records, months = 3) {
     return { days, months: monthLabels };
 }
 
-// 全局导出
-window.formatMoney = formatMoney;
-window.formatDatetime = formatDatetime;
-window.setActiveNav = setActiveNav;
-window.Paginator = Paginator;
-window.PaginatorInstance = null; // 兼容旧代码
-window.formatDate = formatDate;
-window.getDateRange = getDateRange;
-window.filterRecords = filterRecords;
-window.statsByCategory = statsByCategory;
-window.calcTotals = calcTotals;
-window.statsByAccount = statsByAccount;
-window.analyzeBudget = analyzeBudget;
-window.monthlyBudgetStats = monthlyBudgetStats;
-window.monthlyTrend = monthlyTrend;
-window.comparison = comparison;
-window.heatmapData = heatmapData;

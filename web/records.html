@@ -239,22 +239,22 @@
         </div>
     </div>
 
-    <script src="./static/config.js"></script>
-    <script src="./static/utils.js"></script>
-    <script src="./static/nocobase-api.js"></script>
-    <link rel="stylesheet" href="./static/chat-widget.css">
-    <script src="./static/learning-engine.js"></script>
-    <script src="./static/agent-core.js"></script>
-    <script src="./static/chat-widget.js"></script>
+    <script type="module" src="./static/globals.js"></script>
     <script>
-        LearningEngine.init();
-        ChatWidget.init();
+        function whenGlobalsReady(fn) {
+            if (window.__globalsLoaded) { fn(); return; }
+            const check = setInterval(() => { if (window.__globalsLoaded) { clearInterval(check); fn(); } }, 10);
+        }
+
+        whenGlobalsReady(() => {
+            LearningEngine.init();
+            ChatWidget.init();
+            setActiveNav('./records.html');
+        });
 
         let allCategories = [];
         let currentRecordId = null;
         let currentFilters = {};
-
-        setActiveNav('./records.html');
 
         // 加载分类列表
         async function loadCategories() {
@@ -466,19 +466,21 @@
             if (e.target === this) closeEditModal();
         });
 
-        loadCategories();
+        whenGlobalsReady(() => {
+            loadCategories();
 
-        window.paginator = new Paginator({
-            container: document.getElementById('pagination-container'),
-            total: 0,
-            pageSize: 20,
-            currentPage: 1,
-            onPageChange: (page, pageSize) => {
-                loadRecords(page, pageSize);
-            }
+            window.paginator = new Paginator({
+                container: document.getElementById('pagination-container'),
+                total: 0,
+                pageSize: 20,
+                currentPage: 1,
+                onPageChange: (page, pageSize) => {
+                    loadRecords(page, pageSize);
+                }
+            });
+
+            loadRecords();
         });
-
-        loadRecords();
     </script>
 </body>
 </html>

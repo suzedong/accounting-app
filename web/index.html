@@ -153,22 +153,23 @@
         </div>
     </div>
 
-    <script src="./static/config.js?v=1778147962"></script>
-    <script src="./static/utils.js?v=1778147962"></script>
-    <script src="./static/nocobase-api.js?v=1778147962"></script>
-    <script src="./static/ai-parser.js?v=1778147962"></script>
-    <script src="./static/parse.js?v=1778147962"></script>
-    <link rel="stylesheet" href="./static/chat-widget.css">
-    <script src="./static/learning-engine.js?v=1778147962"></script>
-    <script src="./static/agent-core.js?v=1778147962"></script>
-    <script src="./static/chat-widget.js?v=1778226383"></script>
+    <script type="module" src="./static/globals.js"></script>
     <script>
+        // 等待 globals 加载完成（ESM module 是 defer 的）
+        function whenGlobalsReady(fn) {
+            if (window.__globalsLoaded) { fn(); return; }
+            const check = setInterval(() => { if (window.__globalsLoaded) { clearInterval(check); fn(); } }, 10);
+        }
+
         // 初始化悬浮对话组件
-        LearningEngine.init();
-        ChatWidget.init();
+        whenGlobalsReady(() => {
+            LearningEngine.init();
+            ChatWidget.init();
+        });
 
         // 设置 active 导航
-        setActiveNav('./index.html');
+        // setActiveNav 需要等 globals 加载
+        whenGlobalsReady(() => { setActiveNav('./index.html'); });
 
         // 全局记录缓存
         let allRecords = [];
@@ -443,7 +444,7 @@
         }
 
         // 页面加载时获取数据
-        loadData();
+        whenGlobalsReady(() => { loadData(); });
     </script>
 </body>
 </html>
