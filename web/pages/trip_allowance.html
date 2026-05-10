@@ -195,13 +195,13 @@
                 tbody.innerHTML = trips.map(trip => `
                     <tr>
                         <td><code style="font-size:12px">${trip.trip_id || trip.id}</code></td>
-                        <td>${formatDate(trip.start_date)} ~ ${formatDate(trip.end_date)}</td>
+                        <td>${formatDateShort(trip.start_date)} ~ ${formatDateShort(trip.end_date)}</td>
                         <td>${trip.days} 天</td>
                         <td>¥${(trip.trip_allowance || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
                         <td>¥${(trip.transport_allowance || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
                         <td><strong>¥${(trip.total || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</strong></td>
                         <td><span class="status ${getStatusClass(trip.status)}">${trip.status || '-'}</span></td>
-                        <td>${trip.paid_date ? formatDate(trip.paid_date) : '-'}</td>
+                        <td>${trip.paid_date ? formatDateShort(trip.paid_date) : '-'}</td>
                         <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${trip.notes || ''}">${trip.notes || '-'}</td>
                     </tr>
                 `).join('');
@@ -211,7 +211,7 @@
             }
         }
 
-        function formatDate(dateStr) {
+        function formatDateShort(dateStr) {
             if (!dateStr) return '-';
             const date = new Date(dateStr);
             return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
