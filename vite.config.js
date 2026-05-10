@@ -7,11 +7,11 @@ export default defineConfig({
     outDir: '../dist',
     rollupOptions: {
       input: {
-        index: resolve(__dirname, 'web/index.html'),
-        records: resolve(__dirname, 'web/records.html'),
-        budget: resolve(__dirname, 'web/budget.html'),
-        stats: resolve(__dirname, 'web/stats.html'),
-        'trip-allowance': resolve(__dirname, 'web/trip_allowance.html'),
+        index: resolve(__dirname, 'web/pages/index.html'),
+        records: resolve(__dirname, 'web/pages/records.html'),
+        budget: resolve(__dirname, 'web/pages/budget.html'),
+        stats: resolve(__dirname, 'web/pages/stats.html'),
+        'trip-allowance': resolve(__dirname, 'web/pages/trip_allowance.html'),
       },
     },
   },
@@ -23,5 +23,21 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    middlewareMode: false,
   },
+  plugins: [
+    {
+      name: 'root-redirect',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url === '/') {
+            res.writeHead(302, { Location: '/pages/index.html' });
+            res.end();
+          } else {
+            next();
+          }
+        });
+      },
+    },
+  ],
 });

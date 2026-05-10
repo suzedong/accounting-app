@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 记账 - 统计分析</title>
-    <script src="./static/chart.js"></script>
+    <script src="../js/vendor/chart.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; }
@@ -30,26 +30,6 @@
         .loading { text-align: center; padding: 40px; color: #999; }
         .nav-links a.active { background: rgba(255,255,255,0.3); font-weight: bold; }
 
-        /* 热力图样式 */
-        .heatmap { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; max-width: 600px; margin: 0 auto; }
-        .heatmap-day { aspect-ratio: 1; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 0.7em; color: #666; cursor: pointer; position: relative; }
-        .heatmap-day:hover::after {
-            content: attr(data-tooltip);
-            position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
-            background: #333; color: white; padding: 6px 10px; border-radius: 6px; font-size: 12px;
-            white-space: pre-line; text-align: center; z-index: 10; pointer-events: none;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        }
-        .heatmap-level-0 { background: #ebedf0; }
-        .heatmap-level-1 { background: #c6e48b; }
-        .heatmap-level-2 { background: #7bc96f; }
-        .heatmap-level-3 { background: #238636; }
-        .heatmap-level-4 { background: #196127; }
-        .heatmap-months { display: flex; gap: 8px; margin-bottom: 8px; padding-left: 30px; }
-        .heatmap-month { font-size: 0.75em; color: #666; font-weight: 500; }
-        .heatmap-weekdays { display: grid; grid-template-rows: repeat(7, 1fr); gap: 4px; font-size: 0.7em; color: #999; margin-right: 8px; }
-        .heatmap-container-inner { display: flex; }
-
         /* 移动端适配 */
         @media (max-width: 768px) {
             .container { padding: 10px; }
@@ -64,7 +44,6 @@
             .stat-card .value { font-size: 1.5em; }
             .chart-grid { grid-template-columns: 1fr; }
             .chart-container { padding: 15px; }
-            .heatmap { grid-template-columns: repeat(7, 12px); gap: 2px; }
         }
 
         @media (max-width: 480px) {
@@ -72,10 +51,9 @@
             .nav-links a { padding: 6px 10px; font-size: 0.8em; }
             .stat-card .value { font-size: 1.3em; }
             .chart-container { padding: 12px; }
-            .heatmap { grid-template-columns: repeat(7, 10px); gap: 2px; }
         }
     </style>
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
 </head>
 <body>
     <div class="container">
@@ -121,63 +99,47 @@
 
         <div class="chart-grid">
             <div class="chart-container">
-                <h2>支出分类占比</h2>
-                <canvas id="expensePieChart"></canvas>
+                <h2>支出分类排行</h2>
+                <div style="position:relative; min-height:250px;">
+                    <canvas id="expenseBarChart"></canvas>
+                    <div id="expenseBarChart-loading" class="chart-loading" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#999;">加载中...</div>
+                </div>
             </div>
             <div class="chart-container">
-                <h2>支出分类排行</h2>
-                <canvas id="expenseBarChart"></canvas>
-            </div>
-        </div>
-
-        <div class="chart-container" style="margin-top: 20px;">
-            <h2>账户类型分析</h2>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
-                <div>
-                    <canvas id="accountTypePieChart" height="200"></canvas>
+                <h2>账户类型分析</h2>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: center;">
+                    <div style="position:relative; min-height:200px;">
+                        <canvas id="accountTypePieChart"></canvas>
+                        <div id="accountTypePieChart-loading" class="chart-loading" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#999;">加载中...</div>
+                    </div>
+                    <div id="account-type-details">
+                        <div class="loading">加载中...</div>
+                    </div>
                 </div>
-                <div id="account-type-details" style="display: flex; flex-direction: column; justify-content: center;">
-                    <div class="loading">加载中...</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="chart-container" style="margin-top: 20px;">
-            <h2>预算执行分析</h2>
-            <div id="budget-detail-analysis">
-                <div class="loading">加载中...</div>
             </div>
         </div>
 
         <!-- 月度趋势图 -->
-        <div class="chart-container" style="margin-top: 20px;">
-            <h2>月度收支趋势</h2>
-            <canvas id="monthlyTrendChart"></canvas>
-        </div>
-
         <div class="chart-grid" style="margin-top: 20px;">
             <div class="chart-container">
-                <h2>本月 vs 上月对比</h2>
-                <canvas id="comparisonChart"></canvas>
+                <h2>月度收支趋势</h2>
+                <div style="position:relative; min-height:250px;">
+                    <canvas id="monthlyTrendChart"></canvas>
+                    <div id="monthlyTrendChart-loading" class="chart-loading" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#999;">加载中...</div>
+                </div>
             </div>
             <div class="chart-container">
-                <h2>消费热力图</h2>
-                <div id="heatmap-container" style="overflow-x: auto; padding: 10px;">
-                    <div class="loading">加载中...</div>
+                <h2>本月 vs 上月对比</h2>
+                <div style="position:relative; min-height:250px;">
+                    <canvas id="comparisonChart"></canvas>
+                    <div id="comparisonChart-loading" class="chart-loading" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#999;">加载中...</div>
                 </div>
             </div>
         </div>
 
-        <!-- 月度预算统计 -->
-        <div class="chart-container" style="margin-top: 20px;">
-            <h2>月度预算统计</h2>
-            <div id="monthly-budget-stats">
-                <div class="loading">加载中...</div>
-            </div>
-        </div>
     </div>
 
-    <script type="module" src="./static/globals.js"></script>
+    <script type="module" src="../js/globals.js"></script>
     <script>
         function whenGlobalsReady(fn) {
             if (window.__globalsLoaded) { fn(); return; }
@@ -192,7 +154,6 @@
 
         let currentPeriod = 'month';
         let allRecords = [];
-        let expensePieChart = null;
         let expenseBarChart = null;
         let accountTypePieChart = null;
         let monthlyTrendChart = null;
@@ -228,11 +189,8 @@
 
                 renderCharts(statsByCategory(periodRecords, '支出'));
                 loadAccountTypeAnalysis(periodRecords);
-                loadBudgetDetailAnalysis(periodRecords);
                 loadMonthlyTrendChart(allRecords);
                 loadComparisonChart(allRecords);
-                loadHeatmap(allRecords);
-                loadMonthlyBudgetStats(allRecords);
 
             } catch (error) {
                 console.error('加载统计失败:', error);
@@ -244,17 +202,6 @@
         function renderCharts(categories) {
             const colors = ['#FF6B6B', '#4ECDC4', '#FFE66D', '#95E1D3', '#F38181', '#AA96DA', '#FCBAD3', '#A8D8EA', '#FFD3B6', '#D4A5A5'];
 
-            const pieCtx = document.getElementById('expensePieChart').getContext('2d');
-            if (expensePieChart) expensePieChart.destroy();
-            expensePieChart = new Chart(pieCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: categories.map(c => c.category),
-                    datasets: [{ data: categories.map(c => c.total), backgroundColor: colors, borderWidth: 0 }]
-                },
-                options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
-            });
-
             const barCtx = document.getElementById('expenseBarChart').getContext('2d');
             if (expenseBarChart) expenseBarChart.destroy();
             expenseBarChart = new Chart(barCtx, {
@@ -265,6 +212,8 @@
                 },
                 options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
             });
+            const loadingEl = document.getElementById('expenseBarChart-loading');
+            if (loadingEl) loadingEl.style.display = 'none';
         }
 
         function loadAccountTypeAnalysis(records) {
@@ -287,6 +236,8 @@
                 },
                 options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
             });
+            const loadingEl = document.getElementById('accountTypePieChart-loading');
+            if (loadingEl) loadingEl.style.display = 'none';
 
             const detailsDiv = document.getElementById('account-type-details');
             let html = '';
@@ -302,45 +253,6 @@
                 <div><span style="font-weight: bold; color: #667eea; margin-right: 10px;">${formatMoney(accountStats.total)}</span>
                 <span style="color: #999; font-size: 0.9em;">${accountStats.byAccount.length} 个账户</span></div></div>`;
             detailsDiv.innerHTML = html;
-        }
-
-        function loadBudgetDetailAnalysis(records) {
-            const personalRecords = records.filter(r => r.account === '个人');
-            const budgetData = analyzeBudget(personalRecords, currentPeriod, NOCOBASE_CONFIG.BUDGET_MONTHLY);
-            const container = document.getElementById('budget-detail-analysis');
-            const statusColors = {'超支': '#FF6B6B', '紧张': '#FFC107', '正常': '#52C41A'};
-            const statusColor = statusColors[budgetData.status] || '#666';
-
-            const periodLabels = {
-                'day': { name: '今日预算', unit: '天' },
-                'week': { name: '本周预算', unit: '天' },
-                'month': { name: '本月预算', unit: '天' },
-                'year': { name: '本年预算', unit: '天' }
-            };
-            const label = periodLabels[currentPeriod] || periodLabels['month'];
-
-            container.innerHTML = `
-                <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 15px;">
-                    <div style="font-size: 1.1em; font-weight: bold; margin-bottom: 10px;">预算概览（${budgetData.periodName}）</div>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
-                        <div>${label.name}：<strong style="color: #667eea">${formatMoney(budgetData.totalBudget)}</strong></div>
-                        <div>已过天数：<strong style="color: #667eea">${budgetData.days} ${label.unit}</strong></div>
-                        <div>剩余天数：<strong style="color: #667eea">${budgetData.remainingDays} ${label.unit}</strong></div>
-                        <div>预算状态：<strong style="color: ${statusColor}">${budgetData.status}</strong></div>
-                    </div></div>
-                <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 15px;">
-                    <div style="margin-bottom: 10px;"><strong>预算进度：</strong> ${budgetData.usageRate.toFixed(1)}%</div>
-                    <div style="background: #e0e0e0; height: 20px; border-radius: 10px; overflow: hidden;">
-                        <div style="background: ${statusColor}; height: 100%; width: ${Math.min(budgetData.usageRate, 100)}%;"></div></div>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px;">
-                        <div>已用：${formatMoney(budgetData.actualExpense)}</div>
-                        <div>剩余：${formatMoney(budgetData.remaining)}</div>
-                        <div>日均消费：${formatMoney(budgetData.dailyAvg)}</div>
-                        <div>可用日均：${formatMoney(budgetData.dailyRemaining)}</div>
-                    </div></div>
-                <div style="padding: 15px; background: ${budgetData.status === '超支' ? '#ffe6e6' : (budgetData.status === '紧张' ? '#fff3cd' : '#e6f7e6')}; border-radius: 8px; border-left: 4px solid ${statusColor};">
-                    <div style="font-weight: bold; margin-bottom: 5px;">${budgetData.status === '超支' ? '预算超支' : (budgetData.status === '紧张' ? '预算紧张' : '预算正常')}</div>
-                    <div style="font-size: 0.95em;">${budgetData.status === '超支' ? '已超支 ' + formatMoney(Math.abs(budgetData.remaining)) : '剩余预算 ' + formatMoney(budgetData.remaining)}</div></div>`;
         }
 
         function loadMonthlyTrendChart(records) {
@@ -365,6 +277,8 @@
                     scales: { y: { beginAtZero: true, ticks: { callback: (v) => '¥' + v.toLocaleString() } } }
                 }
             });
+            const loadingEl = document.getElementById('monthlyTrendChart-loading');
+            if (loadingEl) loadingEl.style.display = 'none';
         }
 
         function loadComparisonChart(records) {
@@ -389,84 +303,8 @@
                     scales: { y: { beginAtZero: true, ticks: { callback: (v) => '¥' + v.toLocaleString() } } }
                 }
             });
-        }
-
-        function loadHeatmap(records) {
-            const data = heatmapData(records, 3);
-            if (!data || !data.days) return;
-
-            const container = document.getElementById('heatmap-container');
-            let html = '<div class="heatmap-months">';
-            data.months.forEach(month => {
-                html += '<div class="heatmap-month">' + month.name + '</div>';
-            });
-            html += '</div><div class="heatmap-container-inner">';
-
-            html += '<div class="heatmap-weekdays">';
-            ['日', '一', '二', '三', '四', '五', '六'].forEach(day => {
-                html += '<div>' + day + '</div>';
-            });
-            html += '</div>';
-
-            html += '<div class="heatmap">';
-            data.days.forEach(day => {
-                const level = day.level || 0;
-                const amount = day.amount || 0;
-                const tooltip = amount > 0 ? day.date + '\n' + formatMoney(amount) : day.date + '\n无消费';
-                html += '<div class="heatmap-day heatmap-level-' + level + '" data-tooltip="' + tooltip + '"></div>';
-            });
-            html += '</div></div>';
-
-            const firstDate = data.days[0]?.date || '';
-            const lastDate = data.days[data.days.length - 1]?.date || '';
-            html += '<div style="text-align: center; color: #999; font-size: 0.85em; margin-top: 15px;">' +
-                    '数据范围：' + firstDate + ' 至 ' + lastDate + ' 共 ' + data.days.length + ' 天' +
-                    '</div>';
-
-            container.innerHTML = html;
-        }
-
-        function loadMonthlyBudgetStats(records) {
-            const personalRecords = records.filter(r => r.account === '个人');
-            const data = monthlyBudgetStats(personalRecords, NOCOBASE_CONFIG.BUDGET_MONTHLY);
-            const container = document.getElementById('monthly-budget-stats');
-
-            if (!data.months || data.months.length === 0) {
-                container.innerHTML = '<div class="loading">暂无预算数据</div>';
-                return;
-            }
-
-            const ys = data.yearly_summary;
-            let html = '';
-
-            if (ys) {
-                html += `<div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-                    <div style="font-size: 1.1em; font-weight: bold; margin-bottom: 15px;">${ys.year} 年度总结</div>
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
-                        <div><div style="color:#666;font-size:0.9em;">总预算</div><div style="font-size:1.3em;font-weight:bold;color:#667eea;">${formatMoney(ys.totalBudget)}</div></div>
-                        <div><div style="color:#666;font-size:0.9em;">总支出</div><div style="font-size:1.3em;font-weight:bold;color:#FF6B6B;">${formatMoney(ys.totalActual)}</div></div>
-                        <div><div style="color:#666;font-size:0.9em;">结余</div><div style="font-size:1.3em;font-weight:bold;color:${ys.remaining >= 0 ? '#52C41A' : '#FF6B6B'};">${formatMoney(ys.remaining)}</div></div>
-                        <div><div style="color:#666;font-size:0.9em;">执行率</div><div style="font-size:1.3em;font-weight:bold;">${ys.usageRate}%</div></div>
-                    </div></div>`;
-            }
-
-            html += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">';
-            for (const m of data.months) {
-                const statusColors = {'超支': '#FF6B6B', '紧张': '#FFC107', '正常': '#52C41A'};
-                html += `<div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid ${statusColors[m.status] || '#666'};">
-                    <div style="font-weight: bold; margin-bottom: 8px;">${m.month}</div>
-                    <div style="font-size: 0.9em; color: #666;">预算: ${formatMoney(m.budget)}</div>
-                    <div style="font-size: 0.9em; color: #666;">支出: ${formatMoney(m.actual)} (${m.count} 笔)</div>
-                    <div style="font-size: 0.9em; color: #666;">执行率: ${m.usageRate}%</div>
-                    <div style="margin-top: 8px; background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden;">
-                        <div style="background: ${statusColors[m.status]}; height: 100%; width: ${Math.min(m.usageRate, 100)}%;"></div>
-                    </div>
-                    <div style="margin-top: 5px; font-size: 0.85em; color: ${statusColors[m.status]}; font-weight: 500;">${m.status}</div>
-                </div>`;
-            }
-            html += '</div>';
-
-            container.innerHTML = html;
+            const loadingEl = document.getElementById('comparisonChart-loading');
+            if (loadingEl) loadingEl.style.display = 'none';
         }
 
         whenGlobalsReady(() => { loadStats(); });

@@ -16,7 +16,7 @@ npm run dev
 npm run build
 
 # 启动本地服务器（端口 18080，提供静态文件 + API 代理 + AI 解析/分发代理）
-cd web && python3 server.py 18080
+cd server && python3 server.py 18080
 
 # 浏览器访问
 # 开发模式: http://localhost:5173/index.html（推荐，支持 HMR）
@@ -27,9 +27,9 @@ cd web && python3 server.py 18080
 # http://localhost:5173/trip_allowance.html - 差旅补助
 
 # 数据迁移脚本
-python3 scripts/create_collections.py       # 在 NocoBase 创建表结构
-python3 scripts/migrate_to_nocobase.py      # SQLite → NocoBase
-python3 scripts/migrate_nocobase_to_nocobase.py  # NocoBase 实例间迁移
+python3 server/scripts/create_collections.py       # 在 NocoBase 创建表结构
+python3 server/scripts/migrate_to_nocobase.py      # SQLite → NocoBase
+python3 server/scripts/migrate_nocobase_to_nocobase.py  # NocoBase 实例间迁移
 ```
 
 ## 架构概览
@@ -65,13 +65,13 @@ python3 scripts/migrate_nocobase_to_nocobase.py  # NocoBase 实例间迁移
 
 ### Prompt 文件
 
-SYSTEM_PROMPT 存储在 `web/prompts/` 目录下，每次请求动态读取，修改后无需重启服务：
+SYSTEM_PROMPT 存储在 `server/prompts/` 目录下，每次请求动态读取，修改后无需重启服务：
 
 | 文件 | 用途 |
 |---|---|
-| `web/prompts/dispatch.md` | 意图识别 + 参数提取 + Skill 路由规则 |
-| `web/prompts/record.md` | 纯记账解析规则（降级方案） |
-| `web/prompts/README.md` | prompt 编写规范 |
+| `server/prompts/dispatch.md` | 意图识别 + 参数提取 + Skill 路由规则 |
+| `server/prompts/record.md` | 纯记账解析规则（降级方案） |
+| `server/prompts/README.md` | prompt 编写规范 |
 
 Agent 可通过自然语言修改 prompt："把 '瑞幸' 加到餐饮分类关键词里"
 

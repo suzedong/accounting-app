@@ -13,14 +13,28 @@ import { calcTotals, statsByCategory, statsByAccount, comparison, monthlyTrend, 
         try {
             const learningContext = getPromptContext();
 
+            const body = {
+                text,
+                learning_context: learningContext,
+                conversation_history: conversationHistory
+            };
+
             const response = await fetch('/api/ai/dispatch', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, learning_context: learningContext, conversation_history: conversationHistory })
+                body: JSON.stringify(body)
             });
 
             if (!response.ok) {
-                throw new Error(`dispatch 请求失败 (${response.status})`);
+                // 读取错误体信息
+                let errorDetail = `HTTP ${response.status}`;
+                try {
+                    const errText = await response.text();
+                    if (errText) {
+                        errorDetail += `: ${errText.substring(0, 500)}`;
+                    }
+                } catch (e) { /* 忽略 */ }
+                throw new Error(`dispatch 请求失败 (${errorDetail})`);
             }
 
             const result = await response.json();
@@ -38,6 +52,7 @@ import { calcTotals, statsByCategory, statsByAccount, comparison, monthlyTrend, 
                 intent: 'record',
                 confidence: 0.5,
                 fallback: true,
+                _error_detail: error.message,
                 fields: await fallbackParse(text)
             };
         }
@@ -72,6 +87,10 @@ import { calcTotals, statsByCategory, statsByAccount, comparison, monthlyTrend, 
                 return executeBudget(confidence);
             case 'prompt':
                 return executePromptUpdate(params || {}, dispatchResult._inputText);
+            case 'preference':
+                return executePreference(params || {}, dispatchResult._inputText);
+            case 'correction':
+                return executeCorrection(dispatchResult.correction || {}, dispatchResult.note, dispatchResult._inputText, confidence);
             case 'data_query':
                 return executeDataQuery(params || {}, confidence);
             case 'create-skill':
@@ -418,6 +437,12 @@ import { calcTotals, statsByCategory, statsByAccount, comparison, monthlyTrend, 
                 return { type: 'text', content: '请提供要更新的 prompt 内容。' };
             }
 
+            // 先读取旧内容，用于展示 diff
+            const readResponse = await fetch(`/api/ai/prompt/${promptName}`, {
+                method: 'GET'
+            });
+            const oldContent = readResponse.ok ? (await readResponse.json()).content : '';
+
             const response = await fetch(`/api/ai/prompt/${promptName}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -430,10 +455,178 @@ import { calcTotals, statsByCategory, statsByAccount, comparison, monthlyTrend, 
             }
 
             const result = await response.json();
-            return { type: 'text', content: `Prompt 已更新：${result.file}` };
+            return {
+                type: 'prompt-updated',
+                content: `Prompt 已更新：${result.file}`,
+                promptName: result.file,
+                oldContent,
+                newContent
+            };
         } catch (error) {
             return { type: 'text', content: 'Prompt 更新失败：' + error.message };
         }
+    }
+
+    /**
+     * 纠正上一条记录 — 更新记录 + 可选地保存偏好
+     */
+    async function executeCorrection(correction, note, inputText, confidence) {
+        try {
+            const fields = correction.fields || {};
+            if (Object.keys(fields).length === 0) {
+                return { type: 'text', content: '没有发现需要修正的字段。' };
+            }
+
+            // 1. 找到最近一条 AI 记录的记录 ID
+            const lastMsgId = window.__lastSavedRecordId;
+            if (!lastMsgId) {
+                return { type: 'text', content: '找不到上一条记录，无法修正。' };
+            }
+
+            // 2. 构建更新数据（字段名映射到 NocoBase 格式）
+            const fieldMapping = {
+                'category': 'category',
+                'account': 'account',
+                'payment': 'payment_method',
+                'amount': 'amount',
+                'type': 'type',
+                'note': 'note',
+                'datetime': 'datetime'
+            };
+
+            const updateData = {};
+            for (const [key, value] of Object.entries(fields)) {
+                const nocobaseKey = fieldMapping[key] || key;
+                updateData[nocobaseKey] = value;
+            }
+
+            // 3. 更新记录
+            const updateResponse = await fetch(`/api/collections/records/actions:update?filterByTk=${lastMsgId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData)
+            });
+
+            if (!updateResponse.ok) {
+                const err = await updateResponse.json();
+                return { type: 'text', content: '记录更新失败：' + (err.error || '未知错误') };
+            }
+
+            // 4. 如果有 note，保存偏好
+            let preferenceMsg = '';
+            if (note) {
+                const readResponse = await fetch('/api/ai/preference', { method: 'GET' });
+                const currentData = readResponse.ok ? await readResponse.json() : { content: '' };
+                const oldContent = currentData.content || '';
+
+                // 提取偏好信息，保存到 preferences.md
+                const newContent = oldContent + '\n- ' + note;
+                const writeResponse = await fetch('/api/ai/preference', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: newContent })
+                });
+
+                if (writeResponse.ok) {
+                    preferenceMsg = ' 同时已记住你的习惯。';
+                }
+            }
+
+            // 5. 生成确认消息
+            const changedFields = Object.entries(fields).map(([k, v]) => `${k}=${v}`).join('、');
+            return {
+                type: 'correction-applied',
+                content: `已修正上一条记录：${changedFields}.${preferenceMsg}`,
+                fields,
+                recordId: lastMsgId,
+                _skill: { name: 'correction', displayName: '纠正记录', confidence }
+            };
+        } catch (error) {
+            return { type: 'text', content: '纠正失败：' + error.message };
+        }
+    }
+
+    /**
+     * Preference 保存 Skill — 修改 preferences.md 文件
+     */
+    async function executePreference(params, inputText) {
+        const { section, key, value } = params;
+
+        if (!key || !value) {
+            return { type: 'text', content: '无法识别你的偏好，请说得更具体一些。' };
+        }
+
+        // 1. 读取当前 preferences.md
+        const readResponse = await fetch('/api/ai/preference', { method: 'GET' });
+        const currentData = readResponse.ok ? await readResponse.json() : { content: '' };
+        const oldContent = currentData.content || '';
+
+        // 2. 构建新内容
+        const newContent = updatePreferenceContent(oldContent, section, key, value);
+
+        // 3. 写入
+        const writeResponse = await fetch('/api/ai/preference', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: newContent })
+        });
+
+        if (!writeResponse.ok) {
+            const err = await writeResponse.json();
+            return { type: 'text', content: '偏好保存失败：' + (err.error || '未知错误') };
+        }
+
+        // 4. 生成确认消息
+        const confirmMessages = {
+            noteFormat: `已记住，以后备注会${value}。`,
+            defaultAccount: `已记住，以后默认使用「${value}」账户。`,
+            defaultPayment: `已记住，以后默认使用「${value}」支付。`,
+            categoryDefault: `已记住，以后这类消费会默认归类到「${value}」。`
+        };
+        const message = confirmMessages[section] || `已记住你的偏好：${key} = ${value}。`;
+
+        return {
+            type: 'preference-saved',
+            content: message,
+            preference: { section, key, value },
+            oldContent,
+            newContent,
+            _skill: { name: 'preference', displayName: '偏好设置', confidence: 0.9 }
+        };
+    }
+
+    /**
+     * 更新 preferences.md 内容（简单的键值替换/追加）
+     */
+    function updatePreferenceContent(content, section, key, value) {
+        const lines = content.split('\n');
+        const targetPrefix = `- ${key}：`;
+        const targetPrefixAlt = `- ${key}:`;
+        let found = false;
+
+        for (let i = 0; i < lines.length; i++) {
+            const trimmed = lines[i].trim();
+            if (trimmed.startsWith(targetPrefix) || trimmed.startsWith(targetPrefixAlt)) {
+                lines[i] = `- ${key}：${value}`;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            const sectionHeaders = { noteFormat: '## 备注格式', defaults: '## 默认值' };
+            const header = sectionHeaders[section] || '## 其他偏好';
+            const headerIdx = lines.findIndex(l => l.trim() === header);
+            if (headerIdx >= 0) {
+                // 找到 section，在其后追加
+                lines.splice(headerIdx + 1, 0, `- ${key}：${value}`);
+            } else {
+                // 找不到 section，追加新 section
+                lines.push('', header, `- ${key}：${value}`);
+            }
+        }
+
+        return lines.join('\n');
     }
 
     // ==================== 辅助函数 ====================

@@ -7,11 +7,12 @@ import * as NocobaseAPI from './nocobase-api.js';
 import * as AgentCore from './agent-core.js';
 import { getPromptContext } from './learning-engine.js';
 import { formatMoney } from './utils.js';
-import './chat-widget.css';
+import '/assets/chat-widget.css';
 
 let chatHistory = [];
 let debugLog = [];
 let thinkingMsgId = null;
+let pendingImage = null;  // { base64, mimeType, thumbnail, size }
 let conversationState = {
         waitingForConfirm: false,
         pendingRecord: null,
@@ -22,10 +23,12 @@ let conversationState = {
     };
 
     const STORAGE_KEY = 'accounting_chat_history';
+    const DEBUG_KEY = 'accounting_debug_log';
     const LEARNING_KEY = 'accounting_ai_learning';
 
     function init() {
         loadHistory();
+        loadDebugLog();
         renderWidget();
         bindEvents();
     }
@@ -44,6 +47,23 @@ let conversationState = {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(chatHistory.slice(-100)));
         } catch (e) {
             console.warn('保存历史记录失败:', e);
+        }
+    }
+
+    function loadDebugLog() {
+        try {
+            const saved = localStorage.getItem(DEBUG_KEY);
+            debugLog = saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            debugLog = [];
+        }
+    }
+
+    function saveDebugLog() {
+        try {
+            localStorage.setItem(DEBUG_KEY, JSON.stringify(debugLog.slice(-50)));
+        } catch (e) {
+            console.warn('保存调试日志失败:', e);
         }
     }
 
@@ -71,31 +91,43 @@ let conversationState = {
             .map(msg => ({
                 type: msg.type,
                 content: msg.content,
-                data: msg.type === 'record-card' ? (msg.data || {}) : null
+                hasImage: !!(msg.data && msg.data.imageThumbnail),
+                data: msg.type === 'record-card' ? (msg.data || {}) : null,
+                // 保留 OCR 文本，让后续对话能参考之前的识别结果
+                ocrText: msg.data?.ocrText || null
             }))
             .slice(-10);
     }
 
-    function addDebugLog(userText, dispatchRequest, dispatchResponse, executeResult, error) {
+    function addDebugLog(userText, dispatchRequest, dispatchResponse, executeResult, error, imageSummary = null) {
         debugLog.push({
             timestamp: new Date().toLocaleString('zh-CN'),
             userInput: userText,
+            image: imageSummary,
             request: dispatchRequest,
             response: dispatchResponse,
             result: executeResult,
             error: error
         });
+        saveDebugLog();
     }
 
     function formatDebugMarkdown() {
         let md = '# 对话调试日志\n\n';
         debugLog.forEach((entry, i) => {
             md += `## [${entry.timestamp}] #${i + 1}\n\n`;
+            if (entry.image) {
+                const sizeKB = entry.image.sizeKB || ((entry.image.size || 0) / 1024).toFixed(1);
+                const mime = entry.image.mimeType || 'unknown';
+                md += `**图片**: ${mime} | ${sizeKB} KB\n\n`;
+            }
             md += `**用户输入**: ${entry.userInput}\n\n`;
             if (entry.request) {
                 md += '**发送给 LLM 的请求**:\n```json\n' + JSON.stringify(entry.request, null, 2) + '\n```\n\n';
             }
             if (entry.response) {
+                const dur = entry.response._duration;
+                if (dur) md += `**请求耗时**: ${dur} ms\n\n`;
                 md += '**LLM 返回**:\n```json\n' + JSON.stringify(entry.response, null, 2) + '\n```\n\n';
             }
             if (entry.result) {
@@ -120,9 +152,18 @@ let conversationState = {
         let md;
         if (entry) {
             md = `## 对话调试日志 [${entry.timestamp}]\n\n`;
+            if (entry.image) {
+                const sizeKB = entry.image.sizeKB || ((entry.image.size || 0) / 1024).toFixed(1);
+                const mime = entry.image.mimeType || 'unknown';
+                md += `**图片**: ${mime} | ${sizeKB} KB\n\n`;
+            }
             md += `**用户输入**: ${entry.userInput}\n\n`;
             if (entry.request) md += '**发送给 LLM 的请求**:\n```json\n' + JSON.stringify(entry.request, null, 2) + '\n```\n\n';
-            if (entry.response) md += '**LLM 返回**:\n```json\n' + JSON.stringify(entry.response, null, 2) + '\n```\n\n';
+            if (entry.response) {
+                const dur = entry.response._duration;
+                if (dur) md += `**请求耗时**: ${dur} ms\n\n`;
+                md += '**LLM 返回**:\n```json\n' + JSON.stringify(entry.response, null, 2) + '\n```\n\n';
+            }
             if (entry.result) md += '**执行结果**:\n```json\n' + JSON.stringify(entry.result, null, 2) + '\n```\n\n';
             if (entry.error) md += '**错误**:\n```\n' + entry.error + '\n```\n\n';
         } else {
@@ -180,13 +221,26 @@ let conversationState = {
     function renderDebugEntry(index, entry) {
         const intent = (entry.response && entry.response.intent) || '未知';
         const confidence = (entry.response && entry.response.confidence) || 0;
+        const duration = (entry.response && entry.response._duration) || null;
+        const hasImage = entry.image !== null && entry.image !== undefined;
         const reqShort = entry.request ? JSON.stringify(entry.request, null, 2) : '';
         const respShort = entry.response ? JSON.stringify(entry.response, null, 2) : '';
         const resultShort = entry.result ? JSON.stringify(entry.result, null, 2) : '';
+
+        // 图片信息格式化
+        let imageBadge = '';
+        if (hasImage) {
+            const sizeKB = entry.image.sizeKB || ((entry.image.size || 0) / 1024).toFixed(1);
+            const mime = entry.image.mimeType || entry.image.mimeType;
+            imageBadge = `<span class="chat-debug-image-badge" title="图片: ${mime} ${sizeKB} KB">🖼️ ${sizeKB} KB</span>`;
+        }
+
         return `
-            <div class="chat-debug-entry">
+            <div class="chat-debug-entry ${hasImage ? 'chat-debug-entry-image' : ''}">
                 <div class="chat-debug-entry-header">
                     <span class="chat-debug-index">#${index + 1}</span>
+                    ${imageBadge}
+                    ${duration ? `<span class="chat-debug-duration" title="请求耗时">${duration} ms</span>` : ''}
                     <span class="chat-debug-time">${entry.timestamp}</span>
                     <span class="chat-debug-intent">${intent} (${confidence.toFixed(2)})</span>
                     <button onclick="ChatWidget.copyDebugLog(${index})" title="复制单条">📋</button>
@@ -229,6 +283,7 @@ let conversationState = {
                         </div>
                     </div>
                     <div class="chat-header-actions">
+                        <button class="chat-action-btn" id="chat-rules" aria-label="规则管理" title="偏好和规则管理">📝</button>
                         <button class="chat-action-btn" id="chat-debug" aria-label="调试信息" title="调试信息">🔧</button>
                         <button class="chat-action-btn" id="chat-clear" aria-label="清空历史" title="清空历史">🗑️</button>
                         <button class="chat-action-btn" id="chat-minimize" aria-label="最小化" title="最小化">—</button>
@@ -236,12 +291,20 @@ let conversationState = {
                 </div>
                 <div class="chat-messages" id="chat-messages"></div>
                 <div class="chat-input-area">
+                    <div class="chat-image-preview" id="chat-image-preview" style="display:none">
+                        <img id="chat-preview-img" src="" alt="preview"/>
+                        <button class="chat-remove-image" id="chat-remove-image" title="移除图片">&times;</button>
+                    </div>
                     <div class="chat-input-wrapper">
-                        <textarea id="chat-input" placeholder="输入记账信息..." rows="1"></textarea>
+                        <button class="chat-upload-btn" id="chat-upload-btn" title="上传图片">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                        </button>
+                        <textarea id="chat-input" placeholder="输入记账信息，或粘贴/上传截图..." rows="1"></textarea>
                         <button class="chat-send-btn" id="chat-send">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
                         </button>
                     </div>
+                    <input type="file" id="chat-file-input" accept="image/*" style="display:none"/>
                     <div class="chat-hint">AI 也可能出错，请检查信息内容</div>
                 </div>
             </div>
@@ -255,6 +318,7 @@ let conversationState = {
         const minimize = document.getElementById('chat-minimize');
         const clearBtn = document.getElementById('chat-clear');
         const debugBtn = document.getElementById('chat-debug');
+        const rulesBtn = document.getElementById('chat-rules');
         const sendBtn = document.getElementById('chat-send');
         const input = document.getElementById('chat-input');
 
@@ -283,6 +347,10 @@ let conversationState = {
             showDebugPanel();
         });
 
+        rulesBtn.addEventListener('click', () => {
+            showRulesPanel();
+        });
+
         sendBtn.addEventListener('click', sendMessage);
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -293,6 +361,55 @@ let conversationState = {
         input.addEventListener('input', function () {
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+        });
+
+        // 图片上传按钮
+        const uploadBtn = document.getElementById('chat-upload-btn');
+        const fileInput = document.getElementById('chat-file-input');
+        const removeBtn = document.getElementById('chat-remove-image');
+
+        uploadBtn.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleImageFile(file);
+                fileInput.value = '';
+            }
+        });
+
+        removeBtn.addEventListener('click', clearPendingImage);
+
+        // 粘贴截图
+        input.addEventListener('paste', (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    e.preventDefault();
+                    const file = item.getAsFile();
+                    handleImageFile(file);
+                    break;
+                }
+            }
+        });
+
+        // 拖放图片
+        const inputArea = document.querySelector('.chat-input-area');
+        inputArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            inputArea.classList.add('chat-drag-over');
+        });
+        inputArea.addEventListener('dragleave', () => {
+            inputArea.classList.remove('chat-drag-over');
+        });
+        inputArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            inputArea.classList.remove('chat-drag-over');
+            const files = e.dataTransfer?.files;
+            if (files && files.length > 0 && files[0].type.startsWith('image/')) {
+                handleImageFile(files[0]);
+            }
         });
     }
 
@@ -308,6 +425,7 @@ let conversationState = {
                         <button aria-label="今天吃饭35元" onclick="ChatWidget.sendQuick('今天中午吃饭花了35元')">今天吃饭35元</button>
                         <button aria-label="工资收入5000" onclick="ChatWidget.sendQuick('收入5000工资')">工资收入5000</button>
                         <button aria-label="昨天打车25" onclick="ChatWidget.sendQuick('昨天打车25支付宝')">昨天打车25</button>
+                        <button aria-label="上传账单截图" onclick="document.getElementById('chat-upload-btn').click()">上传账单截图</button>
                     </div>
                 </div>
             `;
@@ -316,7 +434,10 @@ let conversationState = {
 
         container.innerHTML = chatHistory.map(msg => {
             if (msg.type === 'user') {
-                return `<div class="chat-msg user"><div class="chat-msg-bubble">${escapeHtml(msg.content)}</div></div>`;
+                const imgThumb = msg.data && msg.data.imageThumbnail
+                    ? `<img src="${msg.data.imageThumbnail}" class="chat-user-image" onclick="window.open(this.src)"/>`
+                    : '';
+                return `<div class="chat-msg user"><div class="chat-msg-bubble">${imgThumb}${escapeHtml(msg.content)}</div></div>`;
             } else if (msg.type === 'ai') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
                 return `<div class="chat-msg ai">${skillTag}<div class="chat-msg-bubble">${msg.content}</div></div>`;
@@ -325,10 +446,8 @@ let conversationState = {
                 return `<div class="chat-msg ai">${skillTag}${renderRecordCardContent(msg.data, msg.id)}</div>`;
             } else if (msg.type === 'missing-fields') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
-                return `<div class="chat-msg ai">${skillTag}${renderMissingFieldsContent(msg.data, msg.id)}</div>`;
-            } else if (msg.type === 'missing-fields') {
-                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
-                return `<div class="chat-msg ai">${skillTag}${renderMissingFieldsCardContent(msg.data || {}, msg.id)}</div>`;
+                const missing = msg.data && Array.isArray(msg.data.missingFields) ? msg.data.missingFields : [];
+                return `<div class="chat-msg ai">${skillTag}${renderMissingFieldsContent(missing, msg.id)}</div>`;
             } else if (msg.type === 'duplicate-warning') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
                 return `<div class="chat-msg ai">${skillTag}${renderDuplicateWarningContent(msg.data, msg.id)}</div>`;
@@ -344,6 +463,15 @@ let conversationState = {
             } else if (msg.type === 'collection-list') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
                 return `<div class="chat-msg ai">${skillTag}${renderCollectionListContent(msg.data || msg)}</div>`;
+            } else if (msg.type === 'prompt-updated') {
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderPromptUpdatedContent(msg.data || msg)}</div>`;
+            } else if (msg.type === 'preference-saved') {
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderPreferenceSavedContent(msg.data || msg)}</div>`;
+            } else if (msg.type === 'correction-applied') {
+                const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
+                return `<div class="chat-msg ai">${skillTag}${renderCorrectionAppliedContent(msg.data || msg)}</div>`;
             } else if (msg.type === 'thinking-active') {
                 return `<div class="chat-msg ai chat-thinking-active" id="${msg.id}">${msg.content}</div>`;
             } else if (msg.type === 'thinking-collapsed') {
@@ -446,6 +574,87 @@ let conversationState = {
         `;
     }
 
+    function renderPromptUpdatedContent(data) {
+        const promptName = escapeHtml(data.promptName || '');
+        const oldContent = escapeHtml(data.oldContent || '');
+        const newContent = escapeHtml(data.newContent || '');
+
+        // 简单的 diff：按行对比
+        const oldLines = oldContent.split('\n');
+        const newLines = newContent.split('\n');
+
+        let diffHtml = '';
+        const maxLen = Math.max(oldLines.length, newLines.length);
+        for (let i = 0; i < maxLen; i++) {
+            const oldLine = oldLines[i] || '';
+            const newLine = newLines[i] || '';
+            if (oldLine === newLine) {
+                diffHtml += `<div class="chat-diff-line unchanged">${escapeHtml(newLine)}</div>`;
+            } else {
+                if (oldLine) diffHtml += `<div class="chat-diff-line removed">- ${escapeHtml(oldLine)}</div>`;
+                if (newLine) diffHtml += `<div class="chat-diff-line added">+ ${escapeHtml(newLine)}</div>`;
+            }
+        }
+
+        return `
+            <div class="chat-msg-bubble">
+                <div>✅ Prompt <strong>${promptName}</strong> 已更新</div>
+                <details class="chat-prompt-diff">
+                    <summary>📝 查看修改内容</summary>
+                    <div class="chat-diff-content">${diffHtml}</div>
+                </details>
+            </div>
+        `;
+    }
+
+    function renderPreferenceSavedContent(data) {
+        const message = escapeHtml(data.message || '偏好已保存');
+        const oldContent = escapeHtml(data.oldContent || '');
+        const newContent = escapeHtml(data.newContent || '');
+
+        let diffHtml = '';
+        if (oldContent && newContent) {
+            const oldLines = oldContent.split('\n');
+            const newLines = newContent.split('\n');
+            const maxLen = Math.max(oldLines.length, newLines.length);
+            for (let i = 0; i < maxLen; i++) {
+                const oldLine = oldLines[i] || '';
+                const newLine = newLines[i] || '';
+                if (oldLine === newLine) {
+                    diffHtml += `<div class="chat-diff-line unchanged">${escapeHtml(newLine)}</div>`;
+                } else {
+                    if (oldLine) diffHtml += `<div class="chat-diff-line removed">- ${escapeHtml(oldLine)}</div>`;
+                    if (newLine) diffHtml += `<div class="chat-diff-line added">+ ${escapeHtml(newLine)}</div>`;
+                }
+            }
+        }
+
+        return `
+            <div class="chat-msg-bubble chat-preference-saved">
+                <div>✅ ${message}</div>
+                ${diffHtml ? `<details class="chat-prompt-diff"><summary>📝 查看修改内容</summary><div class="chat-diff-content">${diffHtml}</div></details>` : ''}
+            </div>
+        `;
+    }
+
+    function renderCorrectionAppliedContent(data) {
+        const message = escapeHtml(data.message || '记录已修正');
+        const fields = data.fields || {};
+        const fieldLabels = { category: '分类', account: '账户', payment_method: '支付方式', payment: '支付方式', amount: '金额', type: '类型', note: '备注', datetime: '时间' };
+
+        const fieldsHtml = Object.entries(fields).map(([k, v]) => {
+            const label = fieldLabels[k] || k;
+            return `<span class="chat-correction-field">${label}: ${escapeHtml(String(v))}</span>`;
+        }).join('');
+
+        return `
+            <div class="chat-msg-bubble chat-correction-applied">
+                <div>✅ ${message}</div>
+                ${fieldsHtml ? `<div class="chat-correction-fields">${fieldsHtml}</div>` : ''}
+            </div>
+        `;
+    }
+
     function renderSkillTag(skillMeta) {
         if (!skillMeta || !skillMeta.name) return '';
         const name = skillMeta.displayName || skillMeta.name;
@@ -485,7 +694,8 @@ let conversationState = {
 
     const INTENT_LABELS = {
         'record': '记账', 'query': '查询记录', 'stats': '统计分析',
-        'budget': '预算管理', 'prompt': '修改规则', 'data_query': '数据查询',
+        'budget': '预算管理', 'prompt': '修改规则', 'preference': '偏好设置',
+        'data_query': '数据查询',
         'create-skill': '创建 Skill', 'chitchat': '闲聊', 'follow_up': '追问补充'
     };
 
@@ -691,7 +901,10 @@ let conversationState = {
         let html = '';
 
         if (type === 'user') {
-            html = `<div class="chat-msg user"><div class="chat-msg-bubble">${escapeHtml(content)}</div></div>`;
+            const imgThumb = data && data.imageThumbnail
+                ? `<img src="${data.imageThumbnail}" class="chat-user-image" onclick="window.open(this.src)"/>`
+                : '';
+            html = `<div class="chat-msg user"><div class="chat-msg-bubble">${imgThumb}${escapeHtml(content)}</div></div>`;
         } else if (type === 'ai') {
             const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
             html = `<div class="chat-msg ai">${skillTag}<div class="chat-msg-bubble">${content}</div></div>`;
@@ -713,6 +926,12 @@ let conversationState = {
         } else if (type === 'collection-list') {
             const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
             html = `<div class="chat-msg ai">${skillTag}${renderCollectionListContent(data || {})}</div>`;
+        } else if (type === 'prompt-updated') {
+            const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
+            html = `<div class="chat-msg ai">${skillTag}${renderPromptUpdatedContent(data || {})}</div>`;
+        } else if (type === 'preference-saved') {
+            const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
+            html = `<div class="chat-msg ai">${skillTag}${renderPreferenceSavedContent(data || {})}</div>`;
         }
 
         if (html) {
@@ -724,11 +943,22 @@ let conversationState = {
     async function sendMessage() {
         const input = document.getElementById('chat-input');
         const text = input.value.trim();
-        if (!text) return;
+        if (!text && !pendingImage) return;
 
-        addMessage('user', text);
+        const displayContent = pendingImage
+            ? (text ? text + ' [图片]' : '[图片]')
+            : text;
+
+        const msgData = pendingImage
+            ? { imageThumbnail: pendingImage.thumbnail }
+            : null;
+
+        addMessage('user', displayContent, msgData);
         input.value = '';
         input.style.height = 'auto';
+
+        const imageData = pendingImage ? { ...pendingImage } : null;
+        clearPendingImage();
 
         // 如果正在编辑字段，直接更新记录
         if (conversationState.editingField && conversationState.pendingRecord) {
@@ -756,30 +986,48 @@ let conversationState = {
             conversationState.awaitingFollowUp = false;
             conversationState.pendingFollowUp = null;
 
-            // 构造合成文本重新 dispatch
             const synthesized = `${mergedFields.datetime || ''}${mergedFields.type === '支出' ? '花费' : '收入'}${mergedFields.amount || ''}元 ${mergedFields.category || ''} ${mergedFields.note || ''}`.trim();
-            await dispatchAndProcess(synthesized, mergedFields);
+            await dispatchAndProcess(synthesized, mergedFields, imageData);
             return;
         }
 
         hideTyping();
-        await dispatchAndProcess(text);
+        await dispatchAndProcess(text, null, imageData);
     }
 
-    async function dispatchAndProcess(text, mergedFields = null) {
+    async function dispatchAndProcess(text, mergedFields = null, imageData = null) {
+        // 合并用户文本 + OCR 文本
+        let combinedText = text;
+        if (imageData && imageData.ocrText) {
+            combinedText = `[OCR识别文本]\n${imageData.ocrText}\n[/OCR]\n\n${text}`;
+        }
+
         const conversationHistory = getConversationHistoryForLLM();
-        const dispatchRequest = { text, learning_context: getPromptContext(), conversation_history: conversationHistory };
+        const dispatchRequest = { text: combinedText, learning_context: getPromptContext(), conversation_history: conversationHistory };
+        if (imageData) {
+            dispatchRequest.ocr_summary = {
+                mimeType: imageData.mimeType,
+                sizeKB: (imageData.base64.length * 0.75 / 1024).toFixed(1),
+                ocrLength: imageData.ocrText.length
+            };
+        }
         let dispatchResponse = null;
         let executeResult = null;
         let error = null;
 
+        // 记录请求开始时间和图片摘要
+        const startTime = Date.now();
+
         try {
-            // 1. 显示思考中
             showThinking({ intent: '分析中...', confidence: 0 });
             await delay(200);
 
-            dispatchResponse = await AgentCore.dispatch(text, conversationHistory);
+            dispatchResponse = await AgentCore.dispatch(combinedText, conversationHistory);
             dispatchResponse._inputText = text;
+
+            // 计算请求耗时
+            dispatchResponse._duration = Date.now() - startTime;
+            dispatchResponse._hasImage = !!imageData;
 
             // 如果有合并的字段（追问回复），直接补充到 fields 中
             if (mergedFields && dispatchResponse.fields) {
@@ -798,19 +1046,22 @@ let conversationState = {
             // 4. 执行
             executeResult = await AgentCore.execute(dispatchResponse);
 
-            // 5. 折叠思考过程
-            collapseThinking(dispatchResponse, skillMeta.displayName);
+            // 5. 折叠思考过程 — 使用 executeResult 中的最终 Skill 名称
+            const finalSkill = executeResult._skill || dispatchResponse._skill || { displayName: '完成' };
+            collapseThinking(dispatchResponse, finalSkill.displayName);
 
             // 6. 追加结果消息
             appendResultMessage(executeResult, dispatchResponse);
 
             // 记录调试日志
-            addDebugLog(text, dispatchRequest, dispatchResponse, executeResult, error);
+            const ocrSummary = imageData ? { mimeType: imageData.mimeType, ocrLength: imageData.ocrText.length } : null;
+            addDebugLog(combinedText, dispatchRequest, dispatchResponse, executeResult, error, imageData ? { ...imageData, base64: null } : null);
         } catch (e) {
+            const duration = Date.now() - startTime;
             error = e.message;
             hideThinking();
             addMessage('ai', '解析出错：' + e.message);
-            addDebugLog(text, dispatchRequest, dispatchResponse, executeResult, error);
+            addDebugLog(combinedText, dispatchRequest, { _duration: duration, _hasImage: !!imageData, _error: true }, null, error, imageData ? { ...imageData, base64: null } : null);
         }
     }
 
@@ -866,6 +1117,27 @@ let conversationState = {
                 skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
             });
             saveHistory();
+        } else if (result.type === 'prompt-updated') {
+            appendSingleMessage('prompt-updated', result.content, result, skillMeta);
+            chatHistory.push({
+                type: 'prompt-updated', content: result.content, data: result,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
+        } else if (result.type === 'preference-saved') {
+            appendSingleMessage('preference-saved', result.content, result, skillMeta);
+            chatHistory.push({
+                type: 'preference-saved', content: result.content, data: result,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
+        } else if (result.type === 'correction-applied') {
+            appendSingleMessage('correction-applied', result.content, result, skillMeta);
+            chatHistory.push({
+                type: 'correction-applied', content: result.content, data: result,
+                skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
+            });
+            saveHistory();
         } else if (result.type === 'text') {
             appendSingleMessage('ai', result.content, null, skillMeta);
             chatHistory.push({
@@ -915,7 +1187,11 @@ let conversationState = {
                 payment_method: record.payment || '微信支付'
             };
 
-            await NocobaseAPI.createRecord(data);
+            const result = await NocobaseAPI.createRecord(data);
+            const recordId = result?.data?.id;
+            if (recordId) {
+                window.__lastSavedRecordId = recordId;
+            }
 
             const typeIcon = data.type === '支出' ? '' : '📥';
             addMessage('ai', `${typeIcon} 已记录：${formatMoney(data.amount)} - ${data.category}`, null, skillMeta);
@@ -956,21 +1232,89 @@ let conversationState = {
         addMessage('ai', `请选择要修改的字段：<div class="chat-quick-options">${options}</div>`);
     }
 
-    function editField(field, msgId) {
+    async function editField(field, msgId) {
+        const record = conversationState.pendingRecord;
         const prompts = {
             'type': '请输入类型（收入/支出）：',
             'amount': '请输入金额：',
-            'category': '请输入分类：',
-            'account': '请输入账户（个人/家庭/公司）：',
-            'payment': '请输入支付方式：',
             'datetime': '请输入时间：',
             'note': '请输入备注：'
         };
-        addMessage('ai', prompts[field] || '请输入：');
-        conversationState.editingField = field;
+
+        // 纯文本输入的字段
+        if (prompts[field]) {
+            addMessage('ai', prompts[field]);
+            conversationState.editingField = field;
+            return;
+        }
+
+        // 分类字段：动态加载分类表 + 当前值
+        if (field === 'category') {
+            addMessage('ai', '请选择分类：', null);
+            const msg = chatHistory[chatHistory.length - 1];
+            let categories = [];
+            try {
+                const result = await NocobaseAPI.getCategories();
+                const items = result.data || [];
+                categories = items.map(c => c.name);
+            } catch (e) { console.warn('加载分类失败:', e); }
+
+            // 确保当前记录的值在选项中
+            const currentValue = record?.category || '';
+            if (currentValue && !categories.includes(currentValue)) {
+                categories.unshift(currentValue);
+            }
+            if (categories.length === 0) {
+                categories = ['餐饮', '交通出行', '购物', '通信费', '生活杂费', '其他'];
+            }
+
+            const buttons = categories.map(c =>
+                `<button aria-label="${c}" onclick="ChatWidget.sendQuick('${c}')">${c}</button>`
+            ).join('');
+            msg.content += `<div class="chat-quick-options">${buttons}</div>`;
+            saveHistory();
+            renderMessages();
+            conversationState.editingField = field;
+            return;
+        }
+
+        // 支付方式字段：动态加载 + 当前值
+        if (field === 'payment') {
+            addMessage('ai', '请选择支付方式：', null);
+            const msg = chatHistory[chatHistory.length - 1];
+            let payments = [];
+            try {
+                const result = await NocobaseAPI.getPaymentMethods();
+                const items = result.data || [];
+                payments = items.map(p => p.name);
+            } catch (e) { console.warn('加载支付方式失败:', e); }
+
+            const currentValue = record?.payment || '';
+            if (currentValue && !payments.includes(currentValue)) {
+                payments.unshift(currentValue);
+            }
+            if (payments.length === 0) {
+                payments = ['微信支付', '支付宝', '信用卡', '现金'];
+            }
+
+            const buttons = payments.map(p =>
+                `<button aria-label="${p}" onclick="ChatWidget.sendQuick('${p}')">${p}</button>`
+            ).join('');
+            msg.content += `<div class="chat-quick-options">${buttons}</div>`;
+            saveHistory();
+            renderMessages();
+            conversationState.editingField = field;
+            return;
+        }
+
+        // 账户字段
+        if (field === 'account') {
+            addMessage('ai', '请输入账户（个人/家庭/公司）：');
+            conversationState.editingField = field;
+        }
     }
 
-    function fillMissing(field, msgId) {
+    async function fillMissing(field, msgId) {
         const prompts = {
             'amount': '请输入金额（如：35元）',
             'type': '请选择类型：',
@@ -989,13 +1333,37 @@ let conversationState = {
         } else if (field === 'category') {
             addMessage('ai', prompts[field], null);
             const msg = chatHistory[chatHistory.length - 1];
-            msg.content += `<div class="chat-quick-options"><button aria-label="餐饮" onclick="ChatWidget.sendQuick('餐饮')">餐饮</button><button aria-label="交通出行" onclick="ChatWidget.sendQuick('交通出行')">交通</button><button aria-label="购物" onclick="ChatWidget.sendQuick('购物')">购物</button><button aria-label="通信费" onclick="ChatWidget.sendQuick('通信费')">通信费</button><button aria-label="生活杂费" onclick="ChatWidget.sendQuick('生活杂费')">生活</button><button aria-label="其他" onclick="ChatWidget.sendQuick('其他')">其他</button></div>`;
+            let categories = [];
+            try {
+                const result = await NocobaseAPI.getCategories();
+                const items = result.data || [];
+                categories = items.filter(c => c.type === '支出').map(c => c.name);
+            } catch (e) { console.warn('加载分类失败:', e); }
+            if (categories.length === 0) {
+                categories = ['餐饮', '交通出行', '购物', '通信费', '生活杂费', '其他'];
+            }
+            const buttons = categories.map(c =>
+                `<button aria-label="${c}" onclick="ChatWidget.sendQuick('${c}')">${c}</button>`
+            ).join('');
+            msg.content += `<div class="chat-quick-options">${buttons}</div>`;
             saveHistory();
             renderMessages();
         } else if (field === 'payment') {
             addMessage('ai', prompts[field], null);
             const msg = chatHistory[chatHistory.length - 1];
-            msg.content += `<div class="chat-quick-options"><button aria-label="微信支付" onclick="ChatWidget.sendQuick('微信支付')">微信</button><button aria-label="支付宝" onclick="ChatWidget.sendQuick('支付宝')">支付宝</button><button aria-label="信用卡" onclick="ChatWidget.sendQuick('信用卡')">信用卡</button><button aria-label="现金" onclick="ChatWidget.sendQuick('现金')">现金</button></div>`;
+            let payments = [];
+            try {
+                const result = await NocobaseAPI.getPaymentMethods();
+                const items = result.data || [];
+                payments = items.map(p => p.name);
+            } catch (e) { console.warn('加载支付方式失败:', e); }
+            if (payments.length === 0) {
+                payments = ['微信支付', '支付宝', '信用卡', '现金'];
+            }
+            const buttons = payments.map(p =>
+                `<button aria-label="${p}" onclick="ChatWidget.sendQuick('${p}')">${p}</button>`
+            ).join('');
+            msg.content += `<div class="chat-quick-options">${buttons}</div>`;
             saveHistory();
             renderMessages();
         } else {
@@ -1052,6 +1420,124 @@ let conversationState = {
         }
     }
 
+    // ========== 图片处理 ==========
+
+    function handleImageFile(file) {
+        if (file.size > 10 * 1024 * 1024) {
+            alert('图片文件过大，请选择小于 10MB 的图片');
+            return;
+        }
+        if (!file.type.startsWith('image/')) {
+            alert('请选择图片文件');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const dataUrl = e.target.result;
+            compressImage(dataUrl, 1280, 0.9, (compressedUrl) => {
+                generateThumbnail(dataUrl, (thumbnailUrl) => {
+                    // 上传到后端 OCR 服务
+                    fetch('/api/ai/ocr', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ base64: compressedUrl, mimeType: 'image/jpeg' })
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.error) {
+                            console.error('[OCR] 后端识别失败:', data.error);
+                            pendingImage = {
+                                base64: compressedUrl,
+                                mimeType: 'image/jpeg',
+                                size: file.size,
+                                thumbnail: thumbnailUrl,
+                                ocrText: ''
+                            };
+                        } else {
+                            console.log('[OCR] PaddleOCR 识别结果:', data.text);
+                            pendingImage = {
+                                base64: compressedUrl,
+                                mimeType: 'image/jpeg',
+                                size: file.size,
+                                thumbnail: thumbnailUrl,
+                                ocrText: data.text || ''
+                            };
+                        }
+                        showImagePreview(compressedUrl);
+                    })
+                    .catch(err => {
+                        console.error('[OCR] 网络请求失败:', err);
+                        pendingImage = {
+                            base64: compressedUrl,
+                            mimeType: 'image/jpeg',
+                            size: file.size,
+                            thumbnail: thumbnailUrl,
+                            ocrText: ''
+                        };
+                        showImagePreview(compressedUrl);
+                    });
+                });
+            });
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function compressImage(dataUrl, maxWidth, quality, callback) {
+        const img = new Image();
+        img.onload = () => {
+            let targetWidth = img.width;
+            let targetHeight = img.height;
+            if (targetWidth > maxWidth) {
+                const scale = maxWidth / targetWidth;
+                targetWidth = maxWidth;
+                targetHeight = targetHeight * scale;
+            }
+            // 始终转为 JPEG，避免大 PNG 超出模型限制（7MB）
+            const canvas = document.createElement('canvas');
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+            callback(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = dataUrl;
+    }
+
+    function generateThumbnail(dataUrl, callback) {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const MAX_WIDTH = 200;
+            const scale = Math.min(1, MAX_WIDTH / img.width);
+            canvas.width = img.width * scale;
+            canvas.height = img.height * scale;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            callback(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.src = dataUrl;
+    }
+
+    function showImagePreview(dataUrl) {
+        const preview = document.getElementById('chat-image-preview');
+        const img = document.getElementById('chat-preview-img');
+        if (preview && img) {
+            img.src = dataUrl;
+            preview.style.display = 'flex';
+        }
+    }
+
+    function clearPendingImage() {
+        pendingImage = null;
+        const preview = document.getElementById('chat-image-preview');
+        const img = document.getElementById('chat-preview-img');
+        const fileInput = document.getElementById('chat-file-input');
+        if (preview) preview.style.display = 'none';
+        if (img) img.src = '';
+        if (fileInput) fileInput.value = '';
+    }
+
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -1071,9 +1557,141 @@ export {
     showDebugPanel,
     closeDebugPanel,
     copyAllDebug,
-    clearDebug
+    clearDebug,
+    showRulesPanel,
+    closeRulesPanel,
+    copyRuleContent,
+    saveRuleContent
 };
 
 function copyAllDebug() { copyDebugLog(); }
-function clearDebug() { debugLog = []; showDebugPanel(); }
+function clearDebug() { debugLog = []; localStorage.removeItem(DEBUG_KEY); showDebugPanel(); }
 function closeDebugPanel() { const p = document.getElementById('chat-debug-panel'); if (p) p.remove(); }
+
+// ========== 规则管理面板 ==========
+
+let rulesPanelState = { activeTab: 'preferences' };
+
+function showRulesPanel() {
+    const existing = document.getElementById('chat-rules-panel');
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'chat-rules-panel';
+    overlay.innerHTML = `
+        <div class="chat-debug-content">
+            <div class="chat-debug-header">
+                <span>偏好和规则管理</span>
+                <div class="chat-debug-actions">
+                    <button onclick="ChatWidget.copyRuleContent()" title="复制">📋 复制</button>
+                    <button onclick="ChatWidget.saveRuleContent()" title="保存" id="chat-rule-save-btn" style="display:none">💾 保存</button>
+                    <button onclick="ChatWidget.closeRulesPanel()" title="关闭" class="chat-debug-close">✕</button>
+                </div>
+            </div>
+            <div class="chat-rules-tabs">
+                <button class="chat-rule-tab ${rulesPanelState.activeTab === 'dispatch' ? 'active' : ''}" data-tab="dispatch">dispatch.md</button>
+                <button class="chat-rule-tab ${rulesPanelState.activeTab === 'record' ? 'active' : ''}" data-tab="record">record.md</button>
+                <button class="chat-rule-tab ${rulesPanelState.activeTab === 'preferences' ? 'active' : ''}" data-tab="preferences">preferences.md</button>
+            </div>
+            <div class="chat-debug-body">
+                <div id="chat-rule-content" class="chat-rule-content">加载中...</div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Tab 切换
+    overlay.querySelectorAll('.chat-rule-tab').forEach(btn => {
+        btn.addEventListener('click', () => switchRuleTab(btn.dataset.tab));
+    });
+
+    // 点击遮罩关闭
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+
+    loadRuleContent(rulesPanelState.activeTab);
+}
+
+async function switchRuleTab(tab) {
+    rulesPanelState.activeTab = tab;
+    document.querySelectorAll('.chat-rule-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    const saveBtn = document.getElementById('chat-rule-save-btn');
+    if (saveBtn) saveBtn.style.display = tab === 'preferences' ? 'inline-block' : 'none';
+    await loadRuleContent(tab);
+}
+
+async function loadRuleContent(tab) {
+    const contentEl = document.getElementById('chat-rule-content');
+    if (!contentEl) return;
+    contentEl.textContent = '加载中...';
+
+    try {
+        let response;
+        if (tab === 'preferences') {
+            response = await fetch('/api/ai/preference', { method: 'GET' });
+        } else {
+            response = await fetch(`/api/ai/prompt/${tab}`, { method: 'GET' });
+        }
+        const data = await response.json();
+        const content = data.content || '(空文件)';
+
+        if (tab === 'preferences') {
+            contentEl.innerHTML = `<textarea id="chat-rule-textarea" spellcheck="false">${escapeHtml(content)}</textarea>`;
+        } else {
+            contentEl.innerHTML = `<pre class="chat-rule-readonly">${escapeHtml(content)}</pre>`;
+        }
+    } catch (e) {
+        contentEl.textContent = '加载失败：' + e.message;
+    }
+}
+
+function copyRuleContent() {
+    const textarea = document.getElementById('chat-rule-textarea');
+    const readonly = document.querySelector('.chat-rule-readonly');
+    const text = textarea ? textarea.value : (readonly ? readonly.textContent : '');
+    navigator.clipboard.writeText(text).then(() => {
+        alert('已复制到剪贴板');
+    }).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        alert('已复制到剪贴板');
+    });
+}
+
+async function saveRuleContent() {
+    const textarea = document.getElementById('chat-rule-textarea');
+    if (!textarea) return;
+    const newContent = textarea.value;
+    const saveBtn = document.getElementById('chat-rule-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/ai/preference', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: newContent })
+        });
+        const data = await response.json();
+        if (data.error) {
+            alert('保存失败：' + data.error);
+        } else {
+            alert('偏好已保存');
+        }
+    } catch (e) {
+        alert('保存失败：' + e.message);
+    } finally {
+        if (saveBtn) saveBtn.disabled = false;
+    }
+}
+
+function closeRulesPanel() { const p = document.getElementById('chat-rules-panel'); if (p) p.remove(); }

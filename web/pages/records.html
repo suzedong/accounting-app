@@ -112,7 +112,7 @@
             .records-table th, .records-table td { padding: 8px 5px; font-size: 0.8em; }
         }
     </style>
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
 </head>
 <body>
     <div class="container">
@@ -184,7 +184,7 @@
                     </div>
                     <div class="form-group">
                         <label for="edit-type">类型 *</label>
-                        <select id="edit-type" required onchange="updateCategories()">
+                        <select id="edit-type" required onchange="updateCategories(document.getElementById('edit-category').value)">
                             <option value="支出">支出</option>
                             <option value="收入">收入</option>
                         </select>
@@ -239,7 +239,7 @@
         </div>
     </div>
 
-    <script type="module" src="./static/globals.js"></script>
+    <script type="module" src="../js/globals.js"></script>
     <script>
         function whenGlobalsReady(fn) {
             if (window.__globalsLoaded) { fn(); return; }
@@ -275,10 +275,21 @@
         }
 
         // 更新编辑模态框中的分类选项
-        function updateCategories() {
+        function updateCategories(currentValue) {
             const type = document.getElementById('edit-type').value;
             const categorySelect = document.getElementById('edit-category');
             categorySelect.innerHTML = '';
+
+            // 如果当前值不在分类表中，先添加一个选项确保它可被选中
+            if (currentValue) {
+                const inTable = allCategories.some(cat => cat.name === currentValue && cat.type === type);
+                if (!inTable) {
+                    const option = document.createElement('option');
+                    option.value = currentValue;
+                    option.textContent = currentValue + ' (自定义)';
+                    categorySelect.appendChild(option);
+                }
+            }
 
             const filteredCategories = allCategories.filter(cat => cat.type === type);
             filteredCategories.forEach(cat => {
@@ -381,7 +392,26 @@
                 const datetime = record.datetime.replace(' ', 'T').substring(0, 16);
                 document.getElementById('edit-datetime').value = datetime;
                 document.getElementById('edit-type').value = record.type;
-                updateCategories();
+
+                // 支付方式：当前值不在列表中时手动添加
+                const currentPayment = record.payment_method || '';
+                const paymentSelect = document.getElementById('edit-payment-method');
+                paymentSelect.innerHTML = '<option value="">请选择</option>';
+                if (currentPayment && !['微信支付','支付宝','银行卡','现金','信用卡','花呗'].includes(currentPayment)) {
+                    const opt = document.createElement('option');
+                    opt.value = currentPayment;
+                    opt.textContent = currentPayment + ' (自定义)';
+                    paymentSelect.appendChild(opt);
+                }
+                ['微信支付','支付宝','银行卡','现金','信用卡','花呗'].forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p;
+                    opt.textContent = p;
+                    paymentSelect.appendChild(opt);
+                });
+
+                // 分类：传入当前值，不在表中时自动添加选项
+                updateCategories(record.category);
                 document.getElementById('edit-category').value = record.category;
                 document.getElementById('edit-amount').value = record.amount;
                 document.getElementById('edit-account').value = record.account || '个人';

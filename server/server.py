@@ -11,6 +11,14 @@ import urllib.error
 import os
 import sys
 
+# OCR 服务（可选依赖，paddleocr 未安装时降级）
+try:
+    from ocr_service import recognize_image as ocr_recognize
+    print("[OCR] PaddleOCR 模块已加载")
+except ImportError:
+    ocr_recognize = None
+    print("[OCR] PaddleOCR 未安装，OCR 功能不可用")
+
 def load_env():
     """从项目根目录的 .env 文件加载环境变量（纯标准库实现）"""
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
@@ -134,7 +142,7 @@ def build_conversation_context(history_entries, max_entries=10):
 class AccountingHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, directory=None, **kwargs):
         if directory is None:
-            directory = os.path.dirname(os.path.abspath(__file__))
+            directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'web')
         self.directory = directory
         super().__init__(*args, directory=directory, **kwargs)
 
@@ -148,8 +156,16 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         """代理 NocoBase GET 请求"""
-        if self.path.startswith('/api/'):
+        if self.path.startswith('/api/ai/prompt/'):
+            self.handle_get_prompt()
+        elif self.path == '/api/ai/preference':
+            self.handle_get_preference()
+        elif self.path.startswith('/api/'):
             self.handle_nocobase_proxy('GET')
+        elif self.path in ('/', '/index.html'):
+            self.send_response(302)
+            self.send_header('Location', '/pages/index.html')
+            self.end_headers()
         else:
             super().do_GET()
 
@@ -158,13 +174,17 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_ai_parse()
         elif self.path == '/api/ai/dispatch':
             self.handle_ai_dispatch()
+        elif self.path == '/api/ai/ocr':
+            self.handle_ocr()
         elif self.path.startswith('/api/'):
             self.handle_nocobase_proxy('POST')
         else:
             self.send_error(404, 'Not Found')
 
     def do_PUT(self):
-        if self.path.startswith('/api/ai/prompt/'):
+        if self.path == '/api/ai/preference':
+            self.handle_update_preference()
+        elif self.path.startswith('/api/ai/prompt/'):
             self.handle_update_prompt()
         elif self.path.startswith('/api/'):
             self.handle_nocobase_proxy('PUT')
@@ -248,6 +268,14 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
             print(f"[AI 代理] 收到请求，文本长度: {len(user_text)}")
 
             system_prompt = load_prompt('record')
+
+            # 注入用户个性化偏好
+            pref_filepath = os.path.join(PROMPTS_DIR, 'preferences.md')
+            if os.path.exists(pref_filepath):
+                with open(pref_filepath, 'r', encoding='utf-8') as f:
+                    pref_content = f.read()
+                system_prompt += '\n\n## 用户个性化偏好（优先级最高，必须遵守）\n' + pref_content
+
             if learning_context:
                 system_prompt += learning_context
 
@@ -296,8 +324,40 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
 
+    def handle_ocr(self):
+        """OCR 识别端点（委托给 ocr-service）"""
+        try:
+            if not ocr_recognize:
+                self.send_response(503)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'OCR 服务未安装'}).encode('utf-8'))
+                return
+
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body)
+
+            print(f"[OCR] 收到识别请求")
+            result = ocr_recognize(data.get('base64', ''))
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode('utf-8'))
+
+        except Exception as e:
+            print(f"[OCR] 错误: {e}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+
     def handle_ai_dispatch(self):
-        """AI 意图识别和参数提取"""
+        """AI 意图识别和参数提取（纯文本，OCR 由前端完成）"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
@@ -307,6 +367,14 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
             print(f"[AI 分发] 收到请求，文本长度: {len(user_text)}")
 
             system_prompt = load_prompt('dispatch')
+
+            # 注入用户个性化偏好
+            pref_filepath = os.path.join(PROMPTS_DIR, 'preferences.md')
+            if os.path.exists(pref_filepath):
+                with open(pref_filepath, 'r', encoding='utf-8') as f:
+                    pref_content = f.read()
+                system_prompt += '\n\n## 用户个性化偏好（优先级最高，必须遵守）\n' + pref_content
+
             if learning_context:
                 system_prompt += learning_context
 
@@ -336,13 +404,19 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
                 method='POST'
             )
 
-            print(f"[AI 分发] 调用 API: {AI_CONFIG['API_URL']}")
-            with urllib.request.urlopen(req, timeout=60) as response:
-                ai_response = json.loads(response.read().decode('utf-8'))
-                content = ai_response['choices'][0]['message']['content'].strip()
-                content = content.replace('```json', '').replace('```', '').strip()
-                dispatch_result = json.loads(content)
-                print(f"[AI 分发] 意图: {dispatch_result.get('intent')}, 置信度: {dispatch_result.get('confidence')}")
+            print(f"[AI 分发] 调用 API: {AI_CONFIG['API_URL']}, 模型: {AI_CONFIG['MODEL']}")
+            try:
+                with urllib.request.urlopen(req, timeout=120) as response:
+                    ai_response = json.loads(response.read().decode('utf-8'))
+                    content = ai_response['choices'][0]['message']['content'].strip()
+                    content = content.replace('```json', '').replace('```', '').strip()
+                    dispatch_result = json.loads(content)
+                    print(f"[AI 分发] 意图: {dispatch_result.get('intent')}, 置信度: {dispatch_result.get('confidence')}")
+            except urllib.error.HTTPError as e:
+                error_body = e.read().decode('utf-8')
+                print(f"[AI 分发] HTTP 错误: {e.code} {e.reason}")
+                print(f"[AI 分发] 响应体: {error_body}")
+                raise
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -403,6 +477,85 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
 
+    def handle_get_prompt(self):
+        """读取 prompt 文件内容"""
+        try:
+            prompt_name = self.path.split('/')[-1]
+            if prompt_name not in ('dispatch', 'record'):
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': '只允许读取 dispatch 或 record'}).encode('utf-8'))
+                return
+
+            content = load_prompt(prompt_name)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'content': content, 'file': f'{prompt_name}.md'}).encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+
+    def handle_get_preference(self):
+        """读取 preferences.md 文件内容"""
+        try:
+            filepath = os.path.join(PROMPTS_DIR, 'preferences.md')
+            if not os.path.exists(filepath):
+                default_content = '# 用户个性化偏好\n\n> 由用户自然语言反馈自动生成，优先级高于系统默认规则。\n\n## 备注格式\n（待用户反馈后填充）\n\n## 默认值\n- 默认账户：（空）\n- 默认支付方式：（空）\n'
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(default_content)
+                content = default_content
+            else:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'content': content, 'file': 'preferences.md'}).encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+
+    def handle_update_preference(self):
+        """更新 preferences.md 文件内容"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body)
+            new_content = data.get('content', '')
+            if not new_content:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'content 不能为空'}).encode('utf-8'))
+                return
+            filepath = os.path.join(PROMPTS_DIR, 'preferences.md')
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            print(f"[Preference 更新] preferences.md 已更新，长度: {len(new_content)}")
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': True, 'file': 'preferences.md'}).encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+
     def end_headers(self):
         """添加 CORS 头"""
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -414,9 +567,9 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def main(port=8081):
-    directory = os.path.dirname(os.path.abspath(__file__))
+    directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'web')
     os.chdir(directory)
-    
+
     server = http.server.HTTPServer(('0.0.0.0', port), AccountingHandler)
     print(f"记账本服务器启动: http://0.0.0.0:{port}")
     print(f"静态文件目录: {directory}")

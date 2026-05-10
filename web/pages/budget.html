@@ -73,7 +73,7 @@
             .nav-links a { padding: 6px 10px; font-size: 0.8em; }
         }
     </style>
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
 </head>
 <body>
     <div class="container">
@@ -131,7 +131,7 @@
         </div>
     </div>
 
-    <script type="module" src="./static/globals.js"></script>
+    <script type="module" src="../js/globals.js"></script>
     <script>
         function whenGlobalsReady(fn) {
             if (window.__globalsLoaded) { fn(); return; }
@@ -142,9 +142,11 @@
             LearningEngine.init();
             ChatWidget.init();
             setActiveNav('./budget.html');
+            currentBudget = NOCOBASE_CONFIG.BUDGET_MONTHLY;
+            loadMonthlyBudgetStats();
         });
 
-        let currentBudget = NOCOBASE_CONFIG ? NOCOBASE_CONFIG.BUDGET_MONTHLY : 3500;
+        let currentBudget = 3500;
 
         function showError(message) {
             const errorEl = document.getElementById('error-message');
@@ -226,8 +228,6 @@
                 showError('网络错误: ' + error.message);
             }
         }
-
-        whenGlobalsReady(() => { loadMonthlyBudgetStats(); });
     </script>
 </body>
 </html>

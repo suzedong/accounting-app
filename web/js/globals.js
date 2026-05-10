@@ -5,14 +5,14 @@
  * inline 脚本中的初始化调用需要延迟执行。
  */
 
-import { NOCOBASE_CONFIG } from './config.js';
-import * as Utils from './utils.js';
-import * as NocobaseAPI from './nocobase-api.js';
-import * as AIParser from './ai-parser.js';
-import * as ParseJS from './parse.js';
-import * as LearningEngine from './learning-engine.js';
-import * as AgentCore from './agent-core.js';
-import * as ChatWidget from './chat-widget.js';
+import { NOCOBASE_CONFIG } from './modules/config.js';
+import * as Utils from './modules/utils.js';
+import * as NocobaseAPI from './modules/nocobase-api.js';
+import * as AIParser from './modules/ai-parser.js';
+import * as ParseJS from './modules/parse.js';
+import * as LearningEngine from './modules/learning-engine.js';
+import * as AgentCore from './modules/agent-core.js';
+import * as ChatWidget from './modules/chat-widget.js';
 
 // Expose all as globals for inline scripts
 window.NOCOBASE_CONFIG = NOCOBASE_CONFIG;
