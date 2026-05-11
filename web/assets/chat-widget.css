@@ -344,6 +344,16 @@
     color: white;
 }
 
+/* 追问时显示已使用的默认值 */
+#chat-widget .chat-auto-filled {
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: #f0f2ff;
+    border-radius: 8px;
+    font-size: 0.85em;
+    color: #667eea;
+}
+
 /* 重复记录提示 */
 #chat-widget .chat-duplicate-info {
     background: #FFF5F5;
@@ -940,6 +950,37 @@
     margin-bottom: 6px;
     cursor: pointer;
     object-fit: cover;
+}
+
+/* 用户消息中的 OCR 识别文字 */
+#chat-widget .chat-user-ocr {
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+#chat-widget .chat-user-ocr summary {
+    cursor: pointer;
+    color: #999;
+    padding: 2px 0;
+    user-select: none;
+}
+
+#chat-widget .chat-user-ocr summary:hover {
+    color: #667eea;
+}
+
+#chat-widget .chat-user-ocr pre {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: rgba(255,255,255,0.6);
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 120px;
+    overflow-y: auto;
+    color: #555;
 }
 
 /* 移动端适配 */

@@ -6,7 +6,16 @@ import { platform } from 'node:os';
 const scriptsDir = fileURLToPath(new URL('.', import.meta.url));
 const projectRoot = dirname(scriptsDir);
 const isWin = platform() === 'win32';
-const pythonCmd = isWin ? 'python' : 'python3';
+const { existsSync } = await import('node:fs');
+
+let pythonCmd = isWin
+  ? 'python'
+  : join(projectRoot, '.venv', 'bin', 'python3');
+
+if (!isWin && !existsSync(pythonCmd)) {
+  console.warn(`[dev] 未找到虚拟环境 Python (${pythonCmd})，使用系统 python3`);
+  pythonCmd = 'python3';
+}
 
 const server = spawn(pythonCmd, ['server.py', '18080'], {
   cwd: join(projectRoot, 'server'),

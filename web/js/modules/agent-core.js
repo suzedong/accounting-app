@@ -488,10 +488,11 @@ async function handleCorrectRecord(params, dispatchResult) {
             }
         }
 
-        const changedFields = Object.entries(fields).map(([k, v]) => `${k}=${v}`).join('、');
+        const fieldLabels = { account: '账户', category: '分类', payment: '支付方式', amount: '金额', type: '类型', note: '备注', datetime: '时间' };
+        const changedFields = Object.entries(fields).map(([k, v]) => `${fieldLabels[k] || k}: ${v}`).join('、');
         return {
             type: 'correction-applied',
-            content: `已修正记录：${changedFields}.${preferenceMsg}`,
+            content: `已修正：${changedFields}${preferenceMsg}`,
             fields,
             recordId,
             _skill: { name: 'correct_record', displayName: '纠正记录', confidence }

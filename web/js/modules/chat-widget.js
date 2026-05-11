@@ -434,10 +434,13 @@ let conversationState = {
 
         container.innerHTML = chatHistory.map(msg => {
             if (msg.type === 'user') {
-                const imgThumb = msg.data && msg.data.imageThumbnail
+                const hasImage = msg.data && msg.data.imageThumbnail;
+                const imgThumb = hasImage
                     ? `<img src="${msg.data.imageThumbnail}" class="chat-user-image" onclick="window.open(this.src)"/>`
                     : '';
-                return `<div class="chat-msg user"><div class="chat-msg-bubble">${imgThumb}${escapeHtml(msg.content)}</div></div>`;
+                const ocrText = msg.data && msg.data.ocrText;
+                const ocrBlock = ocrText ? `<details class="chat-user-ocr"><summary>📄 识别文字 (${ocrText.split('\n').length} 行)</summary><pre>${escapeHtml(ocrText)}</pre></details>` : '';
+                return `<div class="chat-msg user"><div class="chat-msg-bubble">${imgThumb}${escapeHtml(msg.content)}${ocrBlock}</div></div>`;
             } else if (msg.type === 'ai') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
                 return `<div class="chat-msg ai">${skillTag}<div class="chat-msg-bubble">${msg.content}</div></div>`;
@@ -446,8 +449,7 @@ let conversationState = {
                 return `<div class="chat-msg ai">${skillTag}${renderRecordCardContent(msg.data, msg.id)}</div>`;
             } else if (msg.type === 'missing-fields') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
-                const missing = msg.data && Array.isArray(msg.data.missingFields) ? msg.data.missingFields : [];
-                return `<div class="chat-msg ai">${skillTag}${renderMissingFieldsContent(missing, msg.id)}</div>`;
+                return `<div class="chat-msg ai">${skillTag}${renderMissingFieldsContent(msg.data || {}, msg.id)}</div>`;
             } else if (msg.type === 'duplicate-warning') {
                 const skillTag = msg.skillMeta ? renderSkillTag(msg.skillMeta) : '';
                 return `<div class="chat-msg ai">${skillTag}${renderDuplicateWarningContent(msg.data, msg.id)}</div>`;
@@ -507,16 +509,25 @@ let conversationState = {
         `;
     }
 
-    function renderMissingFieldsContent(missing, msgId) {
+    function renderMissingFieldsContent(data, msgId) {
+        const { missingFields, autoFilled, originalFields } = data;
         const fields = {
             'amount': '金额', 'type': '类型', 'category': '分类',
             'account': '账户', 'payment': '支付方式', 'datetime': '时间'
         };
-        const options = missing.map(f => `<button onclick="ChatWidget.fillMissing('${f}','${msgId}')">${fields[f] || f}</button>`).join('');
+        const options = missingFields.map(f => `<button onclick="ChatWidget.fillMissing('${f}','${msgId}')">${fields[f] || f}</button>`).join('');
+
+        let defaultsHtml = '';
+        if (autoFilled && Object.keys(autoFilled).length > 0) {
+            const items = Object.entries(autoFilled).map(([k, v]) => `${fields[k] || k}: ${v}`).join('、');
+            defaultsHtml = `<div class="chat-auto-filled">已使用默认值：${items}</div>`;
+        }
+
         return `
             <div class="chat-msg-bubble">
                 <div>还缺少一些信息，请补充：</div>
                 <div class="chat-quick-options">${options}</div>
+                ${defaultsHtml}
             </div>
         `;
     }
@@ -638,19 +649,12 @@ let conversationState = {
     }
 
     function renderCorrectionAppliedContent(data) {
-        const message = escapeHtml(data.message || '记录已修正');
-        const fields = data.fields || {};
-        const fieldLabels = { category: '分类', account: '账户', payment_method: '支付方式', payment: '支付方式', amount: '金额', type: '类型', note: '备注', datetime: '时间' };
-
-        const fieldsHtml = Object.entries(fields).map(([k, v]) => {
-            const label = fieldLabels[k] || k;
-            return `<span class="chat-correction-field">${label}: ${escapeHtml(String(v))}</span>`;
-        }).join('');
+        const rawMessage = data.content || data.message || '';
+        const message = rawMessage ? escapeHtml(rawMessage) : '记录已修正';
 
         return `
             <div class="chat-msg-bubble chat-correction-applied">
                 <div>✅ ${message}</div>
-                ${fieldsHtml ? `<div class="chat-correction-fields">${fieldsHtml}</div>` : ''}
             </div>
         `;
     }
@@ -711,11 +715,13 @@ let conversationState = {
     }
 
     function buildIntentDetail(dispatchResult) {
-        const { intent, fields, params, follow_up, response } = dispatchResult;
+        const { intent, follow_up, response } = dispatchResult;
+        const fields = dispatchResult.fields || dispatchResult.params?.fields || null;
+        const params = dispatchResult.params || {};
         let html = '';
 
         switch (intent) {
-            case 'record':
+            case '记账':
                 if (fields) {
                     const items = [
                         { label: '类型', value: fields.type },
@@ -729,7 +735,7 @@ let conversationState = {
                     html = renderDetailRows(items);
                 }
                 break;
-            case 'query':
+            case '查询记录':
                 if (params) {
                     const items = [
                         { label: '时间范围', value: params.timeRange || '默认' },
@@ -740,7 +746,7 @@ let conversationState = {
                     html = renderDetailRows(items);
                 }
                 break;
-            case 'stats':
+            case '统计分析':
                 if (params) {
                     const dimMap = { category: '分类', account: '账户', payment: '支付方式', trend: '趋势', comparison: '对比' };
                     const items = [
@@ -751,7 +757,7 @@ let conversationState = {
                     html = renderDetailRows(items);
                 }
                 break;
-            case 'follow_up':
+            case '追问补充':
                 if (follow_up) {
                     html += '<div class="chat-thinking-section-label">已识别：</div>';
                     const known = Object.entries(follow_up.original_fields || {})
@@ -764,10 +770,10 @@ let conversationState = {
                     html += `<div class="chat-thinking-question">💬 ${escapeHtml(follow_up.question || '')}</div>`;
                 }
                 break;
-            case 'budget':
+            case '预算管理':
                 html = '<div class="chat-thinking-detail-row"><span class="chat-thinking-detail-label">查询</span><span class="chat-thinking-detail-value">当月预算状态</span></div>';
                 break;
-            case 'chitchat':
+            case '闲聊':
                 if (response) {
                     html = `<div class="chat-thinking-detail-row"><span class="chat-thinking-detail-label">回复</span><span class="chat-thinking-detail-value">${escapeHtml(response)}</span></div>`;
                 }
@@ -904,7 +910,9 @@ let conversationState = {
             const imgThumb = data && data.imageThumbnail
                 ? `<img src="${data.imageThumbnail}" class="chat-user-image" onclick="window.open(this.src)"/>`
                 : '';
-            html = `<div class="chat-msg user"><div class="chat-msg-bubble">${imgThumb}${escapeHtml(content)}</div></div>`;
+            const ocrText = data && data.ocrText;
+            const ocrBlock = ocrText ? `<details class="chat-user-ocr"><summary>📄 识别文字 (${ocrText.split('\n').length} 行)</summary><pre>${escapeHtml(ocrText)}</pre></details>` : '';
+            html = `<div class="chat-msg user"><div class="chat-msg-bubble">${imgThumb}${escapeHtml(content)}${ocrBlock}</div></div>`;
         } else if (type === 'ai') {
             const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
             html = `<div class="chat-msg ai">${skillTag}<div class="chat-msg-bubble">${content}</div></div>`;
@@ -932,6 +940,9 @@ let conversationState = {
         } else if (type === 'preference-saved') {
             const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
             html = `<div class="chat-msg ai">${skillTag}${renderPreferenceSavedContent(data || {})}</div>`;
+        } else if (type === 'correction-applied') {
+            const skillTag = skillMeta ? renderSkillTag(skillMeta) : '';
+            html = `<div class="chat-msg ai">${skillTag}${renderCorrectionAppliedContent(data || {})}</div>`;
         }
 
         if (html) {
@@ -950,7 +961,7 @@ let conversationState = {
             : text;
 
         const msgData = pendingImage
-            ? { imageThumbnail: pendingImage.thumbnail }
+            ? { imageThumbnail: pendingImage.thumbnail, ocrText: pendingImage.ocrText || '' }
             : null;
 
         addMessage('user', displayContent, msgData);
@@ -1083,9 +1094,15 @@ let conversationState = {
             conversationState.awaitingFollowUp = true;
             conversationState.pendingFollowUp = result.followUp;
             const question = result.followUp.question || '请补充信息';
-            appendSingleMessage('missing-fields', question, { question, missingFields: result.followUp.missing_fields }, skillMeta);
+            // 显示缺失字段 + 自动填充的默认值
+            const missingFields = result.followUp.missing_fields || [];
+            const originalFields = result.followUp.original_fields || {};
+            const autoFilled = {};
+            if (!originalFields.account) autoFilled.account = '个人';
+            if (!originalFields.payment) autoFilled.payment = '微信支付';
+            appendSingleMessage('missing-fields', question, { question, missingFields, originalFields, autoFilled }, skillMeta);
             chatHistory.push({
-                type: 'missing-fields', content: question, data: { question, missingFields: result.followUp.missing_fields },
+                type: 'missing-fields', content: question, data: { question, missingFields, originalFields, autoFilled },
                 skillMeta, id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5), timestamp: Date.now()
             });
             saveHistory();
@@ -1194,7 +1211,26 @@ let conversationState = {
             }
 
             const typeIcon = data.type === '支出' ? '' : '📥';
-            addMessage('ai', `${typeIcon} 已记录：${formatMoney(data.amount)} - ${data.category}`, null, skillMeta);
+            // 构建更详细的确认消息
+            const parts = [`${formatMoney(data.amount)} - ${data.category}`];
+            if (data.payment_method && data.payment_method !== '微信支付') {
+                parts.push(data.payment_method);
+            }
+            if (data.account && data.account !== '个人') {
+                parts.push(data.account);
+            }
+            if (data.note) {
+                parts.push(data.note);
+            }
+            if (data.datetime) {
+                const recordDate = data.datetime.substring(0, 10);
+                const today = new Date();
+                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                if (recordDate !== todayStr) {
+                    parts.push(data.datetime.substring(0, 16));
+                }
+            }
+            addMessage('ai', `${typeIcon} 已记录：${parts.join(' | ')}`, null, skillMeta);
 
             // 触发学习记录（如果用户修改过字段）
             if (conversationState.pendingRecord && conversationState._originalParse) {
