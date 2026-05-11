@@ -17,7 +17,7 @@ def get_engine():
     if _engine is None:
         from paddleocr import PaddleOCR
         print("[PaddleOCR] 正在加载模型...")
-        _engine = PaddleOCR(use_angle_cls=True, lang='ch', use_gpu=False, show_log=False)
+        _engine = PaddleOCR(use_angle_cls=True, lang='ch', device='cpu')
         print("[PaddleOCR] 模型加载完成")
     return _engine
 
@@ -44,15 +44,18 @@ def recognize_image(base64_str):
     img_array = np.array(img)
 
     engine = get_engine()
-    result = engine.ocr(img_array)
+    # PaddleOCR 3.x 禁用文档方向分类和展开，避免对纯色/简单图片报错
+    result = list(engine.predict(img_array, use_doc_orientation_classify=False, use_doc_unwarping=False))
 
     lines = []
-    if result and result[0]:
-        for line in result[0]:
-            text = line[1][0]
-            confidence = line[1][1]
-            if confidence > 0.5:
-                lines.append(text)
+    if result:
+        # PaddleOCR 3.x: OCRResult 是 dict-like 对象，包含 rec_texts/rec_scores
+        for page in result:
+            rec_texts = page.get('rec_texts', []) or []
+            rec_scores = page.get('rec_scores', []) or []
+            for text, score in zip(rec_texts, rec_scores):
+                if score > 0.5 and text:
+                    lines.append(text)
 
     full_text = '\n'.join(lines)
     print(f"[PaddleOCR] 识别完成，共 {len(lines)} 行，文本长度: {len(full_text)}")

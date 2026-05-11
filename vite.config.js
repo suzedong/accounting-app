@@ -18,6 +18,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // 所有 API（NocoBase + AI）统一走 server.py
       '/api': {
         target: 'http://127.0.0.1:18080',
         changeOrigin: true,

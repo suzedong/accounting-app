@@ -2,10 +2,8 @@
  * AI 智能记账解析器
  * 使用阿里云百炼 API 解析复杂格式的记账输入
  * 支持：银行通知、交易截图 OCR、自然语言等
+ * 代理走 /api/ai/parse，由 server.py 持有 API Key。
  */
-
-import { NOCOBASE_CONFIG } from './config.js';
-const config = NOCOBASE_CONFIG.AI_CONFIG;
 
     const SYSTEM_PROMPT = `你是一个专业的记账助手。请解析用户的输入，提取记账信息。
 

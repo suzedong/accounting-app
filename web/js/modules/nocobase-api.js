@@ -1,17 +1,13 @@
 /**
  * NocoBase API 客户端封装
- * 替代原有 Flask API 调用
+ * 请求通过 Vite/server.py 代理转发到 NocoBase，认证由后端注入。
  */
 
 import { NOCOBASE_CONFIG } from './config.js';
 const C = NOCOBASE_CONFIG.COLLECTIONS;
 
-    /**
-     * 通用请求函数
-     * 使用本地代理避免 CORS 问题
-     */
     async function request(method, path, body = null, params = null) {
-        // 使用相对路径，通过本地 server.py 代理转发到 NocoBase
+        // 使用相对路径，通过代理转发到 NocoBase
         // 路径必须以 /api/ 开头才能被代理
         let url = path.startsWith('/api/') ? path : '/api' + path;
 
@@ -27,18 +23,11 @@ const C = NOCOBASE_CONFIG.COLLECTIONS;
             if (qsStr) url += (url.includes('?') ? '&' : '?') + qsStr;
         }
 
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-
-        // 认证
-        if (NOCOBASE_CONFIG.API_TOKEN) {
-            headers['Authorization'] = `Bearer ${NOCOBASE_CONFIG.API_TOKEN}`;
-        }
-
         const options = {
             method,
-            headers
+            headers: {
+                'Content-Type': 'application/json'
+            }
         };
 
         if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {

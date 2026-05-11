@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node dev.mjs",
+    "dev:frontend": "vite",
+    "dev:backend": "cd server && python3 server.py 18080",
     "build": "vite build",
     "preview": "vite preview"
   },

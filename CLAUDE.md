@@ -41,7 +41,7 @@ cd server && python3 server.py 18080
 │   ├── js/
 │   │   ├── globals.js      # ESM 桥接：导入所有模块并挂载到 window.*
 │   │   ├── modules/        # 自定义模块
-│   │   │   ├── config.js         # 配置：NocoBase API URL/Token、AI 配置
+│   │   │   ├── config.js         # 配置：Collections 列表、月度预算
 │   │   │   ├── utils.js          # 工具函数 + 统计计算
 │   │   │   ├── nocobase-api.js   # NocoBase API 客户端
 │   │   │   ├── parse.js          # 规则解析器（降级方案）
@@ -66,6 +66,7 @@ cd server && python3 server.py 18080
 │       ├── migrate_to_nocobase.py
 │       └── migrate_nocobase_to_nocobase.py
 ├── dist/                   # Vite 构建产物（生产部署用）
+├── dev.mjs                 # 开发环境进程管理器（同时启动 Vite + server.py）
 ├── vite.config.js          # Vite 配置
 ├── package.json
 ├── .env                    # 敏感配置（已加入 .gitignore）
@@ -74,7 +75,7 @@ cd server && python3 server.py 18080
 
 ## 架构概览
 
-### 开发架构（双端口）
+### 开发架构（双端口，统一走 server.py）
 
 ```
 浏览器 → Vite dev server (localhost:5173) ──→ server.py (localhost:18080) ──→ 云端 NocoBase
@@ -85,8 +86,9 @@ cd server && python3 server.py 18080
                                                     └─ Prompt/Preference 文件管理
 ```
 
-**Vite dev server（5173）**: HMR 热更新 + ESM 模块解析 + 静态文件 + `/` 重定向到 `/pages/index.html` + API 代理到 server.py
-**server.py（18080）**: NocoBase/AI 代理 + Prompt 文件管理（保留，供部署用）
+**Vite dev server（5173）**: HMR 热更新 + ESM 模块解析 + 静态文件 + `/` 重定向到 `/pages/index.html` + `/api/*` 代理到 server.py
+**server.py（18080）**: NocoBase API 代理 + AI 代理 + Prompt/Preference 管理
+**npm run dev**: 通过 `dev.mjs` 同时启动 Vite 和 server.py，Ctrl+C 一并关闭
 
 ### 部署架构（单端口）
 
@@ -226,15 +228,14 @@ NocoBase 不提供 GROUP BY 聚合，所有统计在前端计算：
 
 ## 重要约定
 
-- **Token 和配置**：NocoBase JWT Token 同时存在于 `web/js/modules/config.js`（前端）和 `.env`（server.py 代理），修改需同步
-- JWT Token 有效期 1 年，到期后需更新两处
-- 所有 API 调用通过相对路径 `/api/*`，由 server.py 或 Vite proxy 代理转发
+- **敏感配置**：NocoBase JWT Token 和 AI API Key 仅存放在 `.env` 文件中，由 `server.py` 统一注入，前端不持有凭证
+- JWT Token 有效期约 1 年，到期后更新 `.env` 即可
+- 所有 API 调用通过相对路径 `/api/*`，由 Vite proxy 转发到 server.py，再由 server.py 代理到 NocoBase 或阿里云百炼
 - `NocobaseAPI` 通过 `globals.js` 桥接挂载到 `window.NocobaseAPI`，通过 `NocobaseAPI.xxx()` 调用
 - `AgentCore.dispatch()` 和 `AgentCore.execute()` 是 Agent 核心入口
 - `LearningEngine.init()` 在每个页面加载时调用
 - `ChatWidget.init()` 在页面加载时调用初始化 AI 对话悬浮窗
 - HTML 页面通过 `<script type="module" src="../js/globals.js">` 加载所有 ESM 模块（注意相对路径是 `../js/`）
-- 开发使用 Vite dev server（`npm run dev`），构建使用 `npm run build` 输出到 `dist/`
-- 敏感配置（API Token、AI Key）存放在 `.env` 文件，已加入 `.gitignore`
+- 开发使用 `npm run dev`（同时启动 Vite + server.py），构建使用 `npm run build` 输出到 `dist/`
 - 前端目录：`web/pages/`（HTML）、`web/js/modules/`（模块）、`web/js/vendor/`（第三方库）、`web/assets/`（资源）
 - 后端目录：`server/server.py`（服务器）、`server/prompts/`（Prompt）、`server/scripts/`（迁移脚本）

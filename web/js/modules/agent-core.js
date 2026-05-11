@@ -56,7 +56,7 @@ async function dispatch(text, conversationHistory = []) {
         if (!result.title) {
             result.title = DEFAULT_TITLE[result.action] || '';
         }
-        // 设置 _skill 供前端显示
+        // 设置 _skill 和 intent 供前端显示
         if (!result._skill) {
             result._skill = {
                 name: result.action,
@@ -64,6 +64,7 @@ async function dispatch(text, conversationHistory = []) {
                 confidence: result.confidence
             };
         }
+        result.intent = DEFAULT_TITLE[result.action] || result.action;
 
         return result;
     } catch (error) {
@@ -76,6 +77,7 @@ async function dispatch(text, conversationHistory = []) {
             params: { fields: await fallbackParse(text) },
             render: 'card',
             title: '记账',
+            intent: '记账',
             _skill: { name: 'create_record', displayName: '记账', confidence: 0.5 }
         };
     }
@@ -741,9 +743,7 @@ async function findRecordByContext(ctxOrResult) {
         const qs = new URLSearchParams(filterParams).toString();
         const url = `/api/records?${qs}`;
 
-        const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${NOCOBASE_CONFIG.API_TOKEN}` }
-        });
+        const response = await fetch(url);
 
         if (!response.ok) return null;
         const result = await response.json();
