@@ -29,7 +29,8 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:18080/pages/index.html)",
       "Bash(curl -s -X POST http://127.0.0.1:18080/api/ai/dispatch -H 'Content-Type: application/json' -d '{ *)",
       "Bash(python3 -c ' *)",
-      "Bash(pkill -f \"python3 server.py 18080\")"
+      "Bash(pkill -f \"python3 server.py 18080\")",
+      "Bash(pip show *)"
     ]
   }
 }

@@ -10,8 +10,14 @@ import urllib.request
 import urllib.error
 import time
 
+import os
+from pathlib import Path
+
 # ==================== 配置区 ====================
-DB_PATH = '/Users/szd/.qclaw/workspace/accounting-skill/database/accounting.db'
+DB_PATH = os.environ.get(
+    'DB_PATH',
+    str(Path(__file__).parent.parent / 'database' / 'accounting.db')
+)
 TARGET_API_URL = "http://121.17.49.100:13000/api"
 TARGET_API_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGVOYW1lIjoicm9vdCIsImlhdCI6MTc3Nzk2NDY0NiwiZXhwIjoxODA5NTAwNjQ2LCJqdGkiOiIyMzhkYjk1Mi1hOWU0LTRjZmUtODM2NC05MTQzMDRhMDMzYzIifQ.CsK-Tj2kkfGr0DSR6QgcobwFJvy64s4fAYn3hEMjHS4"
 # ================================================
