@@ -10,14 +10,12 @@ import urllib.request
 import urllib.error
 import os
 import sys
+import warnings
 
-# OCR 服务（可选依赖，paddleocr 未安装时降级）
-try:
-    from ocr_service import recognize_image as ocr_recognize
-    print("[OCR] PaddleOCR 模块已加载")
-except ImportError:
-    ocr_recognize = None
-    print("[OCR] PaddleOCR 未安装，OCR 功能不可用")
+# 过滤各类第三方库警告
+warnings.filterwarnings('ignore', message='No ccache found')
+warnings.filterwarnings('ignore', message='.*urllib3.*')
+warnings.filterwarnings('ignore', message='.*OpenSSL.*')
 
 def load_env():
     """从项目根目录的 .env 文件加载环境变量（纯标准库实现）"""
@@ -33,6 +31,22 @@ def load_env():
             os.environ.setdefault(key.strip(), value.strip())
 
 load_env()
+
+# OCR 服务（可选依赖，paddleocr 未安装时降级）
+try:
+    import ocr_service
+    ocr_recognize = ocr_service.recognize_image
+    from ocr_service import _detect_hardware, _get_installed_package, _get_device_status
+    _hw_target = _detect_hardware()
+    _hw_pkg = _get_installed_package(_hw_target.paddle_pkg)
+    _hw_status = f'v{_hw_pkg[1]}' if _hw_pkg else '未安装'
+    _ocr_device = os.environ.get('OCR_DEVICE', 'auto')
+    _vl_tag = 'PaddleOCR-VL' if _hw_target.use_vl else 'PP-OCRv5'
+    _device_status = _get_device_status()
+    print(f"[OCR] PaddleOCR 模块已加载 | 硬件: {_hw_target.label} | PaddlePaddle: {_hw_status} | 引擎: {_vl_tag} | 运行: {_device_status} | 设备: {_ocr_device}")
+except ImportError:
+    ocr_recognize = None
+    print("[OCR] PaddleOCR 未安装，OCR 功能不可用")
 
 # AI 配置（环境变量优先，无则用默认值）
 AI_CONFIG = {
@@ -156,7 +170,9 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         """代理 NocoBase GET 请求"""
-        if self.path.startswith('/api/ai/prompt/'):
+        if self.path == '/api/ai/ocr/info':
+            self.handle_ocr_info()
+        elif self.path.startswith('/api/ai/prompt/'):
             self.handle_get_prompt()
         elif self.path == '/api/ai/preference':
             self.handle_get_preference()
@@ -350,6 +366,35 @@ class AccountingHandler(http.server.SimpleHTTPRequestHandler):
 
         except Exception as e:
             print(f"[OCR] 错误: {e}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+
+    def handle_ocr_info(self):
+        """OCR 状态信息端点"""
+        try:
+            if not ocr_recognize:
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'available': False, 'reason': 'OCR 服务未安装'}).encode('utf-8'))
+                return
+
+            # 从 ocr_service 导入 get_ocr_info
+            from ocr_service import get_ocr_info
+            info = get_ocr_info()
+            info['available'] = True
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(info).encode('utf-8'))
+        except Exception as e:
+            print(f"[OCR Info] 错误: {e}")
             self.send_response(500)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -571,6 +616,7 @@ def main(port=8081):
     os.chdir(directory)
 
     server = http.server.HTTPServer(('0.0.0.0', port), AccountingHandler)
+    server.allow_reuse_address = True
     print(f"记账本服务器启动: http://0.0.0.0:{port}")
     print(f"静态文件目录: {directory}")
     print(f"AI 解析端点: http://localhost:{port}/api/ai/parse")

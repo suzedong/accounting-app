@@ -1,4 +1,4 @@
+# PaddleOCR 依赖（程序启动时自动检测硬件并安装最高适配版本）
+# 无需手动指定版本号
 numpy
 Pillow
-paddlepaddle==3.2.0
-paddleocr

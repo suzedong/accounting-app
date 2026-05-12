@@ -34,10 +34,13 @@ const cleanup = () => {
     try { execSync(`taskkill /PID ${server.pid} /T /F`, { stdio: 'ignore' }); } catch {}
     try { execSync(`taskkill /PID ${vite.pid} /T /F`, { stdio: 'ignore' }); } catch {}
   } else {
-    server.kill('SIGTERM');
-    vite.kill('SIGTERM');
+    // SIGKILL 强制终止，包括所有子进程
+    try { process.kill(-server.pid, 'SIGKILL'); } catch {}
+    try { process.kill(-vite.pid, 'SIGKILL'); } catch {}
+    server.kill('SIGKILL');
+    vite.kill('SIGKILL');
   }
-  setTimeout(() => process.exit(0), 1000);
+  setTimeout(() => process.exit(0), 500);
 };
 
 process.on('SIGINT', () => cleanup());
