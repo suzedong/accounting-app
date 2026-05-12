@@ -61,7 +61,16 @@
       "Bash(python)",
       "Bash(python3)",
       "Bash(sed -n '513,533p' d:/Code/accounting-app/web/js/modules/chat-widget.js)",
-      "Bash(sed -n '1271,1305p' d:/Code/accounting-app/web/js/modules/chat-widget.js)"
+      "Bash(sed -n '1271,1305p' d:/Code/accounting-app/web/js/modules/chat-widget.js)",
+      "Bash(python3 -c \"import paddle; print\\(paddle.__version__\\); print\\(dir\\(paddle.device\\)\\)\")",
+      "Bash(python -c \"import paddle; print\\(paddle.__version__\\); print\\(dir\\(paddle.device\\)\\)\")",
+      "Bash(python3 -c \"import paddle; print\\('CUDA compiled:', paddle.device.is_compiled_with_cuda\\(\\)\\); print\\('Device count:', paddle.device.device_count\\(\\)\\); print\\('Available device:', paddle.device.get_available_device\\(\\)\\)\")",
+      "Bash(nvidia-smi)",
+      "WebFetch(domain:www.paddleocr.ai)",
+      "Bash(mkdir -p d:/Code/accounting-app/server/docs)"
+    ],
+    "additionalDirectories": [
+      "d:\\Code\\accounting-app\\server"
     ]
   }
 }
