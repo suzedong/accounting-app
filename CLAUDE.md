@@ -215,7 +215,7 @@ whenGlobalsReady(() => {
 | `categories` | 分类 | name, type(收入/支出), icon, color, sort_order |
 | `accounts` | 账户 | name, balance, type, icon, color |
 | `payment_methods` | 支付方式 | name, icon, color, sort_order |
-| `business_trip` | 差旅补助 | trip_id, start_date, end_date, days, trip_allowance, transport_allowance, status |
+| `business_trip` | 差旅补助 | trip_id, start_date, end_date, days, trip_allowance, transport_allowance, status, paid_trip_allowance, paid_transport_allowance, paid_date |
 | `budgets` | 预算 | month, amount, category |
 | `learning_data` | AI 学习数据 | type, key, value(json), count, updated_at |
 

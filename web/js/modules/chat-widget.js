@@ -1286,10 +1286,30 @@ let conversationState = {
 
                 if (trip) {
                     const days = parseInt(trip.days) || 0;
-                    const tripAllowance = days * 100;
-                    const transportAllowance = days * 30;
+                    const tripAllowanceTotal = days * 100;
+                    const transportAllowanceTotal = days * 30;
 
-                    if (amount >= tripAllowance + transportAllowance - 0.01 || record.matchType === 'full') {
+                    // 读取已发累计金额（支持分笔发放）
+                    const paidTrip = parseFloat(trip.paid_trip_allowance) || 0;
+                    const paidTransport = parseFloat(trip.paid_transport_allowance) || 0;
+
+                    // 根据 matchType 累加对应补助类型
+                    if (record.matchType === 'trip_allowance') {
+                        updateData.paid_trip_allowance = paidTrip + amount;
+                        updateData.paid_transport_allowance = paidTransport;
+                    } else if (record.matchType === 'transport_allowance') {
+                        updateData.paid_trip_allowance = paidTrip;
+                        updateData.paid_transport_allowance = paidTransport + amount;
+                    } else {
+                        // full 或 manual：两笔都记上
+                        updateData.paid_trip_allowance = paidTrip + amount;
+                        updateData.paid_transport_allowance = paidTransport + amount;
+                    }
+
+                    // 判断是否两笔都已发完
+                    const newPaidTrip = updateData.paid_trip_allowance;
+                    const newPaidTransport = updateData.paid_transport_allowance;
+                    if (newPaidTrip >= tripAllowanceTotal - 0.01 && newPaidTransport >= transportAllowanceTotal - 0.01) {
                         updateData.status = '✅ 已发放';
                     } else {
                         updateData.status = '⏳ 待发放';

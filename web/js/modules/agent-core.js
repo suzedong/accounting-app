@@ -725,21 +725,28 @@ async function handleRecordTripPayment(params, dispatchResult) {
         }
 
         // 按金额匹配，同金额选最早的（start_date 最远的）
+        // 考虑已发累计金额，已发完的类型不再匹配
         let matchedTrips = [];
-        let matchType = '';
 
         for (const trip of pendingTrips) {
             const days = parseInt(trip.days) || 0;
             const tripAllowance = days * 100;
             const transportAllowance = days * 30;
 
-            if (amount === tripAllowance) {
+            // 读取已发累计金额
+            const paidTrip = parseFloat(trip.paid_trip_allowance) || 0;
+            const paidTransport = parseFloat(trip.paid_transport_allowance) || 0;
+
+            const needTrip = paidTrip < tripAllowance - 0.01;
+            const needTransport = paidTransport < transportAllowance - 0.01;
+
+            if (needTrip && amount === tripAllowance) {
                 matchedTrips.push({ trip, type: 'trip_allowance', label: '差旅补助' });
             }
-            if (amount === transportAllowance) {
+            if (needTransport && amount === transportAllowance) {
                 matchedTrips.push({ trip, type: 'transport_allowance', label: '交通补助' });
             }
-            if (amount === tripAllowance + transportAllowance) {
+            if (needTrip && needTransport && amount === tripAllowance + transportAllowance) {
                 matchedTrips.push({ trip, type: 'full', label: '补助全额' });
             }
         }

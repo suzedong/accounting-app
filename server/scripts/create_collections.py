@@ -85,6 +85,8 @@ COLLECTIONS_SCHEMA = [
             {"name": "daily_allowance", "type": "float", "title": "日补助标准", "interface": "number"},
             {"name": "total_allowance", "type": "float", "title": "补助总额", "interface": "number"},
             {"name": "status", "type": "string", "title": "状态", "interface": "select", "uiSchema": {"enum": [{"value": "pending", "label": "待审批"}, {"value": "approved", "label": "已审批"}, {"value": "paid", "label": "已发放"}]}},
+            {"name": "paid_trip_allowance", "type": "float", "title": "已发差旅补助累计", "interface": "number"},
+            {"name": "paid_transport_allowance", "type": "float", "title": "已发交通补助累计", "interface": "number"},
             {"name": "paid_date", "type": "date", "title": "发放日期", "interface": "date"},
             {"name": "note", "type": "text", "title": "备注", "interface": "textarea"},
         ]

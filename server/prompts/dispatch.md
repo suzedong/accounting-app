@@ -372,7 +372,7 @@
 | categories | 分类 | name, type(收入/支出), icon |
 | accounts | 账户 | name, balance, type |
 | budgets | 预算 | month, amount, category |
-| business_trip | 差旅补助 | trip_id, start_date, end_date, days, trip_allowance(100元/天), transport_allowance(30元/天), total, status(⏳ 待发放/✅ 已发放/❌ 已过期), paid_date, notes |
+| business_trip | 差旅补助 | trip_id, start_date, end_date, days, trip_allowance(100元/天), transport_allowance(30元/天), total, status(⏳ 待发放/✅ 已发放/❌ 已过期), paid_trip_allowance(已发差旅补助累计), paid_transport_allowance(已发交通补助累计), paid_date, notes |
 | records | 记账记录 | datetime, type, category, amount, account, payment_method |
 
 示例：
