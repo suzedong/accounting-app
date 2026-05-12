@@ -137,6 +137,84 @@
 
 **render**: `"chart"`
 
+### 差旅补助操作
+
+#### create_trip_record — 创建出差记录
+当用户发送出差申请信息（OA系统拷贝文本）时触发。
+
+**触发条件**：
+- 包含申请单号、出差人员、出差城市、出发/返程时间等结构化信息
+- 格式类似 OA 系统审批单
+
+**params**:
+```json
+{
+  "fields": {
+    "trip_id": "申请单号（如 SQ202604280030）",
+    "start_date": "出发时间（YYYY-MM-DD）",
+    "end_date": "返程时间（YYYY-MM-DD）",
+    "days": 出差天数（数字）,
+    "destination": "出差城市（如 沈阳/德州/深州）",
+    "employee_name": "出差人员姓名",
+    "reason": "出差事由",
+    "notes": "备注（可选）"
+  }
+}
+```
+**render**: `"card"`（需要用户确认时）或 `"text"`（高置信度自动保存）
+
+#### record_trip_payment — 登记补贴发放
+当用户发送银行转账记录/通知时触发。
+
+**触发条件**：
+- 包含"太极计算机股份有限公司"的银行通知
+- 显示转账金额（负号表示支出/转账）
+
+**params**:
+```json
+{
+  "fields": {
+    "amount": 转账金额（正数）,
+    "datetime": "YYYY-MM-DD HH:mm:ss",
+    "employee_name": "收款人姓名（如有）"
+  }
+}
+```
+**说明**：出差补助标准 130元/天 = 100元差旅补助 + 30元交通补助。银行通常分两笔转账。
+**render**: `"card"` 或 `"text"`
+
+#### update_trip_record — 修改出差记录
+当用户要求修改已创建的出差记录时触发。常见场景：
+- "上一条没有记备注"
+- "补充出差记录的备注"
+- 用户输入 notes 格式的内容（如 "1000 + 300 | 深州智慧城市项目实施 | 沈阳/德州/深州"）
+
+**params**:
+```json
+{
+  "fields": {
+    "notes": "备注内容"
+  }
+}
+```
+**render**: `"text"`
+
+#### delete_trip_record — 删除出差记录
+当用户明确要求删除某条出差记录时触发。
+
+**触发条件**：
+- 用户提到"删除出差"、"去掉出差记录"等
+- 用户提供申请单号（如 SQ202604280030）或出差时间
+
+**params**:
+```json
+{
+  "recordId": "出差记录ID（NocoBase ID）",
+  "trip_id": "申请单号（如 SQ202604280030）"
+}
+```
+**render**: `"text"`
+
 ### 用户交互
 
 #### save_preference — 保存用户偏好
@@ -173,6 +251,10 @@
 仅在以下情况使用：
 - 纯口语表达（如"今天打车"、"买了杯咖啡"）且缺少关键字段
 - OCR 文本中确实没有金额信息
+
+**出差记录场景**：
+- `create_trip_record` 缺少 `trip_id`、`start_date`、`end_date`、`days`、`destination`、`employee_name` 中的任意一个时追问
+- 不要追问 `note`，出差记录不需要独立备注字段
 
 **params**:
 ```json
@@ -290,7 +372,7 @@
 | categories | 分类 | name, type(收入/支出), icon |
 | accounts | 账户 | name, balance, type |
 | budgets | 预算 | month, amount, category |
-| business_trip | 差旅补助 | trip_id, start_date, end_date, days, trip_allowance |
+| business_trip | 差旅补助 | trip_id, start_date, end_date, days, trip_allowance(100元/天), transport_allowance(30元/天), total, status(⏳ 待发放/✅ 已发放/❌ 已过期), paid_date, notes |
 | records | 记账记录 | datetime, type, category, amount, account, payment_method |
 
 示例：

@@ -123,6 +123,13 @@
             const check = setInterval(() => { if (window.__globalsLoaded) { clearInterval(check); fn(); } }, 10);
         }
 
+        whenGlobalsReady(() => {
+            LearningEngine.init();
+            ChatWidget.init();
+            loadStats();
+            loadTrips();
+        });
+
         async function loadStats() {
             try {
                 const result = await NocobaseAPI.getBusinessTrips();
@@ -225,7 +232,6 @@
             return '';
         }
 
-        whenGlobalsReady(() => { loadStats(); loadTrips(); });
     </script>
 </body>
 </html>

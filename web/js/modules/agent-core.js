@@ -97,7 +97,11 @@ const DEFAULT_RENDER = {
     'update_prompt': 'text',
     'ask_follow_up': 'text',
     'reply_text': 'text',
-    'create_skill': 'text'
+    'create_skill': 'text',
+    'create_trip_record': 'card',
+    'record_trip_payment': 'card',
+    'update_trip_record': 'text',
+    'delete_trip_record': 'text',
 };
 
 /**
@@ -114,7 +118,11 @@ const DEFAULT_TITLE = {
     'update_prompt': '规则更新',
     'ask_follow_up': '追问补充',
     'reply_text': '闲聊',
-    'create_skill': '创建能力'
+    'create_skill': '创建能力',
+    'create_trip_record': '登记出差',
+    'record_trip_payment': '登记发放',
+    'update_trip_record': '修改出差记录',
+    'delete_trip_record': '删除出差记录',
 };
 
 /**
@@ -148,6 +156,10 @@ const actionHandlers = {
     'ask_follow_up': handleAskFollowUp,
     'reply_text': handleReplyText,
     'create_skill': handleCreateSkill,
+    'create_trip_record': handleCreateTripRecord,
+    'record_trip_payment': handleRecordTripPayment,
+    'update_trip_record': handleUpdateTripRecord,
+    'delete_trip_record': handleDeleteTripRecord,
 };
 
 /**
@@ -654,6 +666,213 @@ async function handleCreateSkill(params, dispatchResult) {
         };
     } catch (error) {
         return { type: 'text', content: 'Skill 创建失败：' + error.message };
+    }
+}
+
+/**
+ * create_trip_record — 创建出差记录
+ * 从 OA 系统拷贝的出差申请文本中提取信息，自动计算补助金额
+ */
+async function handleCreateTripRecord(params, dispatchResult) {
+    const confidence = dispatchResult.confidence || 0;
+    const fields = params.fields || {};
+
+    const days = parseInt(fields.days) || 0;
+    const tripAllowance = days * 100;
+    const transportAllowance = days * 30;
+    const total = tripAllowance + transportAllowance;
+
+    const notes = `${tripAllowance} + ${transportAllowance} | ${fields.reason || ''} | ${fields.destination || ''}`;
+
+    const tripData = {
+        trip_id: fields.trip_id || '',
+        start_date: fields.start_date || '',
+        end_date: fields.end_date || '',
+        days: days,
+        destination: fields.destination || '',
+        employee_name: fields.employee_name || '',
+        reason: fields.reason || '',
+        trip_allowance: tripAllowance,
+        transport_allowance: transportAllowance,
+        total: total,
+        status: '⏳ 待发放',
+        notes
+    };
+
+    if (confidence >= 0.85) {
+        return { type: 'auto-save', fields: tripData, confidence, _skill: { name: 'create_trip_record', displayName: '登记出差', confidence } };
+    }
+
+    return { type: 'confirm', fields: tripData, confidence, _skill: { name: 'create_trip_record', displayName: '登记出差', confidence } };
+}
+
+/**
+ * record_trip_payment — 登记补贴发放
+ * 银行通知含"太极计算机股份有限公司"，匹配出差记录并更新发放状态
+ */
+async function handleRecordTripPayment(params, dispatchResult) {
+    const confidence = dispatchResult.confidence || 0;
+    const fields = params.fields || {};
+    const amount = parseFloat(fields.amount) || 0;
+
+    try {
+        // 查询所有待发放记录
+        const result = await NocobaseAPI.getBusinessTrips('⏳ 待发放');
+        const pendingTrips = result.data || [];
+
+        if (pendingTrips.length === 0) {
+            return { type: 'text', content: '当前没有待发放补助的出差记录。', _skill: { name: 'record_trip_payment', displayName: '登记发放', confidence } };
+        }
+
+        // 按金额匹配，同金额选最早的（start_date 最远的）
+        let matchedTrips = [];
+        let matchType = '';
+
+        for (const trip of pendingTrips) {
+            const days = parseInt(trip.days) || 0;
+            const tripAllowance = days * 100;
+            const transportAllowance = days * 30;
+
+            if (amount === tripAllowance) {
+                matchedTrips.push({ trip, type: 'trip_allowance', label: '差旅补助' });
+            }
+            if (amount === transportAllowance) {
+                matchedTrips.push({ trip, type: 'transport_allowance', label: '交通补助' });
+            }
+            if (amount === tripAllowance + transportAllowance) {
+                matchedTrips.push({ trip, type: 'full', label: '补助全额' });
+            }
+        }
+
+        if (matchedTrips.length === 0) {
+            // 未精确匹配，返回最早的一笔待发放记录供用户确认
+            const sorted = [...pendingTrips].sort((a, b) => (a.start_date || '').localeCompare(b.start_date || ''));
+            const first = sorted[0];
+            const days = parseInt(first.days) || 0;
+            const total = days * 130;
+            matchedTrips = [{
+                trip: first,
+                type: 'manual',
+                label: `补助（¥${total}）`
+            }];
+        }
+
+        // 同金额多条记录，选最早的
+        matchedTrips.sort((a, b) => (a.trip.start_date || '').localeCompare(b.trip.start_date || ''));
+        const best = matchedTrips[0];
+        const trip = best.trip;
+
+        const paymentInfo = {
+            tripId: trip.id,
+            tripId_str: trip.trip_id || '',
+            amount: amount,
+            matchType: best.type,
+            dateRange: `${(trip.start_date || '').substring(0, 10)} ~ ${(trip.end_date || '').substring(0, 10)}`,
+            label: best.label,
+            datetime: fields.datetime || ''
+        };
+
+        return { type: 'confirm', fields: paymentInfo, confidence, _skill: { name: 'record_trip_payment', displayName: '登记发放', confidence } };
+    } catch (error) {
+        return { type: 'text', content: '查询出差记录失败：' + error.message, _skill: { name: 'record_trip_payment', displayName: '登记发放', confidence } };
+    }
+}
+
+/**
+ * update_trip_record — 修改出差记录
+ * 用于补充备注等场景，只更新 notes 字段
+ */
+async function handleUpdateTripRecord(params, dispatchResult) {
+    const confidence = dispatchResult.confidence || 0;
+    try {
+        const fields = params.fields || {};
+        if (Object.keys(fields).length === 0) {
+            return { type: 'text', content: '没有发现需要修改的字段。' };
+        }
+
+        let tripId = window.__lastSavedTripRecordId;
+
+        if (!tripId) {
+            const ctx = params.context || null;
+            if (ctx && (ctx.trip_id || ctx.days || ctx.start_date)) {
+                // 通过出差信息定位
+                const result = await NocobaseAPI.getBusinessTrips();
+                const trips = result.data || [];
+                const match = trips.find(t =>
+                    (ctx.trip_id && t.trip_id === ctx.trip_id) ||
+                    (ctx.days && parseInt(t.days) === parseInt(ctx.days))
+                );
+                if (match) tripId = match.id;
+            }
+            if (!tripId) {
+                // 兜底：取最近一条
+                const result = await NocobaseAPI.getBusinessTrips();
+                if (result.data && result.data.length > 0) {
+                    tripId = result.data[0].id;
+                }
+            }
+        }
+
+        if (!tripId) {
+            return { type: 'text', content: '找不到对应的出差记录，无法修改。' };
+        }
+
+        // 字段映射：LLM 返回的 note → NocoBase 的 notes
+        const fieldMapping = { 'note': 'notes', 'notes': 'notes', 'reason': 'reason' };
+        const updateData = {};
+        for (const [key, value] of Object.entries(fields)) {
+            updateData[fieldMapping[key] || key] = value;
+        }
+
+        await NocobaseAPI.updateTrip(tripId, updateData);
+
+        const changedFields = Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join('、');
+        return {
+            type: 'text',
+            content: `已更新：${changedFields}`,
+            _skill: { name: 'update_trip_record', displayName: '修改出差记录', confidence }
+        };
+    } catch (error) {
+        return { type: 'text', content: '修改失败：' + error.message };
+    }
+}
+
+/**
+ * delete_trip_record — 通过编号删除出差记录
+ */
+async function handleDeleteTripRecord(params, dispatchResult) {
+    const confidence = dispatchResult.confidence || 0;
+    try {
+        const tripId = params.recordId || params.trip_id || null;
+
+        if (!tripId) {
+            return { type: 'text', content: '请提供要删除的申请单号（如 SQ202604280030）。', _skill: { name: 'delete_trip_record', displayName: '删除出差记录', confidence } };
+        }
+
+        // 先查询确认记录存在
+        const result = await NocobaseAPI.getBusinessTrips();
+        const trips = result.data || [];
+        const trip = trips.find(t => String(t.id) === String(tripId) || t.trip_id === tripId);
+
+        if (!trip) {
+            return { type: 'text', content: `找不到申请单号为「${tripId}」的出差记录。`, _skill: { name: 'delete_trip_record', displayName: '删除出差记录', confidence } };
+        }
+
+        await NocobaseAPI.deleteTrip(trip.id);
+
+        function formatDateShort(dateStr) {
+            if (!dateStr) return '';
+            return dateStr.substring(0, 10);
+        }
+
+        const label = `${trip.employee_name || ''} ${trip.destination || ''} ${formatDateShort(trip.start_date)} ~ ${formatDateShort(trip.end_date)}`;
+        return {
+            type: 'text',
+            content: `已删除出差记录：${label.trim()}（申请单号：${trip.trip_id}）`,
+            _skill: { name: 'delete_trip_record', displayName: '删除出差记录', confidence }
+        };
+    } catch (error) {
+        return { type: 'text', content: '删除失败：' + error.message, _skill: { name: 'delete_trip_record', displayName: '删除出差记录', confidence } };
     }
 }
 

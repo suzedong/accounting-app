@@ -486,6 +486,53 @@ let conversationState = {
     }
 
     function renderRecordCardContent(record, msgId) {
+        // 出差记录
+        if (record.trip_id !== undefined) {
+            return `
+                <div class="chat-msg-bubble">
+                    <div>我帮你整理了出差信息，补助按 130元/天（100差旅 + 30交通）计算，请确认：</div>
+                    <div class="chat-record-card">
+                        <div class="chat-record-field"><span class="label">📋 申请单号</span><span class="value">${escapeHtml(record.trip_id || '')}</span></div>
+                        <div class="chat-record-field"><span class="label">👤 出差人员</span><span class="value">${escapeHtml(record.employee_name || '')}</span></div>
+                        <div class="chat-record-field"><span class="label">📍 出差城市</span><span class="value">${escapeHtml(record.destination || '')}</span></div>
+                        <div class="chat-record-field"><span class="label">📅 出差时间</span><span class="value">${record.start_date || ''} ~ ${record.end_date || ''}</span></div>
+                        <div class="chat-record-field"><span class="label">⏱ 出差天数</span><span class="value">${record.days || 0} 天</span></div>
+                        <div class="chat-record-field"><span class="label">💰 差旅补助</span><span class="value">¥${(record.trip_allowance || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</span></div>
+                        <div class="chat-record-field"><span class="label">🚌 交通补助</span><span class="value">¥${(record.transport_allowance || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</span></div>
+                        <div class="chat-record-field"><span class="label">💵 合计</span><span class="value"><strong>¥${(record.total || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</strong></span></div>
+                        ${record.reason ? `<div class="chat-record-field"><span class="label">📝 出差事由</span><span class="value">${escapeHtml(record.reason)}</span></div>` : ''}
+                    </div>
+                    <div class="chat-record-actions">
+                        <button class="chat-btn-confirm" aria-label="确认" onclick="ChatWidget.confirmRecord('${msgId}')">✅ 确认</button>
+                        <button class="chat-btn-cancel" aria-label="取消" onclick="ChatWidget.cancelRecord()">❌ 取消</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 出差补贴发放
+        if (record.tripId !== undefined) {
+            const statusText = record.matchType === 'full' ? '补助全额' :
+                               record.matchType === 'trip_allowance' ? '差旅补助' :
+                               record.matchType === 'transport_allowance' ? '交通补助' : record.label || '发放记录';
+            return `
+                <div class="chat-msg-bubble">
+                    <div>匹配到出差记录，请确认发放：</div>
+                    <div class="chat-record-card">
+                        <div class="chat-record-field"><span class="label"> 编号</span><span class="value">${escapeHtml(record.tripId_str || '')}</span></div>
+                        <div class="chat-record-field"><span class="label"> 出差时间</span><span class="value">${escapeHtml(record.dateRange || '')}</span></div>
+                        <div class="chat-record-field"><span class="label"> 发放金额</span><span class="value"><strong>¥${parseFloat(record.amount || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</strong></span></div>
+                        <div class="chat-record-field"><span class="label"> 类型</span><span class="value">${statusText}</span></div>
+                    </div>
+                    <div class="chat-record-actions">
+                        <button class="chat-btn-confirm" aria-label="确认" onclick="ChatWidget.confirmRecord('${msgId}')"> 确认</button>
+                        <button class="chat-btn-cancel" aria-label="取消" onclick="ChatWidget.cancelRecord()"> 取消</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 普通记账记录
         const typeClass = record.type === '支出' ? 'expense' : 'income';
         const typeIcon = record.type === '支出' ? '' : '📥';
         return `
@@ -1094,12 +1141,14 @@ let conversationState = {
             conversationState.awaitingFollowUp = true;
             conversationState.pendingFollowUp = result.followUp;
             const question = result.followUp.question || '请补充信息';
-            // 显示缺失字段 + 自动填充的默认值
             const missingFields = result.followUp.missing_fields || [];
             const originalFields = result.followUp.original_fields || {};
-            const autoFilled = {};
-            if (!originalFields.account) autoFilled.account = '个人';
-            if (!originalFields.payment) autoFilled.payment = '微信支付';
+            // 出差相关 skill 不显示记账默认值
+            const isTripSkill = skillMeta && ['create_trip_record', 'record_trip_payment'].includes(skillMeta.name);
+            const autoFilled = isTripSkill ? {} : {
+                account: originalFields.account || '个人',
+                payment: originalFields.payment || '微信支付'
+            };
             appendSingleMessage('missing-fields', question, { question, missingFields, originalFields, autoFilled }, skillMeta);
             chatHistory.push({
                 type: 'missing-fields', content: question, data: { question, missingFields, originalFields, autoFilled },
@@ -1194,6 +1243,69 @@ let conversationState = {
 
     async function saveRecordToDB(record, msgId, skillMeta = null) {
         try {
+            // 出差记录
+            if (skillMeta && skillMeta.name === 'create_trip_record') {
+                const tripData = {
+                    trip_id: record.trip_id,
+                    start_date: record.start_date,
+                    end_date: record.end_date,
+                    days: record.days,
+                    destination: record.destination,
+                    employee_name: record.employee_name,
+                    reason: record.reason,
+                    trip_allowance: record.trip_allowance,
+                    transport_allowance: record.transport_allowance,
+                    total: record.total,
+                    status: record.status || '⏳ 待发放',
+                    notes: record.notes || ''
+                };
+                const result = await NocobaseAPI.createTrip(tripData);
+                const tripId = result?.data?.id;
+                if (tripId) {
+                    window.__lastSavedTripRecordId = tripId;
+                }
+                addMessage('ai', `已记录出差：${tripData.employee_name} ${tripData.destination} ${tripData.days}天 补助 ¥${tripData.total.toLocaleString('zh-CN', {minimumFractionDigits: 2})}`, null, skillMeta);
+                return;
+            }
+
+            // 出差补贴发放
+            if (skillMeta && skillMeta.name === 'record_trip_payment') {
+                const tripId = record.tripId;
+                if (!tripId) {
+                    addMessage('ai', '无法找到对应的出差记录，请确认信息。');
+                    return;
+                }
+
+                // 先查询出差记录获取补助计算信息
+                const tripResult = await NocobaseAPI.getBusinessTrips();
+                const allTrips = tripResult.data || [];
+                const trip = allTrips.find(t => String(t.id) === String(tripId));
+
+                const amount = record.amount || 0;
+                const updateData = { paid_date: record.datetime || new Date().toISOString().replace('T', ' ').substring(0, 19) };
+
+                if (trip) {
+                    const days = parseInt(trip.days) || 0;
+                    const tripAllowance = days * 100;
+                    const transportAllowance = days * 30;
+
+                    if (amount >= tripAllowance + transportAllowance - 0.01 || record.matchType === 'full') {
+                        updateData.status = '✅ 已发放';
+                    } else {
+                        updateData.status = '⏳ 待发放';
+                    }
+                }
+
+                await NocobaseAPI.updateTrip(tripId, updateData);
+
+                // 使用 dispatch 返回的信息拼接消息（避免 API 字段不一致）
+                const tripLabel = record.tripId_str || 'ID:' + tripId;
+                const statusText = updateData.status === '✅ 已发放' ? '已发放完毕' : '已登记发放';
+                addMessage('ai', `${statusText}：编号 ${tripLabel} 金额 ¥${parseFloat(amount).toLocaleString('zh-CN', {minimumFractionDigits: 2})}`, null, skillMeta);
+                return;
+            }
+
+            // 普通记账记录
             const data = {
                 datetime: record.datetime,
                 type: record.type,

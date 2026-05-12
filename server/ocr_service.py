@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 
 # Disable oneDNN to avoid ConvertPirAttribute2RuntimeAttribute error on Windows + PaddlePaddle 3.x
+os.environ['FLAGS_enable_mkldnn'] = '0'
 os.environ['FLAGS_use_mkldnn'] = '0'
 
 _engine = None

@@ -117,6 +117,18 @@ const C = NOCOBASE_CONFIG.COLLECTIONS;
         return request('GET', `/${C.BUSINESS_TRIP}`, null, params);
     }
 
+    async function createTrip(data) {
+        return request('POST', `/${C.BUSINESS_TRIP}`, data);
+    }
+
+    async function updateTrip(id, data) {
+        return request('PATCH', `/${C.BUSINESS_TRIP}/${id}`, data);
+    }
+
+    async function deleteTrip(id) {
+        return request('POST', `/${C.BUSINESS_TRIP}:destroy/${id}`);
+    }
+
     // ==================== 聚合统计 ====================
 
     /**
@@ -179,6 +191,9 @@ export {
     getPaymentMethods,
     // Business trip
     getBusinessTrips,
+    createTrip,
+    updateTrip,
+    deleteTrip,
     // Stats
     aggregate,
     getRecordsForStats,
