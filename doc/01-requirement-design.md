@@ -30,7 +30,7 @@
 | 规则解析 | 关键词匹配 + 正则提取（降级方案） | parse.js | 保留，本地运行 |
 | 记录管理 | 增删改查 + 分页 + 筛选 | records.html | 存 SQLite |
 | 预算管理 | 月度预算跟踪 + 超支预警 | budget.html | 存 SQLite |
-| 统计分析 | 多维度图表（分类、账户、趋势、对比） | stats.html + Chart.js | SQLite GROUP BY + Chart.js |
+| 统计分析 | 多维度图表（分类、账户、趋势、对比） | stats.html + Chart.js | SQLite GROUP BY + Vue Data UI |
 | 差旅补助 | 出差记录 + 补助发放 + 金额匹配 | trip_allowance.html | 存 SQLite |
 | OCR 识别 | 图片识别 → 自动记账 | PaddleOCR via server.py | 内置 RapidOCR（ONNX） |
 | 学习引擎 | 用户修正 → 个性化规则 | localStorage + NocoBase | 存 SQLite |
@@ -55,7 +55,8 @@
 | AI 意图识别 | 调用百炼 API，直连不调用代理 |
 | 偏好管理 | 从 server.py 的 preferences.md 改为 SQLite 存储 |
 | Prompt 管理 | dispatch.md / record.md 改为 SQLite 存储 |
-| 分类/账户/支付方式管理 | 从 NocoBase collections 改为 SQLite 表 |
+| 账户管理 | 从 NocoBase collections 改为硬编码预置 |
+| 分类/支付方式 | 不再需要独立表，records 中直接存自由文本 |
 
 ## 4. 非功能需求
 

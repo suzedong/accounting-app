@@ -50,7 +50,7 @@ cd server && python3 server.py 18080
 │   │   │   ├── agent-core.js     # Agent 核心
 │   │   │   └── chat-widget.js    # AI 对话悬浮组件
 │   │   └── vendor/         # 第三方库
-│   │       └── chart.js          # Chart.js
+│   │       └── (Vue Data UI via npm)
 │   └── assets/             # 静态资源
 │       ├── chat-widget.css       # 对话组件样式
 │       └── favicon.svg           # 网站图标
@@ -211,10 +211,8 @@ whenGlobalsReady(() => {
 
 | Collection | 说明 | 关键字段 |
 |---|---|---|
-| `records` | 收支记录 | datetime, type, category, amount, account, note, payment_method |
-| `categories` | 分类 | name, type(收入/支出), icon, color, sort_order |
+| `records` | 收支记录 | datetime, type, category(自由文本), amount, account, note, payment_method(自由文本) |
 | `accounts` | 账户 | name, balance, type, icon, color |
-| `payment_methods` | 支付方式 | name, icon, color, sort_order |
 | `business_trip` | 差旅补助 | trip_id, start_date, end_date, days, trip_allowance, transport_allowance, status, paid_trip_allowance, paid_transport_allowance, paid_date |
 | `budgets` | 预算 | month, amount, category |
 | `learning_data` | AI 学习数据 | type, key, value(json), count, updated_at |

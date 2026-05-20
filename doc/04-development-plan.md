@@ -52,9 +52,7 @@
 - [ ] `create_record(fields)` — 创建记录（生成 UUID）
 - [ ] `update_record(id, fields)` — 更新记录
 - [ ] `delete_record(id)` — 删除记录
-- [ ] `get_categories()` — 查询分类列表
-- [ ] `get_accounts()` — 查询账户列表
-- [ ] `get_payment_methods()` — 查询支付方式列表
+- [ ] `get_accounts()` — 返回预置账户列表（硬编码 fallback）
 
 #### 1.4 前端适配
 
@@ -162,7 +160,7 @@
 #### 3.2 数据导入
 
 - [ ] `import_from_nocobase()` — 从现有 NocoBase 全量导入
-- [ ] 支持导入所有表（records, categories, accounts, business_trip 等）
+- [ ] 支持导入所有表（records, business_trip, learning_data 等）
 - [ ] 导入进度提示
 
 #### 3.3 数据导出

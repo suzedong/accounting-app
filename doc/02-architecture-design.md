@@ -12,7 +12,7 @@
 │  │  web/pages/*.html │    │  ┌──────────────────────┐   │   │
 │  │  web/js/*.js      │    │  │  Tauri Commands       │   │   │
 │  │  web/assets/*.css │    │  │  ├─ db operations     │   │   │
-│  │  Chart.js (vendor)│    │  │  ├─ sync operations   │   │   │
+│  │  Vue Data UI     │    │  │  ├─ sync operations   │   │   │
 │  │                  │    │  │  ├─ OCR operations    │   │   │
 │  │  invoke() ──────┼──IPC┤──│  └──────────────────────┘   │   │
 │  │                │    │    │                              │   │
@@ -107,51 +107,6 @@ CREATE INDEX idx_records_type ON records(type);
 CREATE INDEX idx_records_category ON records(category);
 CREATE INDEX idx_records_synced ON records(synced);
 
--- 分类（对齐 categories collection）
-CREATE TABLE categories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,                 -- 分类名
-    type TEXT NOT NULL,                 -- 收入/支出
-    icon TEXT,                          -- 图标 emoji
-    color TEXT,                         -- 颜色
-    sort_order INTEGER DEFAULT 0,
-    synced INTEGER DEFAULT 1,
-    nocobase_id INTEGER,
-    nocobase_updated_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-
--- 账户（对齐 accounts collection）
-CREATE TABLE accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    balance REAL DEFAULT 0,
-    type TEXT,                          -- 个人/家庭/公司
-    icon TEXT,
-    color TEXT,
-    sort_order INTEGER DEFAULT 0,
-    synced INTEGER DEFAULT 1,
-    nocobase_id INTEGER,
-    nocobase_updated_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-
--- 支付方式（对齐 payment_methods collection）
-CREATE TABLE payment_methods (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    icon TEXT,
-    color TEXT,
-    sort_order INTEGER DEFAULT 0,
-    synced INTEGER DEFAULT 1,
-    nocobase_id INTEGER,
-    nocobase_updated_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-
 -- 差旅补助（对齐 business_trip collection）
 CREATE TABLE business_trip (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,34 +186,9 @@ CREATE TABLE sync_log (
 
 ### 3.2 预置数据
 
-首次启动时初始化基础数据（从 NocoBase 导入或写入默认值）：
+首次启动时初始化基础数据：
 
 ```sql
--- 默认分类（支出）
-INSERT INTO categories (name, type, icon, sort_order) VALUES
-    ('餐饮', '支出', NULL, 1),
-    ('交通出行', '支出', NULL, 2),
-    ('购物', '支出', NULL, 3),
-    ('生活杂费', '支出', NULL, 4),
-    ('通信费', '支出', NULL, 5),
-    ('家庭支出', '支出', NULL, 6),
-    ('医疗', '支出', NULL, 7),
-    ('娱乐', '支出', NULL, 8),
-    ('学习', '支出', NULL, 9),
-    ('人情往来', '支出', NULL, 10),
-    ('零食水果', '支出', NULL, 11),
-    ('数码', '支出', NULL, 12),
-    ('服饰', '支出', NULL, 13);
-
--- 默认支付方式
-INSERT INTO payment_methods (name, sort_order) VALUES
-    ('微信支付', 1),
-    ('支付宝', 2),
-    ('银行卡', 3),
-    ('现金', 4),
-    ('信用卡', 5),
-    ('花呗', 6);
-
 -- 默认 Prompt
 INSERT INTO system_prompts (name, content) VALUES
     ('dispatch', <从现有 dispatch.md 导入>),
@@ -353,7 +283,30 @@ if 本地 modified && NocoBase modified:
 
 个人记账场景，last-write-wins 足够。
 
-## 6. 文件结构（重构后）
+### 5.5 多设备同步特殊数据
+
+Prompt、Preference、Learning Data 三类数据需要跨设备同步（与 records 不同，records 是用户写入，每台设备写不同数据；这三类是 Agent 写入，多台设备可能写同一个 key）：
+
+**system_prompts 表**
+- 每条 prompt 通过 `name`（dispatch / record）唯一标识
+- 同步时按 `name` 匹配，比较 `updated_at`，新覆盖旧
+- Agent 修改频率低，冲突概率小
+
+**user_preferences 表**
+- 按 `key` 唯一标识
+- 同步逻辑同 prompts
+
+**learning_data 表**
+- 每条学习记录带独立 `uuid`，新增直接插入，不会冲突
+- 同一条 key 的多条记录在前端聚合时使用 `GROUP BY key`
+- 不同步不影响功能，仅影响"设备间学习经验共享"
+
+这三类数据复用 records 的同步逻辑（push/pull/冲突处理），无需额外机制。
+
+## 6. ~~文件结构（重构后）~~（已更新）
+
+> **注意**：下方文件结构基于"保留 HTML/JS"的旧方案。现已改为 **Vue 3 + TypeScript SPA** 重写，
+> 最新文件结构见 `~/.claude/plans/curious-crafting-octopus.md`。此处保留仅作历史参考。
 
 ```
 accounting-app/
@@ -376,7 +329,7 @@ accounting-app/
 │   │   │   ├── agent-core.js     # Agent 核心
 │   │   │   └── chat-widget.js    # 对话组件（改 OCR 调用）
 │   │   └── vendor/
-│   │       └── chart.js
+│   │       └── (Vue Data UI via npm)
 │   └── assets/
 │       ├── chat-widget.css
 │       └── favicon.svg

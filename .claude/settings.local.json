@@ -90,7 +90,8 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('OK, content length:', len\\(d.get\\('content',''\\)\\)\\)\")",
       "Bash(kill 2664)",
       "Bash(taskkill //PID 2664 //F)",
-      "Bash(cmd //c \"python server.py 18080\")"
+      "Bash(cmd //c \"python server.py 18080\")",
+      "WebFetch(domain:www.npmjs.com)"
     ],
     "additionalDirectories": [
       "d:\\Code\\accounting-app\\web\\static"

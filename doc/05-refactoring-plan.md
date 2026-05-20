@@ -21,7 +21,7 @@
 |---|---|
 | HTML 页面 | 5 个页面布局不变，仅改数据获取调用 |
 | CSS 样式 | 现有样式全部保留 |
-| Chart.js | 统计图表不变 |
+| Vue Data UI | 统计图表，Vue 3 原生组件 |
 | parse.js | 规则解析（纯 JS，不依赖后端） |
 | Agent 意图识别逻辑 | dispatch 逻辑不变，仅改调用方式 |
 
@@ -87,7 +87,22 @@ window.NocobaseAPI = DbAPI;  // 保持全局变量名不变，减少页面改动
 
 页面代码基本不需要改，因为 `window.NocobaseAPI` 接口保持一致。唯一需要确认的是返回格式一致。
 
-### 2.4 NocoBase API 返回格式 vs SQLite 返回格式
+### 2.4 简化：删除 categories 和 payment_methods 表
+
+AI 解析提取的是具体名称（"招商银行信用卡"、"午餐"），不是预置的抽象分类（"信用卡"、"餐饮"）。
+
+| 表 | 处理 |
+|---|---|
+| `payment_methods` | 删除，`records.payment_method` 直接存自由文本 |
+| `categories` | 删除，`records.category` 直接存自由文本 |
+
+影响：
+- Prompt 中不再列举分类列表，改为"根据用户输入提取分类，保持用词一致"
+- stats 页面按 category GROUP BY 时自然就是细粒度分类
+- 规则管理面板的下拉选择改为自由输入
+- SQLite schema 从 9 张表减到 7 张
+
+### 2.5 NocoBase API 返回格式 vs SQLite 返回格式
 
 需要确保 Rust 端返回格式与 NocoBase API 一致：
 
@@ -226,9 +241,26 @@ const { invoke } = await import('@tauri-apps/api/core');
 const result = await invoke('ocr_recognize', { imageBase64: compressedUrl });
 ```
 
-## 5. Prompt / Preference 重构方案
+## 5. Prompt / Preference / Learning 重构方案
 
-### 5.1 迁移
+### 5.1 为什么放数据库（而非文件）
+
+这三类数据有以下共同特征：
+- **Agent 动态写入**：dispatch 可通过 `update_prompt` 自修改，preference 可通过 `save_preference` 自修改
+- **需要多设备同步**：多台客户端需要共享这些数据，复用 NocoBase 同步逻辑即可
+- **结构化查询**：learning_data 需要 `GROUP BY key` 聚合，文件需要全量加载再过滤
+
+### 5.2 多设备同步策略
+
+| 数据类型 | 同步方式 | 冲突处理 |
+|---|---|---|
+| system_prompts | 按 `name` 匹配，比较 `updated_at` | last-write-wins |
+| user_preferences | 按 `key` 匹配，比较 `updated_at` | last-write-wins |
+| learning_data | 每条独立 `uuid`，新增插入 | 不会冲突 |
+
+复用 records 的 push/pull 逻辑，无需额外机制。
+
+### 5.3 迁移
 
 | 当前 | 目标 |
 |---|---|
@@ -237,7 +269,7 @@ const result = await invoke('ocr_recognize', { imageBase64: compressedUrl });
 | `server/prompts/preferences.md` | `user_preferences` 表 |
 | `server/prompts/README.md` | 合并到 dispatch.md 注释 |
 
-### 5.2 迁移工具
+### 5.4 迁移工具
 
 Phase 3 的数据导入功能中增加：
 
@@ -252,7 +284,11 @@ async fn import_prompts_from_files(
 }
 ```
 
-## 6. 前端最小化改动策略
+## 6. ~~前端最小化改动策略~~（已废弃）
+
+> **注意**：本方案基于"保留现有 HTML/JS，只改底层"的渐进式改造思路。
+> 现已改为**完全重写**方案（Vue 3 + TypeScript），详见 `~/.claude/plans/curious-crafting-octopus.md`。
+> 本节保留仅作历史参考。
 
 ### 6.1 保持全局变量名不变
 

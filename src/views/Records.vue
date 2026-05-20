@@ -1,0 +1,261 @@
+<template>
+  <div class="records-page">
+    <div class="page-header">
+      <h2>记账记录</h2>
+      <el-button type="primary" @click="showCreateDialog">新增记录</el-button>
+    </div>
+
+    <!-- Filters -->
+    <el-card class="filters">
+      <el-form :model="store.filters" inline>
+        <el-form-item label="类型">
+          <el-select v-model="store.filters.type" placeholder="全部" clearable style="width: 120px" @change="onFilterChange">
+            <el-option label="支出" value="支出" />
+            <el-option label="收入" value="收入" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="账户">
+          <el-select v-model="store.filters.account" placeholder="全部" clearable style="width: 120px" @change="onFilterChange">
+            <el-option label="个人" value="个人" />
+            <el-option label="家庭" value="家庭" />
+            <el-option label="公司" value="公司" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="日期">
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始"
+            end-placeholder="结束"
+            @change="onDateRangeChange"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="resetFilters">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <!-- Table -->
+    <el-table :data="store.records" v-loading="store.loading" stripe>
+      <el-table-column prop="datetime" label="时间" width="180">
+        <template #default="{ row }">
+          {{ formatDatetime(row.datetime) }}
+        </template>
+      </el-table-column>
+      <el-table-column prop="type" label="类型" width="80">
+        <template #default="{ row }">
+          <el-tag :type="row.type === '收入' ? 'success' : 'danger'" size="small">
+            {{ row.type }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="category" label="分类" width="120" />
+      <el-table-column prop="amount" label="金额" width="120">
+        <template #default="{ row }">
+          <span :class="row.type === '收入' ? 'text-success' : 'text-danger'">
+            {{ formatMoney(row.amount) }}
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="account" label="账户" width="80" />
+      <el-table-column prop="payment_method" label="支付方式" width="140" />
+      <el-table-column prop="note" label="备注" />
+      <el-table-column label="操作" width="160" fixed="right">
+        <template #default="{ row }">
+          <el-button size="small" @click="showEditDialog(row)">编辑</el-button>
+          <el-button size="small" type="danger" @click="handleDelete(row.id)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <!-- Pagination -->
+    <el-pagination
+      v-model:current-page="store.page"
+      v-model:page-size="store.pageSize"
+      :total="store.total"
+      :page-sizes="[10, 20, 50]"
+      layout="total, sizes, prev, pager, next"
+      @current-change="store.fetchRecords"
+      @size-change="store.fetchRecords"
+      style="margin-top: 16px; justify-content: flex-end"
+    />
+
+    <!-- Create/Edit Dialog -->
+    <el-dialog v-model="dialogVisible" :title="editMode ? '编辑记录' : '新增记录'" width="500px">
+      <el-form :model="form" label-width="80px">
+        <el-form-item label="时间">
+          <el-date-picker v-model="form.datetime" type="datetime" placeholder="选择时间" />
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-radio-group v-model="form.type">
+            <el-radio value="支出">支出</el-radio>
+            <el-radio value="收入">收入</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-input v-model="form.category" placeholder="如：餐饮、交通出行" />
+        </el-form-item>
+        <el-form-item label="金额">
+          <el-input-number v-model="form.amount" :min="0" :precision="2" />
+        </el-form-item>
+        <el-form-item label="账户">
+          <el-select v-model="form.account" style="width: 100%">
+            <el-option label="个人" value="个人" />
+            <el-option label="家庭" value="家庭" />
+            <el-option label="公司" value="公司" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="支付方式">
+          <el-input v-model="form.payment_method" placeholder="如：微信支付、招商银行信用卡" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="form.note" type="textarea" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmit" :loading="submitting">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+import { ElMessageBox, ElMessage } from 'element-plus';
+import { useRecordsStore } from '@/stores/records';
+import { formatMoney, formatDatetime } from '@/utils/formatters';
+import type { RecordInput } from '@/types';
+
+const store = useRecordsStore();
+const dialogVisible = ref(false);
+const editMode = ref(false);
+const editingId = ref<number | null>(null);
+const submitting = ref(false);
+const dateRange = ref<[Date, Date] | null>(null);
+
+const defaultForm: RecordInput = {
+  datetime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+  type: '支出',
+  amount: 0,
+  account: '个人',
+  category: '',
+  payment_method: '',
+  note: '',
+};
+
+const form = ref<RecordInput>({ ...defaultForm });
+
+onMounted(() => {
+  store.fetchRecords();
+});
+
+function showCreateDialog() {
+  editMode.value = false;
+  editingId.value = null;
+  form.value = { ...defaultForm };
+  dialogVisible.value = true;
+}
+
+function showEditDialog(row: RecordInput & { id: number }) {
+  editMode.value = true;
+  editingId.value = row.id;
+  form.value = {
+    datetime: row.datetime,
+    type: row.type,
+    category: row.category || '',
+    amount: row.amount,
+    account: row.account,
+    payment_method: row.payment_method || '',
+    note: row.note || '',
+  };
+  dialogVisible.value = true;
+}
+
+async function handleSubmit() {
+  if (form.value.amount <= 0) {
+    ElMessage.warning('金额必须大于 0');
+    return;
+  }
+  submitting.value = true;
+  try {
+    if (editMode.value && editingId.value !== null) {
+      await store.updateRecord(editingId.value, form.value);
+      ElMessage.success('更新成功');
+    } else {
+      await store.createRecord(form.value);
+      ElMessage.success('创建成功');
+    }
+    dialogVisible.value = false;
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function handleDelete(id: number) {
+  await ElMessageBox.confirm('确定要删除这条记录吗？', '确认删除', {
+    type: 'warning',
+  });
+  await store.deleteRecord(id);
+  ElMessage.success('删除成功');
+}
+
+function onFilterChange() {
+  store.page = 1;
+  store.fetchRecords();
+}
+
+function onDateRangeChange(val: [Date, Date] | null) {
+  if (val) {
+    store.filters.datetimeGte = `${val[0].getFullYear()}-${String(val[0].getMonth() + 1).padStart(2, '0')}-${String(val[0].getDate()).padStart(2, '0')} 00:00:00`;
+    store.filters.datetimeLte = `${val[1].getFullYear()}-${String(val[1].getMonth() + 1).padStart(2, '0')}-${String(val[1].getDate()).padStart(2, '0')} 23:59:59`;
+  } else {
+    store.filters.datetimeGte = '';
+    store.filters.datetimeLte = '';
+  }
+  store.page = 1;
+  store.fetchRecords();
+}
+
+function resetFilters() {
+  store.filters.type = '';
+  store.filters.category = '';
+  store.filters.account = '';
+  store.filters.datetimeGte = '';
+  store.filters.datetimeLte = '';
+  store.filters.sort = 'datetime_desc';
+  dateRange.value = null;
+  store.page = 1;
+  store.fetchRecords();
+}
+</script>
+
+<style scoped>
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.page-header h2 {
+  font-size: 1.5em;
+  color: #333;
+}
+
+.filters {
+  margin-bottom: 16px;
+}
+
+.text-success {
+  color: #52c41a;
+  font-weight: 500;
+}
+
+.text-danger {
+  color: #ff4d4f;
+  font-weight: 500;
+}
+</style>

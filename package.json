@@ -1,15 +1,29 @@
 {
   "name": "accounting-app",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
     "dev:frontend": "vite",
-    "dev:backend": "node scripts/start-server.mjs",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "tauri dev",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0",
+    "pinia": "^2.3.0",
+    "element-plus": "^2.9.0",
+    "vue-data-ui": "^0.3.0",
+    "@tauri-apps/api": "^2.1.0",
+    "@tauri-apps/plugin-shell": "^2.2.0"
   },
   "devDependencies": {
-    "vite": "^6.0.0"
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.0",
+    "vue-tsc": "^2.2.0",
+    "@tauri-apps/cli": "^2.1.0"
   }
 }

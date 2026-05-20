@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for the accounting app",
+  "local": true,
+  "windows": ["main"],
+  "permissions": [
+    "shell:allow-open"
+  ]
+}

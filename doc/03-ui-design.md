@@ -134,7 +134,7 @@ fn show_notification(title: String, body: String) {
 **布局不变**：
 
 - 数据获取从 `pageSize=10000` 改为 SQL 聚合查询
-- Chart.js 渲染不变
+- Vue Data UI 渲染不变
 
 ### 5.5 差旅补助页
 
