@@ -1,5 +1,7 @@
-use rusqlite::{Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use rusqlite::OptionalExtension;
+use serde::Deserialize;
+
+use super::connection::Database;
 
 #[derive(Deserialize)]
 pub struct TripInput {
@@ -29,7 +31,7 @@ pub struct TripUpdateInput {
     pub paid_date: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub struct TripRow {
     pub id: i64,
     pub uuid: String,
@@ -80,50 +82,66 @@ fn row_to_trip(row: &rusqlite::Row<'_>) -> Result<TripRow, rusqlite::Error> {
     })
 }
 
-pub fn get_trips(conn: &Connection, status: Option<&str>) -> Result<Vec<TripRow>, String> {
-    let (sql, params): (&str, &[&dyn rusqlite::types::ToSql]) = match status {
-        Some(s) => (
-            "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE status = ? ORDER BY start_date DESC",
-            &[&s],
-        ),
-        None => (
-            "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip ORDER BY start_date DESC",
-            &[],
-        ),
+pub fn get_trips(state: &Database, status: Option<&str>) -> Result<Vec<TripRow>, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+
+    let rows: Vec<TripRow> = match status {
+        Some(s) => {
+            let s_owned = s.to_string();
+            let mut stmt = guard.prepare(
+                "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE status = ? ORDER BY start_date DESC",
+            ).map_err(|e| e.to_string())?;
+            let result: Vec<TripRow> = stmt
+                .query_map([&s_owned], row_to_trip)
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            result
+        }
+        None => {
+            let mut stmt = guard.prepare(
+                "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip ORDER BY start_date DESC",
+            ).map_err(|e| e.to_string())?;
+            let result: Vec<TripRow> = stmt
+                .query_map([], row_to_trip)
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            result
+        }
     };
 
-    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-    stmt.query_map(params, row_to_trip)
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+    Ok(rows)
 }
 
-pub fn create_trip(conn: &Connection, input: TripInput) -> Result<TripRow, String> {
+pub fn create_trip(state: &Database, input: TripInput) -> Result<TripRow, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
     let uuid = uuid::Uuid::new_v4().to_string();
     let days = input.days.unwrap_or(0);
     let trip_allowance = days as f64 * 100.0;
     let transport_allowance = days as f64 * 30.0;
     let total = trip_allowance + transport_allowance;
 
-    conn.execute(
+    guard.execute(
         "INSERT INTO business_trip (uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, notes, trip_allowance, transport_allowance, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (&uuid, &input.trip_id, &input.start_date, &input.end_date, &days, &input.destination, &input.employee_name, &input.reason, &input.notes, &trip_allowance, &transport_allowance, &total),
     ).map_err(|e| e.to_string())?;
+    drop(guard);
 
-    get_trip_by_uuid(conn, &uuid)?.ok_or_else(|| "Failed to retrieve created trip".to_string())
+    get_trip_by_uuid(state, &uuid)?.ok_or_else(|| "Failed to retrieve created trip".to_string())
 }
 
-pub fn update_trip(conn: &Connection, id: i64, input: TripUpdateInput) -> Result<TripRow, String> {
+pub fn update_trip(state: &Database, id: i64, input: TripUpdateInput) -> Result<TripRow, String> {
     let mut sets = Vec::new();
-    let mut params: Vec<&(dyn rusqlite::types::ToSql)> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
 
     macro_rules! add {
         ($field:expr, $val:expr) => {
             if let Some(v) = $val {
                 sets.push(format!("{} = ?", $field));
-                params.push(&v);
+                params.push(Box::new(v.clone()));
             }
         };
     }
@@ -142,24 +160,33 @@ pub fn update_trip(conn: &Connection, id: i64, input: TripUpdateInput) -> Result
     add!("paid_date", input.paid_date.as_ref());
 
     if sets.is_empty() {
-        return get_trip(conn, id)?.ok_or_else(|| "Trip not found".to_string());
+        return get_trip(state, id)?.ok_or_else(|| "Trip not found".to_string());
     }
 
     let sql = format!("UPDATE business_trip SET {} WHERE id = ?", sets.join(", "));
-    params.push(&id);
+    params.push(Box::new(id));
 
-    conn.execute(&sql, params.as_slice()).map_err(|e| e.to_string())?;
-    get_trip(conn, id)?.ok_or_else(|| "Trip not found after update".to_string())
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    guard.execute(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))
+        .map_err(|e| e.to_string())?;
+    drop(guard);
+
+    get_trip(state, id)?.ok_or_else(|| "Trip not found after update".to_string())
 }
 
-pub fn delete_trip(conn: &Connection, id: i64) -> Result<(), String> {
-    conn.execute("DELETE FROM business_trip WHERE id = ?", [id])
+pub fn delete_trip(state: &Database, id: i64) -> Result<(), String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    guard.execute("DELETE FROM business_trip WHERE id = ?", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn get_trip(conn: &Connection, id: i64) -> Result<Option<TripRow>, String> {
-    let mut stmt = conn.prepare(
+fn get_trip(state: &Database, id: i64) -> Result<Option<TripRow>, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = guard.prepare(
         "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE id = ?",
     ).map_err(|e| e.to_string())?;
 
@@ -168,8 +195,10 @@ fn get_trip(conn: &Connection, id: i64) -> Result<Option<TripRow>, String> {
         .map_err(|e| e.to_string())
 }
 
-fn get_trip_by_uuid(conn: &Connection, uuid: &str) -> Result<Option<TripRow>, String> {
-    let mut stmt = conn.prepare(
+fn get_trip_by_uuid(state: &Database, uuid: &str) -> Result<Option<TripRow>, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = guard.prepare(
         "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE uuid = ?",
     ).map_err(|e| e.to_string())?;
 

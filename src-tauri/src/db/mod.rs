@@ -1,13 +1,14 @@
-mod connection;
+pub mod connection;
 mod schema;
-mod records;
-mod trips;
-mod prompts;
-mod preferences;
-mod learning;
-mod chat_history;
-mod sync_log;
+pub mod records;
+pub mod trips;
+pub mod prompts;
+pub mod preferences;
+pub mod learning;
+pub mod chat_history;
+pub mod sync_log;
 
 pub use connection::Database;
 pub use records::{RecordInput, RecordUpdateInput};
 pub use trips::{TripInput, TripUpdateInput};
+pub use chat_history::ChatMessageInput;

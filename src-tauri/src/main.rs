@@ -4,12 +4,9 @@ mod db;
 mod commands;
 mod models;
 
-use std::sync::Mutex;
-
 fn main() {
-    // Initialize database
+    // Initialize database (opens connection in constructor)
     let database = db::Database::new();
-    database.init().expect("Failed to initialize database");
 
     // Initialize app config
     let app_config = commands::config::AppConfig::new();

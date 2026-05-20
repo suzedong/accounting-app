@@ -1,5 +1,4 @@
 use tauri::State;
-use serde::Serialize;
 
 use crate::db::Database;
 use crate::db::{RecordInput, RecordUpdateInput};
@@ -16,9 +15,8 @@ pub async fn get_records(
     datetime_lte: Option<String>,
     sort: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let conn = state.get_conn()?;
     let (records, count) = crate::db::records::get_records(
-        &conn,
+        state.inner(),
         page.unwrap_or(1),
         page_size.unwrap_or(20),
         filter_type.as_deref(),
@@ -40,8 +38,7 @@ pub async fn get_record(
     state: State<'_, Database>,
     id: i64,
 ) -> Result<serde_json::Value, String> {
-    let conn = state.get_conn()?;
-    let record = crate::db::records::get_record(&conn, id)?;
+    let record = crate::db::records::get_record(state.inner(), id)?;
     match record {
         Some(r) => Ok(serde_json::json!({ "data": r })),
         None => Err("Record not found".to_string()),
@@ -53,8 +50,7 @@ pub async fn create_record(
     state: State<'_, Database>,
     fields: RecordInput,
 ) -> Result<serde_json::Value, String> {
-    let conn = state.get_conn()?;
-    let record = crate::db::records::create_record(&conn, fields)?;
+    let record = crate::db::records::create_record(state.inner(), fields)?;
     Ok(serde_json::json!({ "data": record }))
 }
 
@@ -64,8 +60,7 @@ pub async fn update_record(
     id: i64,
     fields: RecordUpdateInput,
 ) -> Result<serde_json::Value, String> {
-    let conn = state.get_conn()?;
-    let record = crate::db::records::update_record(&conn, id, fields)?;
+    let record = crate::db::records::update_record(state.inner(), id, fields)?;
     Ok(serde_json::json!({ "data": record }))
 }
 
@@ -74,6 +69,5 @@ pub async fn delete_record(
     state: State<'_, Database>,
     id: i64,
 ) -> Result<(), String> {
-    let conn = state.get_conn()?;
-    crate::db::records::delete_record(&conn, id)
+    crate::db::records::delete_record(state.inner(), id)
 }

@@ -1,8 +1,7 @@
-use chrono::{Datelike, Months};
+use chrono::Datelike;
 use serde::Serialize;
-use tauri::State;
 
-use crate::db::Database;
+use crate::db::connection::Database;
 
 #[derive(Serialize)]
 pub struct StatsSummary {
@@ -15,14 +14,15 @@ pub struct StatsSummary {
 
 #[tauri::command]
 pub async fn get_stats_summary(
-    state: State<'_, Database>,
+    state: tauri::State<'_, Database>,
     datetime_gte: String,
     datetime_lte: Option<String>,
 ) -> Result<StatsSummary, String> {
-    let conn = state.get_conn()?;
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
     let date_filter = build_date_filter(&datetime_gte, datetime_lte.as_deref());
 
-    let (expense_total, expense_count) = conn
+    let (expense_total, expense_count) = guard
         .query_row(
             &format!("SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '支出' {}", date_filter),
             [],
@@ -30,7 +30,7 @@ pub async fn get_stats_summary(
         )
         .map_err(|e| e.to_string())?;
 
-    let (income_total, income_count) = conn
+    let (income_total, income_count) = guard
         .query_row(
             &format!("SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '收入' {}", date_filter),
             [],
@@ -56,31 +56,35 @@ pub struct CategoryStat {
 
 #[tauri::command]
 pub async fn get_stats_by_category(
-    state: State<'_, Database>,
+    state: tauri::State<'_, Database>,
     datetime_gte: String,
     r#type: String,
     datetime_lte: Option<String>,
 ) -> Result<Vec<CategoryStat>, String> {
-    let conn = state.get_conn()?;
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
     let date_filter = build_date_filter(&datetime_gte, datetime_lte.as_deref());
 
-    let mut stmt = conn
+    let mut stmt = guard
         .prepare(&format!(
             "SELECT category, COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM records WHERE type = ? {} GROUP BY category ORDER BY total DESC",
             date_filter
         ))
         .map_err(|e| e.to_string())?;
 
-    stmt.query_map([&r#type], |row| {
-        Ok(CategoryStat {
-            category: row.get(0)?,
-            total: row.get(1)?,
-            count: row.get(2)?,
+    let result: Vec<CategoryStat> = stmt
+        .query_map([&r#type], |row| {
+            Ok(CategoryStat {
+                category: row.get(0)?,
+                total: row.get(1)?,
+                count: row.get(2)?,
+            })
         })
-    })
-    .map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect()
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(result)
 }
 
 #[derive(Serialize)]
@@ -92,30 +96,34 @@ pub struct AccountStat {
 
 #[tauri::command]
 pub async fn get_stats_by_account(
-    state: State<'_, Database>,
+    state: tauri::State<'_, Database>,
     datetime_gte: String,
     datetime_lte: Option<String>,
 ) -> Result<Vec<AccountStat>, String> {
-    let conn = state.get_conn()?;
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
     let date_filter = build_date_filter(&datetime_gte, datetime_lte.as_deref());
 
-    let mut stmt = conn
+    let mut stmt = guard
         .prepare(&format!(
             "SELECT account, COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM records WHERE type = '支出' {} GROUP BY account ORDER BY total DESC",
             date_filter
         ))
         .map_err(|e| e.to_string())?;
 
-    stmt.query_map([], |row| {
-        Ok(AccountStat {
-            account: row.get(0)?,
-            total: row.get(1)?,
-            count: row.get(2)?,
+    let result: Vec<AccountStat> = stmt
+        .query_map([], |row| {
+            Ok(AccountStat {
+                account: row.get(0)?,
+                total: row.get(1)?,
+                count: row.get(2)?,
+            })
         })
-    })
-    .map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect()
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(result)
 }
 
 #[derive(Serialize)]
@@ -127,13 +135,14 @@ pub struct MonthTrend {
 
 #[tauri::command]
 pub async fn get_monthly_trend(
-    state: State<'_, Database>,
+    state: tauri::State<'_, Database>,
     months: Option<u32>,
 ) -> Result<Vec<MonthTrend>, String> {
-    let conn = state.get_conn()?;
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
     let n = months.unwrap_or(6);
 
-    let mut stmt = conn
+    let mut stmt = guard
         .prepare(
             "SELECT strftime('%Y-%m', datetime) as month,
                     COALESCE(SUM(CASE WHEN type = '收入' THEN amount ELSE 0 END), 0) as income,
@@ -176,15 +185,16 @@ pub struct ComparisonResult {
 }
 
 #[tauri::command]
-pub async fn get_comparison(state: State<'_, Database>) -> Result<ComparisonResult, String> {
-    let conn = state.get_conn()?;
+pub async fn get_comparison(state: tauri::State<'_, Database>) -> Result<ComparisonResult, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
     let now = chrono::Local::now();
     let current_month = now.format("%Y-%m").to_string();
     let prev = now - chrono::Months::new(1);
     let prev_month = prev.format("%Y-%m").to_string();
 
-    let current = get_month_stats(&conn, &current_month)?;
-    let previous = get_month_stats(&conn, &prev_month)?;
+    let current = get_month_stats(&guard, &current_month)?;
+    let previous = get_month_stats(&guard, &prev_month)?;
 
     Ok(ComparisonResult { current, previous })
 }
@@ -204,20 +214,25 @@ pub struct BudgetAnalysis {
 
 #[tauri::command]
 pub async fn get_budget_analysis(
-    state: State<'_, Database>,
+    state: tauri::State<'_, Database>,
     _period: String,
     budget_monthly: f64,
 ) -> Result<BudgetAnalysis, String> {
-    let conn = state.get_conn()?;
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
     let now = chrono::Local::now();
     let month = now.format("%Y-%m").to_string();
-    let total_days = now.date_naive().month().length() as i64;
+    let total_days = match now.date_naive().month() {
+        2 => { let y = now.year(); if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 29 } else { 28 } },
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    } as i64;
     let day = now.date_naive().day() as i64;
     let remaining_days = total_days - day;
 
     let date_gte = format!("{}-01 00:00:00", month);
 
-    let actual_expense: f64 = conn
+    let actual_expense: f64 = guard
         .query_row(
             &format!("SELECT COALESCE(SUM(amount), 0) FROM records WHERE type = '支出' AND datetime >= '{}'", date_gte),
             [],

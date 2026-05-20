@@ -2,7 +2,7 @@ export type RecordType = '收入' | '支出';
 export type AccountType = '个人' | '家庭' | '公司';
 export type TripStatus = '待发放' | '已发放' | '已过期';
 
-export interface Record {
+export interface AccountRecord {
   id: number;
   uuid: string;
   datetime: string;
@@ -96,6 +96,11 @@ export interface ComparisonPeriod {
   income: number;
   expense: number;
   balance: number;
+}
+
+export interface ComparisonResult {
+  current: ComparisonPeriod;
+  previous: ComparisonPeriod;
 }
 
 export interface DispatchResult {

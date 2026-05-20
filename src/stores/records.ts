@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { Record, RecordInput } from '@/types';
+import type { AccountRecord, RecordInput } from '@/types';
 import * as api from '@/api/tauri';
 
 export const useRecordsStore = defineStore('records', () => {
-  const records = ref<Record[]>([]);
+  const records = ref<AccountRecord[]>([]);
   const total = ref(0);
   const page = ref(1);
   const pageSize = ref(20);

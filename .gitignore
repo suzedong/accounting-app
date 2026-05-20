@@ -28,5 +28,9 @@ Thumbs.db
 .env.local
 *.env
 
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
 # Logs
 *.log

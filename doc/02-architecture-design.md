@@ -303,51 +303,98 @@ Prompt、Preference、Learning Data 三类数据需要跨设备同步（与 reco
 
 这三类数据复用 records 的同步逻辑（push/pull/冲突处理），无需额外机制。
 
-## 6. ~~文件结构（重构后）~~（已更新）
+## 6. 项目文件结构
 
-> **注意**：下方文件结构基于"保留 HTML/JS"的旧方案。现已改为 **Vue 3 + TypeScript SPA** 重写，
-> 最新文件结构见 `~/.claude/plans/curious-crafting-octopus.md`。此处保留仅作历史参考。
+### 6.1 前端（Vue 3 SPA）
 
 ```
 accounting-app/
-├── src/                          # Tauri 前端（复用现有 web/）
-│   ├── pages/
-│   │   ├── index.html            # AI 对话首页
-│   │   ├── records.html          # 记录管理
-│   │   ├── budget.html           # 预算管理
-│   │   ├── stats.html            # 统计分析
-│   │   └── trip_allowance.html   # 差旅补助
-│   ├── js/
-│   │   ├── globals.js            # ESM 桥接（增加 Tauri invoke 适配）
-│   │   ├── modules/
-│   │   │   ├── config.js         # 配置
-│   │   │   ├── utils.js          # 工具函数
-│   │   │   ├── db-api.js         # 替代 nocobase-api.js，调用 invoke
-│   │   │   ├── parse.js          # 规则解析（保留）
-│   │   │   ├── ai-parser.js      # AI 解析（改为直连百炼）
-│   │   │   ├── learning-engine.js# 学习引擎（存 SQLite）
-│   │   │   ├── agent-core.js     # Agent 核心
-│   │   │   └── chat-widget.js    # 对话组件（改 OCR 调用）
-│   │   └── vendor/
-│   │       └── (Vue Data UI via npm)
-│   └── assets/
-│       ├── chat-widget.css
-│       └── favicon.svg
-├── src-tauri/                    # Tauri 后端
+├── index.html                    # SPA 入口
+├── src/                          # Vue 3 + TypeScript 前端
+│   ├── main.ts                   # Vue app 初始化、Pinia、Element Plus
+│   ├── App.vue                   # 根组件（AppNavbar + router-view + ChatWidget）
+│   ├── env.d.ts                  # TypeScript 环境声明
+│   ├── router/
+│   │   └── index.ts              # 6 个路由（/, /records, /budget, /stats, /trips, /settings）
+│   ├── stores/
+│   │   └── records.ts            # Pinia：记录列表、筛选、分页、CRUD
+│   ├── types/
+│   │   └── index.ts              # TypeScript 类型：Record, TripRecord, StatsSummary 等
+│   ├── api/
+│   │   └── tauri.ts              # invoke() 封装（records, trips, stats, config, OCR）
+│   ├── utils/
+│   │   ├── formatters.ts         # formatMoney, formatDatetime, formatDate
+│   │   └── dateRange.ts          # 日期范围计算（this_month, last_month, year 等）
+│   ├── views/
+│   │   ├── Home.vue              # 首页仪表盘（统计卡片 + 分类分析 + 预算执行）
+│   │   ├── Records.vue           # 记录管理（ElTable + 筛选 + 分页 + 编辑对话框）
+│   │   ├── Budget.vue            # 预算管理（Phase 2 占位）
+│   │   ├── Stats.vue             # 统计分析（Phase 2 占位）
+│   │   ├── TripAllowance.vue     # 差旅补助（Phase 2 占位）
+│   │   └── Settings.vue          # 设置页（Phase 2 占位）
+│   └── components/
+│       ├── layout/
+│       │   └── AppNavbar.vue     # 顶部导航栏（渐变色 + 路由链接）
+│       ├── chat/
+│       │   └── ChatWidget.vue    # 悬浮对话面板（Phase 3 骨架）
+│       └── stats/
+│           ├── CategoryBarChart.vue  # Vue Data UI：分类柱状图
+│           ├── AccountPieChart.vue   # Vue Data UI：账户环形图
+│           ├── MonthlyTrendChart.vue # Vue Data UI：月度趋势
+│           └── ComparisonChart.vue   # Vue Data UI：环比对比
+├── src-tauri/                    # Tauri 2 后端（Rust）
 │   ├── src/
-│   │   ├── main.rs               # 入口，注册命令
-│   │   ├── db.rs                 # SQLite 操作
-│   │   ├── sync.rs               # NocoBase 同步
-│   │   ├── ocr.rs                # RapidOCR 封装
-│   │   ├── ai.rs                 # 百炼 API 直连
-│   │   └── config.rs             # 配置管理
-│   ├── models/                   # ONNX 模型文件
-│   │   ├── det.onnx              # 检测模型
-│   │   ├── cls.onnx              # 分类模型
-│   │   └── rec.onnx              # 识别模型
-│   ├── tauri.conf.json
-│   └── Cargo.toml
+│   │   ├── main.rs               # 入口：初始化 Database + AppConfig，注册 30+ 命令
+│   │   ├── db/
+│   │   │   ├── mod.rs            # 模块根，导出 Database, RecordInput 等
+│   │   │   ├── connection.rs     # SQLite 连接（Arc<Mutex<Connection>>，构造函数打开）
+│   │   │   ├── schema.rs         # 建表（7 张）+ 预置 dispatch/record Prompt
+│   │   │   ├── records.rs        # records CRUD（分页、筛选、排序）
+│   │   │   ├── trips.rs          # business_trip CRUD（自动计算补助）
+│   │   │   ├── prompts.rs        # system_prompts + user_preferences CRUD
+│   │   │   ├── learning.rs       # learning_data CRUD（修正映射）
+│   │   │   ├── chat_history.rs   # chat_history CRUD
+│   │   │   ├── sync_log.rs       # sync_log 写入 + 查询
+│   │   │   └── preferences.rs    # 偏好 CRUD（独立模块，Phase 4 用）
+│   │   ├── commands/
+│   │   │   ├── mod.rs            # 模块声明
+│   │   │   ├── records.rs        # 记录 Tauri Commands（5 个）
+│   │   │   ├── trips.rs          # 差旅 Tauri Commands（4 个）
+│   │   │   ├── stats.rs          # 统计聚合（6 个命令）
+│   │   │   ├── prompts.rs        # Prompt/偏好（4 个命令）
+│   │   │   ├── learning.rs       # 学习数据（3 个命令）
+│   │   │   ├── chat.rs           # 对话历史（3 个命令）
+│   │   │   ├── config.rs         # 配置读写（3 个命令）
+│   │   │   ├── sync.rs           # 同步占位（5 个命令）
+│   │   │   └── ocr.rs            # OCR 占位（1 个命令）
+│   │   └── models/
+│   │       └── mod.rs            # RapidOCR ONNX 模块（Phase 4）
+│   ├── capabilities/
+│   │   └── default.json          # Tauri 2 权限配置
+│   ├── icons/
+│   │   └── icon.png              # 应用图标
+│   ├── Cargo.toml                # Rust 依赖
+│   ├── tauri.conf.json           # Tauri 配置（窗口 1200×800、CSP）
+│   └── build.rs                  # Tauri 构建脚本
 ├── doc/                          # 设计文档
+│   ├── 01-requirement-design.md
+│   ├── 02-architecture-design.md
+│   ├── 03-ui-design.md
+│   ├── 04-development-plan.md
+│   └── 05-refactoring-plan.md
 ├── package.json
-└── vite.config.js                # 仅用于开发模式 HMR
+├── tsconfig.json
+├── tsconfig.node.json
+├── vite.config.ts                # Vite + Vue 插件，端口 5173
+└── index.html
 ```
+
+### 6.2 关键架构决策
+
+| 决策 | 说明 |
+|---|---|
+| Database 设计 | `Arc<Mutex<Connection>>`，构造函数中直接打开，无需延迟初始化 |
+| rusqlite 参数 | 动态参数使用 `Box<dyn ToSql + Send>` + `params_from_iter`，避免生命周期问题 |
+| SQLite WAL 模式 | `PRAGMA journal_mode=WAL`，提升并发写入性能 |
+| 字段类型 | `records.category` 和 `payment_method` 为自由文本，非枚举 |
+| 数据层 | SQLite 通过 `rusqlite` crate，7 张表 + 预置数据 |

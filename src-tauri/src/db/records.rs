@@ -1,5 +1,7 @@
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
+
+use super::connection::Database;
 
 #[derive(Deserialize)]
 pub struct RecordInput {
@@ -61,7 +63,7 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> Result<RecordRow, rusqlite::Error> 
 }
 
 pub fn get_records(
-    conn: &Connection,
+    state: &Database,
     page: u32,
     page_size: u32,
     filter_type: Option<&str>,
@@ -71,28 +73,28 @@ pub fn get_records(
     datetime_lte: Option<&str>,
     sort: Option<&str>,
 ) -> Result<(Vec<RecordRow>, i64), String> {
+    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
     let mut where_clauses = Vec::new();
-    let mut params: Vec<&(dyn rusqlite::types::ToSql)> = Vec::new();
 
     if let Some(t) = filter_type {
         where_clauses.push("type = ?");
-        params.push(&t);
+        params.push(Box::new(t.to_string()));
     }
     if let Some(c) = filter_category {
         where_clauses.push("category = ?");
-        params.push(&c);
+        params.push(Box::new(c.to_string()));
     }
     if let Some(a) = filter_account {
         where_clauses.push("account = ?");
-        params.push(&a);
+        params.push(Box::new(a.to_string()));
     }
     if let Some(d) = datetime_gte {
         where_clauses.push("datetime >= ?");
-        params.push(&d);
+        params.push(Box::new(d.to_string()));
     }
     if let Some(d) = datetime_lte {
         where_clauses.push("datetime <= ?");
-        params.push(&d);
+        params.push(Box::new(d.to_string()));
     }
 
     let where_sql = if where_clauses.is_empty() {
@@ -109,28 +111,30 @@ pub fn get_records(
         _ => "ORDER BY datetime DESC",
     };
 
-    let count: i64 = conn
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+
+    let count: i64 = guard
         .query_row(
             &format!("SELECT COUNT(*) FROM records {}", where_sql),
-            params.as_slice(),
+            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
 
     let offset = (page - 1) * page_size;
-    let mut stmt = conn
+    let mut stmt = guard
         .prepare(&format!(
             "SELECT id, uuid, datetime, type, category, amount, account, note, payment_method, local_updated_at, synced, nocobase_id, nocobase_updated_at, created_at FROM records {} {} LIMIT ? OFFSET ?",
             where_sql, order
         ))
         .map_err(|e| e.to_string())?;
 
-    let mut p = params;
-    p.push(&page_size);
-    p.push(&offset);
+    params.push(Box::new(page_size));
+    params.push(Box::new(offset));
 
-    let records = stmt
-        .query_map(p.as_slice(), row_to_record)
+    let records: Vec<RecordRow> = stmt
+        .query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), row_to_record)
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
@@ -138,8 +142,10 @@ pub fn get_records(
     Ok((records, count))
 }
 
-pub fn get_record(conn: &Connection, id: i64) -> Result<Option<RecordRow>, String> {
-    let mut stmt = conn
+pub fn get_record(state: &Database, id: i64) -> Result<Option<RecordRow>, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = guard
         .prepare(
             "SELECT id, uuid, datetime, type, category, amount, account, note, payment_method, local_updated_at, synced, nocobase_id, nocobase_updated_at, created_at FROM records WHERE id = ?",
         )
@@ -151,13 +157,15 @@ pub fn get_record(conn: &Connection, id: i64) -> Result<Option<RecordRow>, Strin
 }
 
 pub fn create_record(
-    conn: &Connection,
+    state: &Database,
     input: RecordInput,
 ) -> Result<RecordRow, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
     let uuid = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    conn.execute(
+    guard.execute(
         "INSERT INTO records (uuid, datetime, type, category, amount, account, note, payment_method, local_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             &uuid,
@@ -171,23 +179,24 @@ pub fn create_record(
             &now,
         ),
     ).map_err(|e| e.to_string())?;
+    drop(guard);
 
-    get_record_by_uuid(conn, &uuid)?.ok_or_else(|| "Failed to retrieve created record".to_string())
+    get_record_by_uuid(state, &uuid)?.ok_or_else(|| "Failed to retrieve created record".to_string())
 }
 
 pub fn update_record(
-    conn: &Connection,
+    state: &Database,
     id: i64,
     input: RecordUpdateInput,
 ) -> Result<RecordRow, String> {
     let mut sets = Vec::new();
-    let mut params: Vec<&(dyn rusqlite::types::ToSql)> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::new();
 
     macro_rules! add_set {
         ($field:expr, $val:expr) => {
             if let Some(v) = $val {
                 sets.push(format!("{} = ?", $field));
-                params.push(&v);
+                params.push(Box::new(v.clone()));
             }
         };
     }
@@ -201,33 +210,40 @@ pub fn update_record(
     add_set!("note", input.note.as_ref());
     add_set!("payment_method", input.payment_method.as_ref());
 
-    sets.push("local_updated_at = ?");
-    params.push(&now);
+    sets.push("local_updated_at = ?".to_string());
+    params.push(Box::new(now));
 
-    if sets.len() <= 1 {
-        return get_record(conn, id)?.ok_or_else(|| "Record not found".to_string());
+    if sets.is_empty() {
+        return get_record(state, id)?.ok_or_else(|| "Record not found".to_string());
     }
 
     let sql = format!(
         "UPDATE records SET {} WHERE id = ?",
         sets.join(", ")
     );
-    params.push(&id);
+    params.push(Box::new(id));
 
-    conn.execute(&sql, params.as_slice())
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    guard.execute(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))
         .map_err(|e| e.to_string())?;
+    drop(guard);
 
-    get_record(conn, id)?.ok_or_else(|| "Record not found after update".to_string())
+    get_record(state, id)?.ok_or_else(|| "Record not found after update".to_string())
 }
 
-pub fn delete_record(conn: &Connection, id: i64) -> Result<(), String> {
-    conn.execute("DELETE FROM records WHERE id = ?", [id])
+pub fn delete_record(state: &Database, id: i64) -> Result<(), String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    guard.execute("DELETE FROM records WHERE id = ?", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn get_record_by_uuid(conn: &Connection, uuid: &str) -> Result<Option<RecordRow>, String> {
-    let mut stmt = conn
+fn get_record_by_uuid(state: &Database, uuid: &str) -> Result<Option<RecordRow>, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = guard
         .prepare(
             "SELECT id, uuid, datetime, type, category, amount, account, note, payment_method, local_updated_at, synced, nocobase_id, nocobase_updated_at, created_at FROM records WHERE uuid = ?",
         )
