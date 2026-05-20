@@ -2,7 +2,62 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 项目概述
+## ⚠️ 当前状态：重构进行中（新旧架构并存）
+
+项目正在从**旧架构**（纯前端 HTML/JS + Python server.py + NocoBase REST API）重构为**新架构**（Tauri 2 桌面应用 + Vue 3 + SQLite 本地数据库 + NocoBase 可选同步）。
+
+- **旧架构代码**仍存在于 `web/`、`server/`、`.env`、`vite.config.js` — 仍在重构中，暂不删除
+- **新架构代码**在 `src/`（Vue 3 前端）和 `src-tauri/`（Rust 后端） — 持续开发中
+- **开发命令**：`npm run dev`（启动 Tauri，前端 Vite + 后端 Rust）
+- **旧架构文档**详见 `README.md`（面向旧架构的完整用户文档）
+
+### 重构完成度
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| Phase 1: Tauri 骨架 + SQLite | ✅ 已完成 | 数据库、CRUD、前端基础 |
+| Phase 2: 业务逻辑迁移 | ⚠️ 后端完成，前端待接入 | Rust commands 齐全，Vue 页面/AI 对话/OCR 待完成 |
+| Phase 3: 同步层 | ❌ 未开始 | push/pull/import 全部占位 |
+| Phase 4: 桌面增强 + 清理 | ❌ 未开始 | server.py 待删除，文档待更新 |
+
+### 新架构目录
+
+```
+src/              # Vue 3 前端（TypeScript + Element Plus + Pinia）
+├── main.ts       # 入口
+├── App.vue       # 根组件（Navbar + Router + ChatWidget）
+├── router/       # 路由：/ /records /budget /stats /trips /settings
+├── stores/       # Pinia 状态管理（records）
+├── api/          # Tauri invoke 封装（tauri.ts）
+├── types/        # TypeScript 类型定义
+├── utils/        # 工具函数（formatters, dateRange）
+├── views/        # 页面组件（Home, Records, Budget, Stats, TripAllowance, Settings）
+└── components/   # 共享组件（AppNavbar, ChatWidget, 统计图表）
+
+src-tauri/        # Rust 后端（Tauri 2 + SQLite）
+├── src/
+│   ├── main.rs   # Tauri 入口，注册所有 commands
+│   ├── commands/ # Tauri Commands（records, trips, stats, sync, chat, config, ocr 等）
+│   ├── db/       # SQLite 数据库（schema, CRUD, 聚合查询）
+│   └── models/   # 数据模型
+└── capabilities/ # Tauri 权限配置
+
+web/              # 旧前端（HTML/JS，重构中保留，最终会删除）
+server/           # 旧后端（Python server.py，重构中保留，最终会删除）
+doc/              # 设计文档和开发计划
+```
+
+### 新开发命令
+
+```bash
+npm run dev         # Tauri 开发模式（Vite + Rust，桌面窗口）
+npm run build       # 构建生产产物（TypeScript 检查 + Vite 构建）
+npm run tauri dev   # 同上（显式调用 tauri）
+```
+
+---
+
+## 项目概述（旧架构，保留作重构参考）
 
 基于 NocoBase 的纯前端记账应用，原生 HTML/CSS/JS 无框架。用户通过浏览器访问 HTML 页面，数据通过 NocoBase REST API 存取到 PostgreSQL。
 

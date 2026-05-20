@@ -1,19 +1,23 @@
 # 开发计划
 
+> **最后更新：2026-05-20**
+
 ## 阶段概览
 
-| 阶段 | 名称 | 内容 | 预计时间 |
-|---|---|---|---|
-| Phase 1 | Tauri 骨架 + SQLite | 项目初始化、数据库设计、基础 CRUD | 2 周 |
-| Phase 2 | 业务逻辑迁移 | Agent、统计、OCR、Prompt/Preference | 2 周 |
-| Phase 3 | 同步层 | NocoBase 双向同步、数据导入导出 | 1 周 |
-| Phase 4 | 桌面增强 + 清理 | 设置页、系统通知、删除 server.py | 1 周 |
+| 阶段 | 名称 | 内容 | 预计时间 | 状态 |
+|---|---|---|---|---|
+| Phase 1 | Tauri 骨架 + SQLite | 项目初始化、数据库设计、基础 CRUD | 2 周 | ✅ 已完成 |
+| Phase 2 | 业务逻辑迁移 | Agent、统计、OCR、Prompt/Preference | 2 周 | ⚠️ 后端完成，前端待接入 |
+| Phase 3 | 同步层 | NocoBase 双向同步、数据导入导出 | 1 周 | ❌ 未开始 |
+| Phase 4 | 桌面增强 + 清理 | 设置页、系统通知、删除 server.py | 1 周 | ❌ 未开始 |
 
 **总预计：6 周**
 
 ---
 
 ## Phase 1：Tauri 骨架 + SQLite
+
+> ✅ **已完成**
 
 ### 目标
 
@@ -23,13 +27,13 @@
 
 #### 1.1 初始化 Tauri 项目
 
-- [ ] 初始化 `src-tauri/` 目录（`cargo init` + Tauri 配置）
-- [ ] 配置 `tauri.conf.json`：
-  - 前端目录指向 `web/`
+- [x] 初始化 `src-tauri/` 目录（`cargo init` + Tauri 配置）
+- [x] 配置 `tauri.conf.json`：
+  - 前端目录指向 `web/`（已改为 Vue 3 `src/`）
   - 开发命令使用 Vite（`npm run dev:frontend`）
   - 构建命令使用 `npm run build`
   - 窗口配置：最小尺寸 900×600，记住窗口位置
-- [ ] 配置 `Cargo.toml` 依赖：
+- [x] 配置 `Cargo.toml` 依赖：
   - `tauri = "2"`
   - `rusqlite = { version = "0.32", features = ["bundled"] }`
   - `serde = { version = "1", features = ["derive"] }`
@@ -41,41 +45,40 @@
 
 #### 1.2 SQLite Schema
 
-- [ ] 在 `db.rs` 中实现 schema 初始化（`CREATE TABLE IF NOT EXISTS`）
-- [ ] 预置数据插入（分类、支付方式、默认 Prompt）
-- [ ] 数据库连接池管理（SQLite 单连接即可，个人应用不需要池）
+- [x] 在 `db.rs` 中实现 schema 初始化（`CREATE TABLE IF NOT EXISTS`）
+- [x] 预置数据插入（分类、支付方式、默认 Prompt）
+- [x] 数据库连接池管理（SQLite 单连接即可，个人应用不需要池）
 
 #### 1.3 Tauri Commands（CRUD）
 
-- [ ] `get_records(params)` — 查询记录（支持筛选、分页、排序）
-- [ ] `get_record(id)` — 查询单条记录
-- [ ] `create_record(fields)` — 创建记录（生成 UUID）
-- [ ] `update_record(id, fields)` — 更新记录
-- [ ] `delete_record(id)` — 删除记录
-- [ ] `get_accounts()` — 返回预置账户列表（硬编码 fallback）
+- [x] `get_records(params)` — 查询记录（支持筛选、分页、排序）
+- [x] `get_record(id)` — 查询单条记录
+- [x] `create_record(fields)` — 创建记录（生成 UUID）
+- [x] `update_record(id, fields)` — 更新记录
+- [x] `delete_record(id)` — 删除记录
+- [x] `get_accounts()` — 返回预置账户列表（硬编码 fallback）
 
 #### 1.4 前端适配
 
-- [ ] 创建 `web/js/modules/db-api.js`，替代现有 `nocobase-api.js`
-- [ ] 所有函数改为调用 `invoke()`：
-  ```javascript
-  // 旧
-  async function getRecords(options) { ... fetch('/api/records?...') }
-  // 新
-  async function getRecords(options) { invoke('get_records', options) }
-  ```
-- [ ] 更新 `globals.js` 桥接，挂载 `window.dbAPI` 替代 `window.NocobaseAPI`
-- [ ] 逐个页面适配（先 records.html）
+> **注意**：实际采用 Vue 3 重写而非渐进式改造旧 HTML/JS。
+> 新前端使用 `src/`（Vue 3 + TypeScript + Pinia）替代了 `web/` 旧代码。
+
+- [x] 创建 Vue 3 前端（`src/`），替代旧 `web/` 方案
+- [x] 所有函数改为调用 `invoke()`（`src/api/tauri.ts`）
+- [x] Pinia 状态管理 + 路由（`src/stores/`, `src/router/`）
+- [x] 页面组件：Home, Records 已完成
 
 #### 1.5 开发调试
 
-- [ ] `npm run tauri dev` 可以正常启动
-- [ ] 验证 SQLite 数据库文件在 `$APP_DATA` 正确创建
-- [ ] 验证记录 CRUD 通过 Tauri IPC 正常工作
+- [x] `npm run tauri dev` 可以正常启动
+- [x] 验证 SQLite 数据库文件在 `$APP_DATA` 正确创建
+- [x] 验证记录 CRUD 通过 Tauri IPC 正常工作
 
 ---
 
 ## Phase 2：业务逻辑迁移
+
+> ⚠️ **后端已完成，前端待接入**
 
 ### 目标
 
@@ -83,23 +86,23 @@
 
 ### 任务
 
-#### 2.1 统计聚合（SQL GROUP BY）
+#### 2.1 统计聚合（SQL GROUP BY） — ✅ 已完成（Rust 端）
 
-- [ ] `get_stats_summary(params)` — 按时间范围统计总收入/支出/结余
-- [ ] `get_stats_by_category(params)` — 按分类聚合
-- [ ] `get_stats_by_account(params)` — 按账户聚合
-- [ ] `get_monthly_trend(params)` — 月度趋势
-- [ ] `get_comparison(params)` — 本月 vs 上月对比
-- [ ] `get_budget_analysis(params)` — 预算分析
+- [x] `get_stats_summary(params)` — 按时间范围统计总收入/支出/结余
+- [x] `get_stats_by_category(params)` — 按分类聚合
+- [x] `get_stats_by_account(params)` — 按账户聚合
+- [x] `get_monthly_trend(params)` — 月度趋势
+- [x] `get_comparison(params)` — 本月 vs 上月对比
+- [x] `get_budget_analysis(params)` — 预算分析
 
-#### 2.2 差旅补助
+#### 2.2 差旅补助 — ✅ 已完成（Rust 端）
 
-- [ ] `get_business_trips(status)` — 查询出差记录
-- [ ] `create_business_trip(fields)` — 创建出差记录
-- [ ] `update_business_trip(id, fields)` — 更新出差记录
-- [ ] `delete_business_trip(id)` — 删除出差记录
+- [x] `get_business_trips(status)` — 查询出差记录
+- [x] `create_business_trip(fields)` — 创建出差记录
+- [x] `update_business_trip(id, fields)` — 更新出差记录
+- [x] `delete_business_trip(id)` — 删除出差记录
 
-#### 2.3 Agent 核心
+#### 2.3 Agent 核心 — ❌ 未开始
 
 - [ ] 将 `parse.js`（规则解析）保留为前端模块（纯 JS，不依赖后端）
 - [ ] 将 `agent-core.js` 适配为前端调用 `invoke()`
@@ -111,31 +114,31 @@
   ```
 - [ ] API Key 通过 `invoke('get_config', 'ai_api_key')` 从 Rust 获取
 
-#### 2.4 OCR
+#### 2.4 OCR — ❌ 未开始
 
 - [ ] 集成 RapidOCR ONNX 模型（det/cls/rec 三个模型文件）
 - [ ] 使用 `ort` crate 实现推理：
   - 图片解码（base64 → ndarray）
   - 检测 → 分类 → 识别 三阶段
   - 文本输出
-- [ ] 实现 `ocr_recognize(image_base64)` Tauri Command
+- [x] `ocr_recognize(image_base64)` Tauri Command（占位实现，返回 placeholder）
 - [ ] 前端 `chat-widget.js` 适配：图片上传改为 `invoke('ocr_recognize')`
 
-#### 2.5 Prompt / Preference / 学习引擎
+#### 2.5 Prompt / Preference / 学习引擎 — ✅ Rust 已完成，前端待接入
 
-- [ ] `get_system_prompt(name)` — 读取 dispatch/record prompt
-- [ ] `update_system_prompt(name, content)` — 更新 prompt（存 SQLite）
-- [ ] `get_preference()` — 读取用户偏好（存 SQLite）
-- [ ] `update_preference(content)` — 更新偏好（存 SQLite）
-- [ ] `get_learning_data()` — 读取学习数据
-- [ ] `save_learning_data(data)` — 保存学习数据
+- [x] `get_system_prompt(name)` — 读取 dispatch/record prompt
+- [x] `update_system_prompt(name, content)` — 更新 prompt（存 SQLite）
+- [x] `get_preference()` — 读取用户偏好（存 SQLite）
+- [x] `update_preference(content)` — 更新偏好（存 SQLite）
+- [x] `get_learning_data()` — 读取学习数据
+- [x] `save_learning_data(data)` — 保存学习数据
 - [ ] 前端 `learning-engine.js` 改为调用 `invoke()`，不再用 localStorage
 
-#### 2.6 对话历史
+#### 2.6 对话历史 — ✅ Rust 已完成，前端待接入
 
-- [ ] `get_chat_history(limit)` — 查询对话历史
-- [ ] `save_chat_message(message)` — 保存对话消息
-- [ ] `clear_chat_history()` — 清空对话历史
+- [x] `get_chat_history(limit)` — 查询对话历史
+- [x] `save_chat_message(message)` — 保存对话消息
+- [x] `clear_chat_history()` — 清空对话历史
 - [ ] 前端 `chat-widget.js` 适配
 
 ---
