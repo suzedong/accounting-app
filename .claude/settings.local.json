@@ -119,7 +119,8 @@
       "Bash(python3 -c \"from PIL import Image; print\\('pillow available'\\)\")",
       "Skill(brainstorming)",
       "Skill(brainstorming:*)",
-      "Bash(npx vue-tsc *)"
+      "Bash(npx vue-tsc *)",
+      "Bash(taskkill //PID 1956 //F)"
     ],
     "additionalDirectories": [
       "d:\\Code\\accounting-app\\web\\static"

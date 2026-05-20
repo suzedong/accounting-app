@@ -8,8 +8,8 @@ fn main() {
     // Initialize database (opens connection in constructor)
     let database = db::Database::new();
 
-    // Initialize app config
-    let app_config = commands::config::AppConfig::new();
+    // Initialize app config (loads from SQLite)
+    let app_config = commands::config::AppConfig::new(&database);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -51,6 +51,7 @@ fn main() {
             commands::config::get_config,
             commands::config::set_config,
             commands::config::get_all_config,
+            commands::config::test_ai_connection,
             // Sync
             commands::sync::sync_push,
             commands::sync::sync_pull,

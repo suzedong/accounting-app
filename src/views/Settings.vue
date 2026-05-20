@@ -58,7 +58,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
-import { getAllConfig, setConfig } from '@/api/tauri';
+import { getAllConfig, setConfig, testAiConnection as testAi } from '@/api/tauri';
 
 const saving = ref(false);
 
@@ -122,13 +122,25 @@ async function saveBudget() {
   }
 }
 
-function testAiConnection() {
+async function testAiConnection() {
   if (!aiForm.value.ai_api_key) {
     ElMessage.warning('请先填写 API Key');
     return;
   }
-  // Phase 3: implement actual test
-  ElMessage.info('AI 连接测试（Phase 3 实现）');
+  saving.value = true;
+  try {
+    const res = await testAi();
+    if (res.success) {
+      ElMessage.success('AI 连接成功');
+    } else {
+      ElMessage.error(res.message);
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ElMessage.error(msg);
+  } finally {
+    saving.value = false;
+  }
 }
 
 function testNocobaseConnection() {

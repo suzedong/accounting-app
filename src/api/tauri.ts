@@ -135,3 +135,8 @@ export async function saveChatMessage(role: string, content: string | null, data
 export async function clearChatHistory(): Promise<void> {
   return invoke('clear_chat_history');
 }
+
+// Config test
+export async function testAiConnection(): Promise<{ success: boolean; message: string }> {
+  return invoke('test_ai_connection');
+}

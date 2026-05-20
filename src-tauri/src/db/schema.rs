@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS sync_log (
     error TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- 应用配置（AI Key、NocoBase URL 等）
+CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 "#,
     )?;
 
