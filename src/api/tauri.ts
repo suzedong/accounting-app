@@ -95,3 +95,43 @@ export async function getAllConfig(): Promise<AppConfig> {
 export async function ocrRecognize(imageBase64: string): Promise<string> {
   return invoke('ocr_recognize', { image_base64: imageBase64 });
 }
+
+// Prompts
+export async function getSystemPrompt(name: string): Promise<{ data: { name: string; content: string } }> {
+  return invoke('get_system_prompt', { name });
+}
+
+export async function updateSystemPrompt(name: string, content: string): Promise<void> {
+  return invoke('update_system_prompt', { name, content });
+}
+
+// Preferences
+export async function getAllPreferences(): Promise<{ data: Array<{ key: string; value: string }> }> {
+  return invoke('get_all_preferences');
+}
+
+export async function updatePreference(key: string, value: string): Promise<void> {
+  return invoke('update_preference', { key, value });
+}
+
+// Learning
+export async function getLearningCorrections(): Promise<{ data: Array<{ keyword: string; field: string; value: string }> }> {
+  return invoke('get_learning_corrections');
+}
+
+export async function saveCorrection(keyword: string, field: string, value: string): Promise<void> {
+  return invoke('save_correction', { keyword, field, value });
+}
+
+// Chat History
+export async function getChatHistory(limit?: number): Promise<{ data: Array<{ id: number; uuid: string; role: string; content: string | null; data: string | null; skill: string | null; confidence: number | null; created_at: string }> }> {
+  return invoke('get_chat_history', { limit: limit || 50 });
+}
+
+export async function saveChatMessage(role: string, content: string | null, data: string | null, skill: string | null, confidence: number | null): Promise<void> {
+  return invoke('save_chat_message', { message: { role, content, data, skill, confidence } });
+}
+
+export async function clearChatHistory(): Promise<void> {
+  return invoke('clear_chat_history');
+}

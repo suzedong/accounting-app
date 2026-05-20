@@ -101,7 +101,25 @@
       "Bash(cp icon.png app.iconset/icon_512x512.png)",
       "Bash(cp 256x256.png app.iconset/icon_256x256.png)",
       "Bash(cp 128x128.png app.iconset/icon_128x128.png)",
-      "Bash(cp 32x32.png app.iconset/icon_32x32.png)"
+      "Bash(cp 32x32.png app.iconset/icon_32x32.png)",
+      "Read(//c/Users/SZD/.cargo/**)",
+      "Bash(cargo fetch *)",
+      "Bash(curl -v --connect-timeout 3 http://127.0.0.1:7890/)",
+      "Bash(curl -sI --connect-timeout 5 https://index.crates.io/config.json)",
+      "Bash(cargo build *)",
+      "Bash(cd /d/Code/accounting-app && ls src-tauri/target/debug/ 2>/dev/null | head -5)",
+      "Bash(curl -s --connect-timeout 5 http://localhost:5173/)",
+      "Bash(cargo check *)",
+      "Bash(taskkill //PID 31448 //F)",
+      "Bash(taskkill //PID 12024 //F)",
+      "Bash(taskkill //IM node.exe //F)",
+      "Bash(taskkill //IM cargo.exe //F)",
+      "Bash(taskkill //IM rustc.exe //F)",
+      "Bash(taskkill //IM tauri.exe //F)",
+      "Bash(python3 -c \"from PIL import Image; print\\('pillow available'\\)\")",
+      "Skill(brainstorming)",
+      "Skill(brainstorming:*)",
+      "Bash(npx vue-tsc *)"
     ],
     "additionalDirectories": [
       "d:\\Code\\accounting-app\\web\\static"
