@@ -242,6 +242,7 @@ onMounted(async () => {
   padding: 15px;
   border-radius: 8px;
   text-align: center;
+  margin-bottom: 16px;
 }
 
 .category-item .icon {

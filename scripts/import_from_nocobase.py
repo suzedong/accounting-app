@@ -19,7 +19,7 @@ def load_env():
     env = {}
     env_path = Path(__file__).parent.parent / '.env'
     if env_path.exists():
-        for line in env_path.read_text().splitlines():
+        for line in env_path.read_text(encoding='utf-8').splitlines():
             line = line.strip()
             if line and not line.startswith('#') and '=' in line:
                 k, v = line.split('=', 1)
@@ -130,6 +130,34 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 """
 
 
+def iso_to_local(dt_str):
+    """Convert ISO 8601 UTC (e.g. '2026-05-02T16:00:00.000Z') to local SQLite format 'YYYY-MM-DD HH:MM:SS'"""
+    if not dt_str:
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # Parse ISO 8601 and convert to local time
+    try:
+        # Handle 'Z' suffix
+        s = dt_str.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(s)
+        # Convert to local time
+        local_dt = dt.astimezone()
+        return local_dt.strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return dt_str
+
+
+def date_to_local_date(date_str):
+    """Convert ISO 8601 date to local date string 'YYYY-MM-DD' (no timezone conversion needed for date-only)"""
+    if not date_str:
+        return ''
+    try:
+        s = date_str.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(s)
+        return dt.strftime('%Y-%m-%d')
+    except Exception:
+        return date_str[:10]
+
+
 def nocobase_api(collection: str, page: int = 1, page_size: int = 100):
     """调用 NocoBase API 获取数据"""
     params = urllib.parse.urlencode({'page': page, 'pageSize': page_size, 'sort': '-id'})
@@ -141,7 +169,7 @@ def nocobase_api(collection: str, page: int = 1, page_size: int = 100):
             data = json.loads(resp.read().decode())
         return data.get('data', []), data.get('meta', {})
     except Exception as e:
-        print(f'  ❌ API 请求失败: {e}')
+        print(f'  [ERR] API 请求失败: {e}')
         return [], {}
 
 
@@ -173,7 +201,7 @@ def init_schema(conn: sqlite3.Connection):
         # dispatch.md
         prompt_path = Path(__file__).parent.parent / 'src-tauri' / 'prompts' / 'dispatch.md'
         if prompt_path.exists():
-            content = prompt_path.read_text()
+            content = prompt_path.read_text(encoding='utf-8')
             cursor.execute(
                 "INSERT INTO system_prompts (name, content) VALUES (?, ?)",
                 ('dispatch', content)
@@ -185,7 +213,7 @@ def init_schema(conn: sqlite3.Connection):
             ('record', record_content)
         )
         conn.commit()
-        print('  ✓ 预置 Prompt 已插入')
+        print('  [OK] 预置 Prompt 已插入')
 
 
 def import_records(db_conn: sqlite3.Connection, records: list):
@@ -194,7 +222,8 @@ def import_records(db_conn: sqlite3.Connection, records: list):
     imported = 0
     for r in records:
         row = r.get('data', r) if 'data' in r else r
-        uid = row.get('uuid', '') or f"nocobase_{row.get('id', '')}"
+        nocobase_id = row.get('id')
+        uid = f"nocobase_{nocobase_id}"
 
         cursor.execute('''
             INSERT OR REPLACE INTO records
@@ -204,7 +233,7 @@ def import_records(db_conn: sqlite3.Connection, records: list):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             uid,
-            row.get('datetime', datetime.now().isoformat()),
+            iso_to_local(row.get('datetime', '')),
             row.get('type', '支出'),
             row.get('category', '其他'),
             float(row.get('amount', 0)),
@@ -213,9 +242,9 @@ def import_records(db_conn: sqlite3.Connection, records: list):
             row.get('payment_method', '') or '',
             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             1,
-            row.get('id'),
-            row.get('updatedAt') or row.get('created_at', ''),
-            row.get('createdAt', '') or row.get('created_at', ''),
+            nocobase_id,
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         ))
         imported += 1
     db_conn.commit()
@@ -228,7 +257,8 @@ def import_trips(db_conn: sqlite3.Connection, trips: list):
     imported = 0
     for t in trips:
         row = t.get('data', t) if 'data' in t else t
-        uid = row.get('uuid', '') or f"nocobase_{row.get('id', '')}"
+        nocobase_id = row.get('id')
+        uid = f"nocobase_{nocobase_id}"
 
         cursor.execute('''
             INSERT OR REPLACE INTO business_trip
@@ -240,9 +270,9 @@ def import_trips(db_conn: sqlite3.Connection, trips: list):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             uid,
-            row.get('trip_id', ''),
-            row.get('start_date', ''),
-            row.get('end_date', ''),
+            row.get('trip_id', '') or '',
+            date_to_local_date(row.get('start_date', '')),
+            date_to_local_date(row.get('end_date', '')),
             int(row.get('days', 0)),
             row.get('destination', '') or '',
             row.get('employee_name', '') or '',
@@ -253,12 +283,12 @@ def import_trips(db_conn: sqlite3.Connection, trips: list):
             row.get('status', '待发放'),
             float(row.get('paid_trip_allowance', 0) or 0),
             float(row.get('paid_transport_allowance', 0) or 0),
-            row.get('paid_date', '') or '',
+            iso_to_local(row.get('paid_date')) if row.get('paid_date') else '',
             row.get('notes', '') or '',
             1,
-            row.get('id'),
-            row.get('updatedAt', ''),
-            row.get('createdAt', ''),
+            nocobase_id,
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         ))
         imported += 1
     db_conn.commit()
@@ -310,10 +340,10 @@ def main():
     conn.commit()
 
     imported_records = import_records(conn, records)
-    print(f'  ✓ 导入 records: {imported_records} 条')
+    print(f'  [OK] 导入 records: {imported_records} 条')
 
     imported_trips = import_trips(conn, trips)
-    print(f'  ✓ 导入 business_trip: {imported_trips} 条')
+    print(f'  [OK] 导入 business_trip: {imported_trips} 条')
 
     # 统计验证
     cursor.execute("SELECT COUNT(*) FROM records")
@@ -324,7 +354,7 @@ def main():
     conn.close()
 
     print()
-    print(f'✅ 完成！数据库: {db_path}')
+    print(f'[DONE] 完成！数据库: {db_path}')
     print(f'   查看: sqlite3 "{db_path}" ".tables"')
     print(f'   查看: sqlite3 "{db_path}" "SELECT COUNT(*) FROM records;"')
 

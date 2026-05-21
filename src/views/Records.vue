@@ -39,29 +39,29 @@
 
     <!-- Table -->
     <el-table :data="store.records" v-loading="store.loading" stripe>
-      <el-table-column prop="datetime" label="时间" width="180">
+      <el-table-column prop="datetime" label="时间" min-width="160">
         <template #default="{ row }">
           {{ formatDatetime(row.datetime) }}
         </template>
       </el-table-column>
-      <el-table-column prop="type" label="类型" width="80">
+      <el-table-column prop="type" label="类型" min-width="80">
         <template #default="{ row }">
           <el-tag :type="row.type === '收入' ? 'success' : 'danger'" size="small">
             {{ row.type }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="category" label="分类" width="120" />
-      <el-table-column prop="amount" label="金额" width="120">
+      <el-table-column prop="category" label="分类" min-width="100" />
+      <el-table-column prop="amount" label="金额" min-width="100">
         <template #default="{ row }">
           <span :class="row.type === '收入' ? 'text-success' : 'text-danger'">
             {{ formatMoney(row.amount) }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="account" label="账户" width="80" />
-      <el-table-column prop="payment_method" label="支付方式" width="140" />
-      <el-table-column prop="note" label="备注" />
+      <el-table-column prop="account" label="账户" min-width="80" />
+      <el-table-column prop="payment_method" label="支付方式" min-width="140" />
+      <el-table-column prop="note" label="备注" min-width="120" />
       <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
           <el-button size="small" @click="showEditDialog(row)">编辑</el-button>
