@@ -6,8 +6,8 @@
     </div>
 
     <!-- Filters -->
-    <el-card class="filters">
-      <el-form :model="store.filters" inline>
+    <el-card class="filters" :body-style="{ padding: '12px 20px' }">
+      <el-form :model="store.filters" inline style="margin: 0">
         <el-form-item label="类型">
           <el-select v-model="store.filters.type" placeholder="全部" clearable style="width: 120px" @change="onFilterChange">
             <el-option label="支出" value="支出" />
@@ -31,41 +31,47 @@
             @change="onDateRangeChange"
           />
         </el-form-item>
-        <el-form-item>
+        <el-form-item style="margin-bottom: 0">
           <el-button @click="resetFilters">重置</el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
     <!-- Table -->
-    <el-table :data="store.records" v-loading="store.loading" stripe>
-      <el-table-column prop="datetime" label="时间" min-width="160">
+    <el-table :data="store.records" v-loading="store.loading" stripe size="small">
+      <el-table-column prop="datetime" label="时间" width="170">
         <template #default="{ row }">
-          {{ formatDatetime(row.datetime) }}
+          <span class="nowrap">{{ formatDatetime(row.datetime) }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="type" label="类型" min-width="80">
+      <el-table-column prop="type" label="类型" width="70">
         <template #default="{ row }">
           <el-tag :type="row.type === '收入' ? 'success' : 'danger'" size="small">
             {{ row.type }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="category" label="分类" min-width="100" />
-      <el-table-column prop="amount" label="金额" min-width="100">
+      <el-table-column prop="category" label="分类" width="100">
         <template #default="{ row }">
-          <span :class="row.type === '收入' ? 'text-success' : 'text-danger'">
+          <span class="nowrap">{{ row.category }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="amount" label="金额" width="100">
+        <template #default="{ row }">
+          <span :class="row.type === '收入' ? 'text-success' : 'text-danger'" class="nowrap">
             {{ formatMoney(row.amount) }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="account" label="账户" min-width="80" />
-      <el-table-column prop="payment_method" label="支付方式" min-width="140" />
-      <el-table-column prop="note" label="备注" min-width="120" />
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column prop="account" label="账户" width="80" />
+      <el-table-column prop="payment_method" label="支付方式" min-width="120" />
+      <el-table-column prop="note" label="备注" min-width="140" />
+      <el-table-column label="操作" width="100" fixed="right" align="center">
         <template #default="{ row }">
-          <el-button size="small" @click="showEditDialog(row)">编辑</el-button>
-          <el-button size="small" type="danger" @click="handleDelete(row.id)">删除</el-button>
+          <span class="action-btns">
+            <el-button link size="small" @click="showEditDialog(row)">编辑</el-button>
+            <el-button link size="small" type="danger" @click="handleDelete(row.id)">删除</el-button>
+          </span>
         </template>
       </el-table-column>
     </el-table>
@@ -246,7 +252,11 @@ function resetFilters() {
 }
 
 .filters {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
+}
+
+.filters :deep(.el-form-item) {
+  margin-bottom: 0;
 }
 
 .text-success {
@@ -257,5 +267,15 @@ function resetFilters() {
 .text-danger {
   color: #ff4d4f;
   font-weight: 500;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.action-btns {
+  white-space: nowrap;
+  display: inline-flex;
+  gap: 0;
 }
 </style>

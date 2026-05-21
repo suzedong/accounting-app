@@ -33,13 +33,10 @@ CREATE TABLE IF NOT EXISTS business_trip (
     start_date TEXT,
     end_date TEXT,
     days INTEGER,
-    destination TEXT,
-    employee_name TEXT,
-    reason TEXT,
     trip_allowance REAL DEFAULT 0,
     transport_allowance REAL DEFAULT 0,
     total REAL DEFAULT 0,
-    status TEXT DEFAULT '待发放',
+    status TEXT DEFAULT ' 待发放',
     paid_trip_allowance REAL DEFAULT 0,
     paid_transport_allowance REAL DEFAULT 0,
     paid_date TEXT,
@@ -119,6 +116,35 @@ CREATE TABLE IF NOT EXISTS app_config (
     if prompt_count == 0 {
         seed_prompts(conn)?;
     }
+
+    // Migration: drop deprecated columns from business_trip
+    let _ = conn.execute("ALTER TABLE business_trip DROP COLUMN destination", []);
+    let _ = conn.execute("ALTER TABLE business_trip DROP COLUMN employee_name", []);
+    let _ = conn.execute("ALTER TABLE business_trip DROP COLUMN reason", []);
+
+    // Migration: strip time from start_date/end_date (keep only YYYY-MM-DD)
+    let _ = conn.execute(
+        "UPDATE business_trip SET start_date = SUBSTR(start_date, 1, 10) WHERE LENGTH(start_date) > 10",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE business_trip SET end_date = SUBSTR(end_date, 1, 10) WHERE LENGTH(end_date) > 10",
+        [],
+    );
+
+    // Migration: add emoji prefix to status values
+    let _ = conn.execute(
+        "UPDATE business_trip SET status = '⏳ 待发放' WHERE status = '待发放'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE business_trip SET status = '✅ 已发放' WHERE status = '已发放'",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE business_trip SET status = '❌ 已过期' WHERE status = '已过期'",
+        [],
+    );
 
     Ok(())
 }

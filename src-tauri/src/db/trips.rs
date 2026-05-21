@@ -9,9 +9,6 @@ pub struct TripInput {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub days: Option<i32>,
-    pub destination: Option<String>,
-    pub employee_name: Option<String>,
-    pub reason: Option<String>,
     pub notes: Option<String>,
 }
 
@@ -21,9 +18,6 @@ pub struct TripUpdateInput {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub days: Option<i32>,
-    pub destination: Option<String>,
-    pub employee_name: Option<String>,
-    pub reason: Option<String>,
     pub notes: Option<String>,
     pub status: Option<String>,
     pub paid_trip_allowance: Option<f64>,
@@ -39,9 +33,6 @@ pub struct TripRow {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub days: Option<i32>,
-    pub destination: Option<String>,
-    pub employee_name: Option<String>,
-    pub reason: Option<String>,
     pub trip_allowance: f64,
     pub transport_allowance: f64,
     pub total: f64,
@@ -64,21 +55,18 @@ fn row_to_trip(row: &rusqlite::Row<'_>) -> Result<TripRow, rusqlite::Error> {
         start_date: row.get(3)?,
         end_date: row.get(4)?,
         days: row.get(5)?,
-        destination: row.get(6)?,
-        employee_name: row.get(7)?,
-        reason: row.get(8)?,
-        trip_allowance: row.get(9)?,
-        transport_allowance: row.get(10)?,
-        total: row.get(11)?,
-        status: row.get(12)?,
-        paid_trip_allowance: row.get(13)?,
-        paid_transport_allowance: row.get(14)?,
-        paid_date: row.get(15)?,
-        notes: row.get(16)?,
-        synced: row.get(17)?,
-        nocobase_id: row.get(18)?,
-        nocobase_updated_at: row.get(19)?,
-        created_at: row.get(20)?,
+        trip_allowance: row.get(6)?,
+        transport_allowance: row.get(7)?,
+        total: row.get(8)?,
+        status: row.get(9)?,
+        paid_trip_allowance: row.get(10)?,
+        paid_transport_allowance: row.get(11)?,
+        paid_date: row.get(12)?,
+        notes: row.get(13)?,
+        synced: row.get(14)?,
+        nocobase_id: row.get(15)?,
+        nocobase_updated_at: row.get(16)?,
+        created_at: row.get(17)?,
     })
 }
 
@@ -90,7 +78,7 @@ pub fn get_trips(state: &Database, status: Option<&str>) -> Result<Vec<TripRow>,
         Some(s) => {
             let s_owned = s.to_string();
             let mut stmt = guard.prepare(
-                "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE status = ? ORDER BY start_date DESC",
+                "SELECT id, uuid, trip_id, start_date, end_date, days, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE status = ? ORDER BY start_date DESC",
             ).map_err(|e| e.to_string())?;
             let result: Vec<TripRow> = stmt
                 .query_map([&s_owned], row_to_trip)
@@ -101,7 +89,7 @@ pub fn get_trips(state: &Database, status: Option<&str>) -> Result<Vec<TripRow>,
         }
         None => {
             let mut stmt = guard.prepare(
-                "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip ORDER BY start_date DESC",
+                "SELECT id, uuid, trip_id, start_date, end_date, days, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip ORDER BY start_date DESC",
             ).map_err(|e| e.to_string())?;
             let result: Vec<TripRow> = stmt
                 .query_map([], row_to_trip)
@@ -125,8 +113,8 @@ pub fn create_trip(state: &Database, input: TripInput) -> Result<TripRow, String
     let total = trip_allowance + transport_allowance;
 
     guard.execute(
-        "INSERT INTO business_trip (uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, notes, trip_allowance, transport_allowance, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (&uuid, &input.trip_id, &input.start_date, &input.end_date, &days, &input.destination, &input.employee_name, &input.reason, &input.notes, &trip_allowance, &transport_allowance, &total),
+        "INSERT INTO business_trip (uuid, trip_id, start_date, end_date, days, notes, trip_allowance, transport_allowance, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (&uuid, &input.trip_id, &input.start_date, &input.end_date, &days, &input.notes, &trip_allowance, &transport_allowance, &total),
     ).map_err(|e| e.to_string())?;
     drop(guard);
 
@@ -150,9 +138,6 @@ pub fn update_trip(state: &Database, id: i64, input: TripUpdateInput) -> Result<
     add!("start_date", input.start_date.as_ref());
     add!("end_date", input.end_date.as_ref());
     add!("days", input.days.as_ref());
-    add!("destination", input.destination.as_ref());
-    add!("employee_name", input.employee_name.as_ref());
-    add!("reason", input.reason.as_ref());
     add!("notes", input.notes.as_ref());
     add!("status", input.status.as_ref());
     add!("paid_trip_allowance", input.paid_trip_allowance.as_ref());
@@ -187,7 +172,7 @@ fn get_trip(state: &Database, id: i64) -> Result<Option<TripRow>, String> {
     let conn = state.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = guard.prepare(
-        "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE id = ?",
+        "SELECT id, uuid, trip_id, start_date, end_date, days, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE id = ?",
     ).map_err(|e| e.to_string())?;
 
     stmt.query_row([id], row_to_trip)
@@ -199,7 +184,7 @@ fn get_trip_by_uuid(state: &Database, uuid: &str) -> Result<Option<TripRow>, Str
     let conn = state.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = guard.prepare(
-        "SELECT id, uuid, trip_id, start_date, end_date, days, destination, employee_name, reason, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE uuid = ?",
+        "SELECT id, uuid, trip_id, start_date, end_date, days, trip_allowance, transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, paid_date, notes, synced, nocobase_id, nocobase_updated_at, created_at FROM business_trip WHERE uuid = ?",
     ).map_err(|e| e.to_string())?;
 
     stmt.query_row([uuid], row_to_trip)

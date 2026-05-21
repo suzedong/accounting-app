@@ -1,4 +1,4 @@
-export function getDateRange(range: 'month' | 'last_month' | 'week' | 'year'): {
+export function getDateRange(range: 'day' | 'week' | 'month' | 'last_month' | 'year'): {
   dateFrom: string;
   dateTo: string;
   periodName: string;
@@ -9,6 +9,17 @@ export function getDateRange(range: 'month' | 'last_month' | 'week' | 'year'): {
   let periodName = '';
 
   switch (range) {
+    case 'day': {
+      dateFrom = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      periodName = '今日';
+      break;
+    }
+    case 'week': {
+      dateFrom = new Date(now);
+      dateFrom.setDate(now.getDate() - 6);
+      periodName = '近 7 天';
+      break;
+    }
     case 'month': {
       dateFrom = new Date(now.getFullYear(), now.getMonth(), 1);
       periodName = '本月';
@@ -18,12 +29,6 @@ export function getDateRange(range: 'month' | 'last_month' | 'week' | 'year'): {
       dateFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       dateTo = new Date(now.getFullYear(), now.getMonth(), 0);
       periodName = '上月';
-      break;
-    }
-    case 'week': {
-      dateFrom = new Date(now);
-      dateFrom.setDate(now.getDate() - now.getDay() + 1);
-      periodName = '本周';
       break;
     }
     case 'year': {

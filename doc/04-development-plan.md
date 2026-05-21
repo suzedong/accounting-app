@@ -106,7 +106,7 @@
 #### 2.3 前端页面 — ✅ 已完成
 
 - [x] `views/Home.vue` 首页仪表盘
-- [x] `views/Stats.vue` 统计分析（Vue Data UI 图表）
+- [x] `views/Stats.vue` 统计分析（ECharts 图表）
 - [x] `views/Budget.vue` 预算管理
 - [x] `views/Settings.vue` 设置页
 - [x] `views/Records.vue` 记录管理

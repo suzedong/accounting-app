@@ -21,7 +21,7 @@
 |---|---|
 | HTML 页面 | 5 个页面布局不变，仅改数据获取调用 |
 | CSS 样式 | 现有样式全部保留 |
-| Vue Data UI | 统计图表，Vue 3 原生组件 |
+| ECharts | 统计图表，替换原 Vue Data UI |
 | parse.js | 规则解析（纯 JS，不依赖后端） |
 | Agent 意图识别逻辑 | dispatch 逻辑不变，仅改调用方式 |
 

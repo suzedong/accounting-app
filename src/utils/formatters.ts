@@ -2,6 +2,10 @@ export function formatMoney(amount: number): string {
   return `¥${amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
 }
 
+export function formatIntMoney(amount: number): string {
+  return `¥${Math.round(amount).toLocaleString()}`;
+}
+
 export function formatDatetime(datetime: string): string {
   if (!datetime) return '';
   return datetime.replace(/T/, ' ').substring(0, 19);

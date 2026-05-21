@@ -6,13 +6,13 @@
     </div>
 
     <!-- Filter -->
-    <el-card class="filters">
+    <el-card class="filters" :body-style="{ padding: '12px 20px' }">
       <el-form inline>
         <el-form-item label="状态">
           <el-select v-model="filterStatus" placeholder="全部" clearable style="width: 120px" @change="fetchTrips">
-            <el-option label="待发放" value="待发放" />
-            <el-option label="已发放" value="已发放" />
-            <el-option label="已过期" value="已过期" />
+            <el-option label="待发放" value="⏳ 待发放" />
+            <el-option label="已发放" value="✅ 已发放" />
+            <el-option label="已过期" value="❌ 已过期" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -20,65 +20,80 @@
 
     <!-- Summary -->
     <el-row :gutter="20" class="summary-row">
-      <el-col :span="8">
+      <el-col :span="6">
         <el-card class="stat-card">
           <template #header>补助总额</template>
-          <div class="value">{{ formatMoney(summary.totalAllowance) }}</div>
+          <div class="value">{{ formatIntMoney(summary.totalAllowance) }}</div>
+          <div class="value-sub">{{ summary.totalCount }} 笔</div>
         </el-card>
       </el-col>
-      <el-col :span="8">
+      <el-col :span="6">
         <el-card class="stat-card">
           <template #header>已发总额</template>
-          <div class="value">{{ formatMoney(summary.totalPaid) }}</div>
+          <div class="value">{{ formatIntMoney(summary.totalPaid) }}</div>
+          <div class="value-sub">{{ summary.paidCount }} 笔</div>
         </el-card>
       </el-col>
-      <el-col :span="8">
+      <el-col :span="6">
         <el-card class="stat-card">
-          <template #header>待发笔数</template>
-          <div class="value">{{ summary.pendingCount }} 笔</div>
+          <template #header>待发</template>
+          <div class="value">{{ formatIntMoney(summary.pendingAmount) }}</div>
+          <div class="value-sub">{{ summary.pendingCount }} 笔</div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card class="stat-card">
+          <template #header>已过期</template>
+          <div class="value">{{ formatIntMoney(summary.expiredAmount) }}</div>
+          <div class="value-sub">{{ summary.expiredCount }} 笔</div>
         </el-card>
       </el-col>
     </el-row>
 
     <!-- Table -->
-    <el-table :data="trips" v-loading="loading" stripe>
-      <el-table-column prop="trip_id" label="申请单号" width="120" />
-      <el-table-column prop="employee_name" label="姓名" width="80" />
+    <el-table :data="trips" v-loading="loading" stripe size="small">
+      <el-table-column prop="trip_id" label="申请单号" width="150" />
       <el-table-column prop="start_date" label="开始日期" width="110" />
       <el-table-column prop="end_date" label="结束日期" width="110" />
-      <el-table-column prop="days" label="天数" width="70" />
-      <el-table-column prop="destination" label="目的地" width="120" />
-      <el-table-column label="补助" width="100">
+      <el-table-column prop="days" label="天数" width="60" />
+      <el-table-column label="补助" width="130">
         <template #default="{ row }">
-          <div>
-            <span class="text-allowance">{{ formatMoney(row.trip_allowance) }}</span>
-            <span class="text-transport">+{{ formatMoney(row.transport_allowance) }}</span>
+          <div class="nowrap">
+            <span class="text-allowance">{{ formatIntMoney(row.trip_allowance) }}</span>
+            <span class="text-transport">+{{ formatIntMoney(row.transport_allowance) }}</span>
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="total" label="合计" width="100">
+      <el-table-column prop="total" label="合计" width="90">
         <template #default="{ row }">
-          <span class="text-total">{{ formatMoney(row.total) }}</span>
+          <span class="text-total nowrap">{{ formatIntMoney(row.total) }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="status" label="状态" width="90">
+      <el-table-column prop="status" label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="已发" width="100">
+      <el-table-column label="已发" width="90">
         <template #default="{ row }">
-          <div v-if="row.paid_trip_allowance || row.paid_transport_allowance">
-            {{ formatMoney(row.paid_trip_allowance + row.paid_transport_allowance) }}
-          </div>
-          <span v-else class="text-muted">—</span>
+          <span class="nowrap">
+            <template v-if="row.paid_trip_allowance || row.paid_transport_allowance">
+              {{ formatIntMoney(row.paid_trip_allowance + row.paid_transport_allowance) }}
+            </template>
+            <template v-else-if="row.status === '✅ 已发放'">
+              {{ formatIntMoney(row.total) }}
+            </template>
+            <span v-else class="text-muted">—</span>
+          </span>
         </template>
       </el-table-column>
       <el-table-column prop="notes" label="备注" />
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="操作" width="100" fixed="right" align="center">
         <template #default="{ row }">
-          <el-button size="small" @click="showEditDialog(row)">标记发放</el-button>
-          <el-button size="small" type="danger" @click="handleDelete(row.id)">删除</el-button>
+          <span class="action-btns">
+            <el-button link size="small" @click="showEditDialog(row)">标记</el-button>
+            <el-button link size="small" type="danger" @click="handleDelete(row.id)">删除</el-button>
+          </span>
         </template>
       </el-table-column>
     </el-table>
@@ -89,12 +104,6 @@
       <el-form :model="createForm" label-width="80px">
         <el-form-item label="申请单号">
           <el-input v-model="createForm.trip_id" placeholder="可选" />
-        </el-form-item>
-        <el-form-item label="姓名">
-          <el-input v-model="createForm.employee_name" placeholder="出差人姓名" />
-        </el-form-item>
-        <el-form-item label="目的地">
-          <el-input v-model="createForm.destination" placeholder="出差地点" />
         </el-form-item>
         <el-form-item label="日期">
           <el-date-picker
@@ -109,17 +118,14 @@
         <el-form-item label="天数">
           <el-input-number v-model="createForm.days" :min="1" @change="calcAllowance" />
         </el-form-item>
-        <el-form-item label="出差原因">
-          <el-input v-model="createForm.reason" type="textarea" />
-        </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="createForm.notes" type="textarea" />
         </el-form-item>
       </el-form>
       <div v-if="createForm.days" class="allowance-preview">
-        补助：{{ formatMoney(createForm.days * 100) }}（100元/天）
-        + 交通：{{ formatMoney(createForm.days * 30) }}（30元/天）
-        = <strong>{{ formatMoney(createForm.days * 130) }}</strong>
+        补助：{{ formatIntMoney(createForm.days * 100) }}（100元/天）
+        + 交通：{{ formatIntMoney(createForm.days * 30) }}（30元/天）
+        = <strong>{{ formatIntMoney(createForm.days * 130) }}</strong>
       </div>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
@@ -134,20 +140,20 @@
           <el-tag :type="statusTag(editingTrip?.status || '')">{{ editingTrip?.status }}</el-tag>
         </el-form-item>
         <el-form-item label="补助总额">
-          {{ formatMoney((editingTrip?.trip_allowance || 0) + (editingTrip?.transport_allowance || 0)) }}
+          {{ formatIntMoney((editingTrip?.trip_allowance || 0) + (editingTrip?.transport_allowance || 0)) }}
         </el-form-item>
         <el-form-item label="发放状态">
           <el-select v-model="editForm.status" style="width: 100%">
-            <el-option label="待发放" value="待发放" />
-            <el-option label="已发放" value="已发放" />
-            <el-option label="已过期" value="已过期" />
+            <el-option label="待发放" value="⏳ 待发放" />
+            <el-option label="已发放" value="✅ 已发放" />
+            <el-option label="已过期" value="❌ 已过期" />
           </el-select>
         </el-form-item>
         <el-form-item label="已发补助">
-          <el-input-number v-model="editForm.paid_trip_allowance" :min="0" :precision="2" />
+          <el-input-number v-model="editForm.paid_trip_allowance" :min="0" :precision="0" />
         </el-form-item>
         <el-form-item label="已发交通">
-          <el-input-number v-model="editForm.paid_transport_allowance" :min="0" :precision="2" />
+          <el-input-number v-model="editForm.paid_transport_allowance" :min="0" :precision="0" />
         </el-form-item>
         <el-form-item label="发放日期">
           <el-date-picker v-model="editForm.paid_date" type="date" placeholder="选择日期" />
@@ -165,7 +171,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { ElMessageBox, ElMessage } from 'element-plus';
 import { getTrips, createTrip, updateTrip, deleteTrip } from '@/api/tauri';
-import { formatMoney } from '@/utils/formatters';
+import { formatMoney, formatIntMoney } from '@/utils/formatters';
 import type { TripRecord, TripStatus } from '@/types';
 
 const trips = ref<TripRecord[]>([]);
@@ -175,10 +181,18 @@ const submitting = ref(false);
 
 const summary = computed(() => {
   const all = trips.value;
+  const paidTrips = all.filter(t => t.status.includes('已发放'));
+  const pendingTrips = all.filter(t => t.status.includes('待发放'));
+  const expiredTrips = all.filter(t => t.status.includes('已过期'));
   return {
     totalAllowance: all.reduce((s, t) => s + t.total, 0),
-    totalPaid: all.reduce((s, t) => s + t.paid_trip_allowance + t.paid_transport_allowance, 0),
-    pendingCount: all.filter(t => t.status === '待发放').length,
+    totalCount: all.length,
+    totalPaid: paidTrips.reduce((s, t) => s + t.total, 0),
+    paidCount: paidTrips.length,
+    pendingAmount: pendingTrips.reduce((s, t) => s + t.total, 0),
+    pendingCount: pendingTrips.length,
+    expiredAmount: expiredTrips.reduce((s, t) => s + t.total, 0),
+    expiredCount: expiredTrips.length,
   };
 });
 
@@ -187,12 +201,9 @@ const createVisible = ref(false);
 const createDateRange = ref<[Date, Date] | null>(null);
 const createForm = ref({
   trip_id: '',
-  employee_name: '',
-  destination: '',
   start_date: '',
   end_date: '',
   days: 1,
-  reason: '',
   notes: '',
 });
 
@@ -200,7 +211,7 @@ const createForm = ref({
 const editVisible = ref(false);
 const editingTrip = ref<TripRecord | null>(null);
 const editForm = ref({
-  status: '待发放',
+  status: '⏳ 待发放',
   paid_trip_allowance: 0,
   paid_transport_allowance: 0,
   paid_date: '',
@@ -225,8 +236,11 @@ async function fetchTrips() {
 
 function showCreateDialog() {
   createForm.value = {
-    trip_id: '', employee_name: '', destination: '',
-    start_date: '', end_date: '', days: 1, reason: '', notes: '',
+    trip_id: '',
+    start_date: '',
+    end_date: '',
+    days: 1,
+    notes: '',
   };
   createDateRange.value = null;
   createVisible.value = true;
@@ -255,9 +269,6 @@ async function handleCreate() {
       start_date: createForm.value.start_date || null,
       end_date: createForm.value.end_date || null,
       days: createForm.value.days,
-      destination: createForm.value.destination || null,
-      employee_name: createForm.value.employee_name || null,
-      reason: createForm.value.reason || null,
       notes: createForm.value.notes || null,
     });
     ElMessage.success('创建成功');
@@ -305,12 +316,10 @@ async function handleDelete(id: number) {
 }
 
 function statusTag(status: string): 'info' | 'success' | 'warning' {
-  switch (status) {
-    case '待发放': return 'warning';
-    case '已发放': return 'success';
-    case '已过期': return 'info';
-    default: return 'info';
-  }
+  if (status.includes('待发放')) return 'warning';
+  if (status.includes('已发放')) return 'success';
+  if (status.includes('已过期')) return 'info';
+  return 'info';
 }
 </script>
 
@@ -331,6 +340,10 @@ function statusTag(status: string): 'info' | 'success' | 'warning' {
   margin-bottom: 16px;
 }
 
+.filters :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
 .summary-row {
   margin-bottom: 20px;
 }
@@ -339,6 +352,12 @@ function statusTag(status: string): 'info' | 'success' | 'warning' {
   font-size: 1.8em;
   font-weight: bold;
   color: #333;
+}
+
+.stat-card .value-sub {
+  font-size: 0.85em;
+  color: #999;
+  margin-top: 4px;
 }
 
 .text-allowance {
@@ -361,6 +380,10 @@ function statusTag(status: string): 'info' | 'success' | 'warning' {
   color: #ccc;
 }
 
+.nowrap {
+  white-space: nowrap;
+}
+
 .allowance-preview {
   padding: 12px;
   background: #f0f9ff;
@@ -368,5 +391,11 @@ function statusTag(status: string): 'info' | 'success' | 'warning' {
   text-align: center;
   margin-bottom: 12px;
   color: #1890ff;
+}
+
+.action-btns {
+  white-space: nowrap;
+  display: inline-flex;
+  gap: 0;
 }
 </style>

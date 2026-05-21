@@ -30,7 +30,7 @@
 | 规则解析 | 关键词匹配 + 正则提取（降级方案） | parse.js | 保留，本地运行 |
 | 记录管理 | 增删改查 + 分页 + 筛选 | records.html | 存 SQLite |
 | 预算管理 | 月度预算跟踪 + 超支预警 | budget.html | 存 SQLite |
-| 统计分析 | 多维度图表（分类、账户、趋势、对比） | stats.html + Chart.js | SQLite GROUP BY + Vue Data UI |
+| 统计分析 | 多维度图表（分类、账户、趋势、对比） | stats.html + Chart.js | SQLite GROUP BY + ECharts |
 | 差旅补助 | 出差记录 + 补助发放 + 金额匹配 | trip_allowance.html | 存 SQLite |
 | OCR 识别 | 图片识别 → 自动记账 | PaddleOCR via server.py | 内置 RapidOCR（ONNX） |
 | 学习引擎 | 用户修正 → 个性化规则 | localStorage + NocoBase | 存 SQLite |
@@ -96,6 +96,6 @@
 |---|---|
 | 数据模型兼容 | 与现有 NocoBase schema 对齐，方便数据导入/同步 |
 | 前端代码复用 | 现有 HTML/CSS/JS 代码应最大限度复用 |
-| 不引入重型框架 | 保持轻量，不引入 React/Vue 等框架 |
+| 框架选择 | Vue 3 + TypeScript + Element Plus（桌面应用非 Web，框架开销可接受）|
 | AI 成本 | 不使用百炼视觉模型（额外收费），OCR 用本地方案 |
 | 用户群体 | 个人用户，单用户场景，不需要多租户/权限管理 |

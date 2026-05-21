@@ -12,7 +12,7 @@
 │  │  web/pages/*.html │    │  ┌──────────────────────┐   │   │
 │  │  web/js/*.js      │    │  │  Tauri Commands       │   │   │
 │  │  web/assets/*.css │    │  │  ├─ db operations     │   │   │
-│  │  Vue Data UI     │    │  │  ├─ sync operations   │   │   │
+│  │  ECharts     │    │  │  ├─ sync operations   │   │   │
 │  │                  │    │  │  ├─ OCR operations    │   │   │
 │  │  invoke() ──────┼──IPC┤──│  └──────────────────────┘   │   │
 │  │                │    │    │                              │   │
@@ -114,16 +114,13 @@ CREATE TABLE business_trip (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid TEXT UNIQUE NOT NULL,
     trip_id TEXT,                       -- 申请单号
-    start_date TEXT,
-    end_date TEXT,
+    start_date TEXT,                    -- 仅日期 YYYY-MM-DD
+    end_date TEXT,                      -- 仅日期 YYYY-MM-DD
     days INTEGER,
-    destination TEXT,
-    employee_name TEXT,
-    reason TEXT,
     trip_allowance REAL DEFAULT 0,      -- 差旅补助（100元/天）
     transport_allowance REAL DEFAULT 0,  -- 交通补助（30元/天）
     total REAL DEFAULT 0,
-    status TEXT DEFAULT '待发放',        -- 待发放/已发放/已过期
+    status TEXT DEFAULT '⏳ 待发放',     -- 待发放/已发放/已过期（带 emoji）
     paid_trip_allowance REAL DEFAULT 0,  -- 已发差旅补助
     paid_transport_allowance REAL DEFAULT 0, -- 已发交通补助
     paid_date TEXT,
@@ -343,10 +340,10 @@ accounting-app/
 │       │   ├── ChatInput.vue     # 输入框 + 图片上传
 │       │   └── RecordCard.vue    # 记录确认卡片
 │       └── stats/
-│           ├── CategoryBarChart.vue  # Vue Data UI：分类柱状图
-│           ├── AccountPieChart.vue   # Vue Data UI：账户环形图
-│           ├── MonthlyTrendChart.vue # Vue Data UI：月度趋势
-│           └── ComparisonChart.vue   # Vue Data UI：环比对比
+│           ├── CategoryBarChart.vue  # ECharts：分类柱状图
+│           ├── AccountPieChart.vue   # ECharts：账户环形图
+│           ├── MonthlyTrendChart.vue # ECharts：月度趋势
+│           └── ComparisonChart.vue   # ECharts：环比对比
 ├── src-tauri/                    # Tauri 2 后端（Rust）
 │   ├── src/
 │   │   ├── main.rs               # 入口：初始化 Database + AppConfig + OcrEngine，注册 30+ 命令

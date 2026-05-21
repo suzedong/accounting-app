@@ -60,13 +60,10 @@ CREATE TABLE IF NOT EXISTS business_trip (
     start_date TEXT,
     end_date TEXT,
     days INTEGER,
-    destination TEXT,
-    employee_name TEXT,
-    reason TEXT,
     trip_allowance REAL DEFAULT 0,
     transport_allowance REAL DEFAULT 0,
     total REAL DEFAULT 0,
-    status TEXT DEFAULT '待发放',
+    status TEXT DEFAULT ' 待发放',
     paid_trip_allowance REAL DEFAULT 0,
     paid_transport_allowance REAL DEFAULT 0,
     paid_date TEXT,
@@ -262,25 +259,22 @@ def import_trips(db_conn: sqlite3.Connection, trips: list):
 
         cursor.execute('''
             INSERT OR REPLACE INTO business_trip
-                (uuid, trip_id, start_date, end_date, days, destination,
-                 employee_name, reason, trip_allowance, transport_allowance,
+                (uuid, trip_id, start_date, end_date, days,
+                 trip_allowance, transport_allowance,
                  total, status, paid_trip_allowance, paid_transport_allowance,
                  paid_date, notes, synced, nocobase_id, nocobase_updated_at,
                  created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             uid,
             row.get('trip_id', '') or '',
             date_to_local_date(row.get('start_date', '')),
             date_to_local_date(row.get('end_date', '')),
             int(row.get('days', 0)),
-            row.get('destination', '') or '',
-            row.get('employee_name', '') or '',
-            row.get('reason', '') or '',
             float(row.get('trip_allowance', 0) or 0),
             float(row.get('transport_allowance', 0) or 0),
             float(row.get('total', 0) or 0),
-            row.get('status', '待发放'),
+            row.get('status', '⏳ 待发放'),
             float(row.get('paid_trip_allowance', 0) or 0),
             float(row.get('paid_transport_allowance', 0) or 0),
             iso_to_local(row.get('paid_date')) if row.get('paid_date') else '',

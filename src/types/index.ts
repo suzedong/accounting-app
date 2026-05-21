@@ -1,6 +1,6 @@
 export type RecordType = '收入' | '支出';
 export type AccountType = '个人' | '家庭' | '公司';
-export type TripStatus = '待发放' | '已发放' | '已过期';
+export type TripStatus = ' 待发放' | '✅ 已发放' | '❌ 已过期';
 
 export interface AccountRecord {
   id: number;
@@ -36,9 +36,6 @@ export interface TripRecord {
   start_date: string | null;
   end_date: string | null;
   days: number;
-  destination: string | null;
-  employee_name: string | null;
-  reason: string | null;
   trip_allowance: number;
   transport_allowance: number;
   total: number;

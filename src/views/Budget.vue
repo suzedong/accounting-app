@@ -5,89 +5,10 @@
       <el-button @click="showEditBudget">修改月度预算</el-button>
     </div>
 
-    <!-- 年度总览 -->
-    <el-card class="yearly-summary" v-loading="loading">
-      <el-row :gutter="20">
-        <el-col :span="6">
-          <div class="yearly-item">
-            <div class="label">年度总预算</div>
-            <div class="value">{{ formatMoney(yearlyTotalBudget) }}</div>
-          </div>
-        </el-col>
-        <el-col :span="6">
-          <div class="yearly-item">
-            <div class="label">实际支出</div>
-            <div class="value text-danger">{{ formatMoney(yearlyActual) }}</div>
-          </div>
-        </el-col>
-        <el-col :span="6">
-          <div class="yearly-item">
-            <div class="label">结余</div>
-            <div class="value" :class="yearlyRemaining >= 0 ? 'text-success' : 'text-danger'">
-              {{ formatMoney(yearlyRemaining) }}
-            </div>
-          </div>
-        </el-col>
-        <el-col :span="6">
-          <div class="yearly-item">
-            <div class="label">预算执行率</div>
-            <div class="value">{{ yearlyUsageRate.toFixed(1) }}%</div>
-          </div>
-        </el-col>
-      </el-row>
-    </el-card>
-
-    <!-- 本月预算 -->
-    <el-card class="current-budget-card">
-      <template #header>本月预算执行</template>
-      <el-row :gutter="20" class="summary-row">
-        <el-col :span="6">
-          <el-card class="stat-card budget-total">
-            <template #header>月度预算</template>
-            <div class="value">{{ formatMoney(budgetMonthly) }}</div>
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card class="stat-card expense-total">
-            <template #header>本月支出</template>
-            <div class="value">{{ formatMoney(actualExpense) }}</div>
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card class="stat-card remaining">
-            <template #header>剩余可用</template>
-            <div class="value" :class="remaining < 0 ? 'over' : ''">{{ formatMoney(remaining) }}</div>
-          </el-card>
-        </el-col>
-        <el-col :span="6">
-          <el-card class="stat-card daily">
-            <template #header>日均剩余</template>
-            <div class="value">{{ formatMoney(dailyRemaining) }}</div>
-            <div class="count">{{ remainingDays }} 天剩余</div>
-          </el-card>
-        </el-col>
-      </el-row>
-
-      <div class="progress-section">
-        <el-progress
-          :percentage="Math.min(usageRate, 100)"
-          :color="progressColor"
-          :stroke-width="24"
-          :text-inside="true"
-        />
-        <div class="status-badge">
-          <el-tag :type="statusType" size="large">{{ budgetStatus }}</el-tag>
-          <span class="detail">
-            本月已花费 {{ formatMoney(actualExpense) }}，剩余 {{ formatMoney(remaining) }}
-          </span>
-        </div>
-      </div>
-    </el-card>
-
-    <!-- 月度执行列表 -->
-    <el-card class="monthly-list-card">
+    <!-- 月度预算执行列表 -->
+    <el-card v-loading="loading">
       <template #header>月度预算执行</template>
-      <div class="monthly-list" v-loading="loading">
+      <div class="monthly-list">
         <div
           v-for="m in monthlyStats"
           :key="m.month"
@@ -139,30 +60,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
-import { getBudgetAnalysis, getAllConfig, setConfig, getRecords, getMonthlyTrend } from '@/api/tauri';
+import { getAllConfig, setConfig, getRecords } from '@/api/tauri';
 import { formatMoney } from '@/utils/formatters';
 
 const loading = ref(false);
 const budgetMonthly = ref(3500);
-const actualExpense = ref(0);
-const usageRate = ref(0);
-const remaining = ref(0);
-const days = ref(0);
-const remainingDays = ref(0);
-const dailyAvg = ref(0);
-const dailyRemaining = ref(0);
-const budgetStatus = ref('正常');
-const budgetAnalysis = ref<any>(null);
 
-// Yearly summary
-const yearlyTotalBudget = ref(0);
-const yearlyActual = ref(0);
-const yearlyRemaining = ref(0);
-const yearlyUsageRate = ref(0);
-
-// Monthly stats
 interface MonthlyStat {
   month: string;
   budget: number;
@@ -172,20 +77,6 @@ interface MonthlyStat {
   status: string;
 }
 const monthlyStats = ref<MonthlyStat[]>([]);
-
-const progressColor = computed(() => {
-  if (usageRate.value > 100) return '#ff4d4f';
-  if (usageRate.value > 80) return '#faad14';
-  return '#52c41a';
-});
-
-const statusType = computed(() => {
-  switch (budgetStatus.value) {
-    case '超支': return 'danger';
-    case '紧张': return 'warning';
-    default: return 'success';
-  }
-});
 
 const newBudget = ref(3500);
 const budgetDialogVisible = ref(false);
@@ -200,22 +91,6 @@ async function loadAll() {
     const config = await getAllConfig();
     budgetMonthly.value = config.budget_monthly || 3500;
 
-    // Current month analysis
-    const analysis = await getBudgetAnalysis('month', budgetMonthly.value);
-    budgetAnalysis.value = analysis;
-    actualExpense.value = analysis.actual_expense;
-    usageRate.value = analysis.usage_rate;
-    remaining.value = analysis.remaining;
-    days.value = analysis.days;
-    remainingDays.value = analysis.remaining_days;
-    dailyAvg.value = analysis.daily_avg;
-    dailyRemaining.value = analysis.daily_remaining;
-    budgetStatus.value = analysis.status;
-
-    // Yearly summary
-    await loadYearlySummary();
-
-    // Monthly execution list
     await loadMonthlyStats();
   } catch (e) {
     console.error('Failed to load budget analysis', e);
@@ -224,62 +99,76 @@ async function loadAll() {
   }
 }
 
-async function loadYearlySummary() {
-  const now = new Date();
-  const year = now.getFullYear();
-  yearlyTotalBudget.value = budgetMonthly.value * 12;
-
-  // Get all records for the year (personal account expenses only)
-  const datetimeGte = `${year}-01-01 00:00:00`;
-  const datetimeLte = `${year}-12-31 23:59:59`;
-  const result = await getRecords({ page: 1, pageSize: 10000, datetimeGte, datetimeLte });
-  const personalExpense = (result.data || []).filter(r =>
-    r.type === '支出' && (r.account === '个人' || !r.account)
-  );
-  yearlyActual.value = personalExpense.reduce((sum: number, r: any) => sum + (r.amount || 0), 0);
-  yearlyRemaining.value = yearlyTotalBudget.value - yearlyActual.value;
-  yearlyUsageRate.value = yearlyTotalBudget.value > 0
-    ? (yearlyActual.value / yearlyTotalBudget.value) * 100
-    : 0;
-}
-
 async function loadMonthlyStats() {
   const now = new Date();
   const months: MonthlyStat[] = [];
 
-  // Get past 6 months (including current)
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const monthLabel = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  // Get all months from the earliest record to current month
+  // First, find the earliest record year
+  const result = await getRecords({ page: 1, pageSize: 10000, sort: 'datetime_asc' });
+  const allRecords = result.data || [];
+
+  if (allRecords.length === 0) {
+    monthlyStats.value = [];
+    return;
+  }
+
+  const earliestDate = allRecords[0]?.datetime || '';
+  let startYear: number;
+  let startMonth: number;
+
+  if (earliestDate) {
+    const parts = earliestDate.substring(0, 7).split('-');
+    startYear = parseInt(parts[0]);
+    startMonth = parseInt(parts[1]);
+  } else {
+    startYear = now.getFullYear();
+    startMonth = 1;
+  }
+
+  // Generate month list from earliest to current
+  let year = startYear;
+  let month = startMonth;
+
+  while (year < now.getFullYear() || (year === now.getFullYear() && month <= now.getMonth() + 1)) {
+    const monthLabel = `${year}-${String(month).padStart(2, '0')}`;
     const datetimeGte = `${monthLabel}-01 00:00:00`;
-    const nextD = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-    const datetimeLte = `${nextD.getFullYear()}-${String(nextD.getMonth() + 1).padStart(2, '0')}-01 00:00:00`;
+    const nextM = month === 12 ? 1 : month + 1;
+    const nextY = month === 12 ? year + 1 : year;
+    const datetimeLte = `${nextY}-${String(nextM).padStart(2, '0')}-01 00:00:00`;
 
-    const result = await getRecords({ page: 1, pageSize: 10000, datetimeGte, datetimeLte });
-    const personalExpense = (result.data || []).filter(r =>
-      r.type === '支出' && (r.account === '个人' || !r.account)
+    const personalExpense = allRecords.filter(r =>
+      r.type === '支出'
+      && (r.account === '个人' || !r.account)
+      && r.datetime >= datetimeGte
+      && r.datetime < datetimeLte
     );
-    const actual = personalExpense.reduce((sum: number, r: any) => sum + (r.amount || 0), 0);
-    const isCurrentMonth = i === 0;
-    const budget = isCurrentMonth ? budgetMonthly.value : budgetMonthly.value;
+    const actual = personalExpense.reduce((sum, r) => sum + (r.amount || 0), 0);
 
-    // For past months, compute status based on actual expense
     let status: string;
-    if (actual > budget) status = '超支';
-    else if (actual > budget * 0.8) status = '紧张';
+    if (actual > budgetMonthly.value) status = '超支';
+    else if (actual > budgetMonthly.value * 0.8) status = '紧张';
     else status = '正常';
 
     months.push({
       month: monthLabel,
-      budget,
+      budget: budgetMonthly.value,
       actual,
-      remaining: budget - actual,
-      usageRate: budget > 0 ? (actual / budget) * 100 : 0,
+      remaining: budgetMonthly.value - actual,
+      usageRate: budgetMonthly.value > 0 ? (actual / budgetMonthly.value) * 100 : 0,
       status,
     });
+
+    if (month === 12) {
+      month = 1;
+      year++;
+    } else {
+      month++;
+    }
   }
 
-  monthlyStats.value = months;
+  // Reverse: newest first
+  monthlyStats.value = months.reverse();
 }
 
 function showEditBudget() {
@@ -313,75 +202,7 @@ async function handleSaveBudget() {
   color: #333;
 }
 
-/* Yearly summary */
-.yearly-summary {
-  margin-bottom: 20px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border: none;
-}
-
-.yearly-summary :deep(.el-card__body) {
-  padding: 20px;
-}
-
-.yearly-item {
-  text-align: center;
-  color: white;
-}
-
-.yearly-item .label {
-  opacity: 0.9;
-  font-size: 0.9em;
-  margin-bottom: 8px;
-}
-
-.yearly-item .value {
-  font-size: 1.5em;
-  font-weight: bold;
-}
-
-.summary-row {
-  margin-bottom: 20px;
-}
-
-.stat-card .value {
-  font-size: 1.8em;
-  font-weight: bold;
-}
-
-.stat-card .count {
-  color: #999;
-  font-size: 0.9em;
-  margin-top: 4px;
-}
-
-.budget-total .value { color: #1890ff; }
-.expense-total .value { color: #ff4d4f; }
-.remaining .value { color: #52c41a; }
-.remaining .over { color: #ff4d4f; }
-.daily .value { color: #722ed1; }
-
-.progress-section {
-  padding: 0 4px;
-}
-
-.status-badge {
-  margin-top: 16px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.detail {
-  color: #666;
-  font-size: 0.95em;
-}
-
 /* Monthly list */
-.monthly-list-card {
-  margin-bottom: 20px;
-}
-
 .monthly-list {
   display: grid;
   gap: 10px;
@@ -460,8 +281,6 @@ async function handleSaveBudget() {
 }
 
 /* Utility */
-.text-success { color: #52c41a; }
-.text-danger { color: #ff4d4f; }
 .text-ok { color: #52c41a; }
 .text-warning { color: #faad14; }
 .text-over { color: #ff4d4f; }

@@ -121,7 +121,16 @@
       "Skill(brainstorming:*)",
       "Bash(npx vue-tsc *)",
       "Bash(taskkill //PID 1956 //F)",
-      "Bash(CARGO_NET_OFFLINE=true cargo check)"
+      "Bash(CARGO_NET_OFFLINE=true cargo check)",
+      "WebFetch(domain:vue-data-ui.graphieros.com)",
+      "Bash(gh api *)",
+      "Bash(python3 -c \"import sys,base64; print\\(base64.b64decode\\(sys.stdin.read\\(\\)\\).decode\\(\\)\\)\")",
+      "Bash(sqlite3 database/app_data.db \"SELECT start_date, end_date FROM business_trip LIMIT 5;\")",
+      "Bash(sqlite3 database/app_data.db \"SELECT DISTINCT status, COUNT\\(*\\) FROM business_trip GROUP BY status;\")",
+      "Bash(sqlite3 database/app_data.db \"SELECT id, status FROM business_trip LIMIT 3;\")",
+      "Bash(sqlite3 database/app_data.db \"SELECT * FROM app_config;\")",
+      "Bash(curl -s -X POST https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9' -d '{\"model\":\"qwen-turbo\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}')",
+      "WebFetch(domain:bailian.console.aliyun.com)"
     ],
     "additionalDirectories": [
       "d:\\Code\\accounting-app\\web\\static"

@@ -1,11 +1,17 @@
 <template>
-  <VueUiDonut :dataset="dataset" :config="config" />
+  <v-chart class="chart" :option="option" autoresize />
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { VueUiDonut } from 'vue-data-ui';
+import { use } from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
+import { PieChart } from 'echarts/charts';
+import { TooltipComponent, LegendComponent } from 'echarts/components';
+import VChart from 'vue-echarts';
 import type { AccountStat } from '@/types';
+
+use([CanvasRenderer, PieChart, TooltipComponent, LegendComponent]);
 
 const props = defineProps<{
   data: AccountStat[];
@@ -13,23 +19,40 @@ const props = defineProps<{
 
 const colors = ['#667eea', '#764ba2', '#52c41a', '#ff6b6b', '#1890ff', '#ffc107'];
 
-const dataset = computed(() => {
-  return props.data.map((d, i) => ({
-    name: d.account,
-    values: [d.total],
-    color: colors[i % colors.length],
-  }));
-});
-
-const config = {
-  style: {
-    colors: colors,
-  },
+const option = computed(() => ({
   tooltip: {
-    show: true,
+    trigger: 'item' as const,
+    formatter: '{b}: ¥{c} ({d}%)',
   },
   legend: {
-    show: true,
+    bottom: '5%',
+    left: 'center',
   },
-};
+  series: [
+    {
+      name: '账户',
+      type: 'pie' as const,
+      radius: ['40%', '70%'],
+      avoidLabelOverlap: true,
+      itemStyle: {
+        borderRadius: 6,
+      },
+      label: {
+        show: false,
+      },
+      color: colors,
+      data: props.data.map(d => ({
+        name: d.account,
+        value: d.total,
+      })),
+    },
+  ],
+}));
 </script>
+
+<style scoped>
+.chart {
+  width: 100%;
+  height: 350px;
+}
+</style>
