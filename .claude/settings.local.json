@@ -152,7 +152,10 @@
       "Bash(curl -s -o /dev/null -w '%{http_code}' -X POST https://coding.dashscope.aliyuncs.com/v1/coding/run -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9' -d '{\"prompt\":\"你好\"}')",
       "Bash(curl -s -o /dev/null -w '%{http_code}' -X POST https://coding.dashscope.aliyuncs.com/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9' -d '{\"model\":\"qwen3.5-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}')",
       "Bash(curl -s -o /dev/null -w '%{http_code}' -X POST https://coding.dashscope.aliyuncs.com/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9' -d '{\"model\":\"qwen3.5-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}')",
-      "Bash(curl -s -X POST https://coding.dashscope.aliyuncs.com/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9' -d '{\"model\":\"qwen3.5-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}')"
+      "Bash(curl -s -X POST https://coding.dashscope.aliyuncs.com/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9' -d '{\"model\":\"qwen3.5-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}')",
+      "Bash(curl -s http://121.17.49.99:1234/chat/completions -X POST -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9\" -d '{\"model\":\"qwen3.6-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}],\"max_tokens\":10}')",
+      "Bash(curl -s http://121.17.49.99:1234/v1/chat/completions -X POST -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-123\" -d '{\"model\":\"qwen3.6-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}],\"max_tokens\":10}')",
+      "Bash(curl -s http://121.17.49.99:1234/v1/chat/completions -X POST -H \"Content-Type: application/json\" -d '{\"model\":\"qwen3.6-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}],\"max_tokens\":10}')"
     ],
     "additionalDirectories": [
       "d:\\Code\\accounting-app\\web\\static"

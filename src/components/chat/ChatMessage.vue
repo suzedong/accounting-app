@@ -18,7 +18,23 @@
 
         <!-- Card (record confirmation) -->
         <template v-else-if="render === 'card' && data">
-          <RecordCard :record="data" :title="title" />
+          <ConfirmCard
+            :fields="data"
+            :title="title || '我帮你整理了一下，请确认：'"
+            :readonly="status === 'confirmed' || status === 'cancelled'"
+            @confirm="$emit('cardAction', 'confirm')"
+            @edit="$emit('cardAction', 'edit')"
+            @cancel="$emit('cardAction', 'cancel')"
+          />
+        </template>
+
+        <!-- Follow-up (missing fields) -->
+        <template v-else-if="render === 'followUp' && data">
+          <FollowUpCard
+            :question="content"
+            :missing-fields="data.missingFields || []"
+            @select-field="$emit('followUpSelect', $event)"
+          />
         </template>
 
         <!-- List (query records) -->
@@ -113,7 +129,8 @@
 
 <script setup lang="ts">
 import ChatThinking from './ChatThinking.vue';
-import RecordCard from './RecordCard.vue';
+import ConfirmCard from './ConfirmCard.vue';
+import FollowUpCard from './FollowUpCard.vue';
 
 defineProps<{
   role: 'user' | 'ai';
@@ -122,6 +139,12 @@ defineProps<{
   render?: string;
   title?: string;
   loading?: boolean;
+  status?: string;
+}>();
+
+defineEmits<{
+  cardAction: [action: 'confirm' | 'edit' | 'cancel'];
+  followUpSelect: [field: string];
 }>();
 
 function formatShortDate(datetime: string) {

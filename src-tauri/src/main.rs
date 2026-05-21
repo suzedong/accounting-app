@@ -86,6 +86,10 @@ fn main() {
             commands::config::set_config,
             commands::config::get_all_config,
             commands::config::test_ai_connection,
+            commands::config::call_llm,
+            commands::config::get_ai_services,
+            commands::config::save_ai_services,
+            commands::config::activate_ai_service,
             // Sync
             commands::sync::sync_push,
             commands::sync::sync_pull,

@@ -46,6 +46,30 @@ export async function handleCreateRecord(params: Record<string, unknown>): Promi
   const amount = typeof raw.amount === 'number' ? raw.amount : parseFloat(String(raw.amount));
   if (!amount || amount <= 0) return { success: false, message: '金额必须大于 0', render: 'text' };
 
+  // Return as confirmation card WITHOUT creating record yet
+  const fields: Record<string, unknown> = {
+    datetime: typeof raw.datetime === 'string' ? raw.datetime : new Date().toISOString().replace('T', ' ').substring(0, 19),
+    type: raw.type === '收入' ? '收入' : '支出',
+    category: typeof raw.category === 'string' ? raw.category : '其他',
+    amount,
+    account: typeof raw.account === 'string' ? raw.account : '个人',
+    note: typeof raw.note === 'string' ? raw.note : '',
+    payment: typeof raw.payment === 'string' ? raw.payment : (typeof raw.payment_method === 'string' ? raw.payment_method : ''),
+  };
+
+  return {
+    success: true,
+    message: '我帮你整理了一下，请确认：',
+    data: fields,
+    render: 'card',
+  };
+}
+
+export async function handleConfirmRecord(params: Record<string, unknown>): Promise<ActionResult> {
+  const raw = params.fields as Record<string, unknown> | undefined;
+  if (!raw || !raw.amount) return { success: false, message: '缺少金额信息', render: 'text' };
+  const amount = typeof raw.amount === 'number' ? raw.amount : parseFloat(String(raw.amount));
+
   const fields: RecordInput = {
     datetime: typeof raw.datetime === 'string' ? raw.datetime : new Date().toISOString().replace('T', ' ').substring(0, 19),
     type: (raw.type === '收入' ? '收入' : '支出') as RecordInput['type'],
@@ -57,12 +81,13 @@ export async function handleCreateRecord(params: Record<string, unknown>): Promi
   };
 
   const record = await createRecord(fields);
+  const typeIcon = fields.type === '支出' ? '' : '';
 
   return {
     success: true,
-    message: `已创建记录: ${fields.type} ${fields.amount}元 - ${fields.category}`,
+    message: `已记录：${typeIcon} ${fields.type} ${fields.amount}元 - ${fields.category}`,
     data: record,
-    render: (params.render as string) || 'card',
+    render: 'text',
   };
 }
 
@@ -76,7 +101,7 @@ export async function handleCorrectRecord(params: Record<string, unknown>): Prom
 
   // Try to find the record to correct using context
   if (context) {
-    const records = await getRecords({ page: 1, page_size: 100, sort: 'datetime_desc' });
+    const records = await getRecords({ page: 1, pageSize: 100, sort: 'datetime_desc' });
     let target: AccountRecord | undefined;
 
     // Search by matching context fields
@@ -95,7 +120,7 @@ export async function handleCorrectRecord(params: Record<string, unknown>): Prom
   }
 
   // Fallback: update the most recent record
-  const records = await getRecords({ page: 1, page_size: 1, sort: 'datetime_desc' });
+  const records = await getRecords({ page: 1, pageSize: 1, sort: 'datetime_desc' });
   if (records.data.length > 0) {
     const latest = records.data[0];
     await updateRecord(latest.id, fields as Partial<RecordInput>);
@@ -150,9 +175,9 @@ export async function handleQueryRecords(params: Record<string, unknown>): Promi
 
   const records = await getRecords({
     page: 1,
-    page_size: (params.limit as number) || 10,
-    datetime_gte: datetimeGte || undefined,
-    filter_type: type === 'all' ? undefined : type || undefined,
+    pageSize: (params.limit as number) || 10,
+    datetimeGte: datetimeGte || undefined,
+    filterType: type === 'all' ? undefined : type || undefined,
     sort: 'datetime_desc',
   });
 
@@ -225,10 +250,14 @@ export async function handleRenderBudget(): Promise<ActionResult> {
 
 export async function handleAskFollowUp(params: Record<string, unknown>): Promise<ActionResult> {
   const question = params.question as string || '请补充更多信息';
+  const missingFields = params.missingFields as string[] || [];
+  const originalFields = (params.originalFields as Record<string, unknown>) || {};
+
   return {
     success: false,
     message: question,
-    render: 'text',
+    data: { question, missingFields, originalFields },
+    render: 'followUp',
   };
 }
 
@@ -285,6 +314,7 @@ export async function handleClearChat(): Promise<ActionResult> {
 // --- Auto-register all handlers ---
 
 registerActionHandler('create_record', handleCreateRecord);
+registerActionHandler('confirm_record', handleConfirmRecord);
 registerActionHandler('correct_record', handleCorrectRecord);
 registerActionHandler('update_record', handleUpdateRecord);
 registerActionHandler('query_records', handleQueryRecords);

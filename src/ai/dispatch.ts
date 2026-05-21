@@ -1,4 +1,4 @@
-import { getSystemPrompt, getAllPreferences, getLearningCorrections, getAllConfig } from '@/api/tauri';
+import { getSystemPrompt, getAllPreferences, getLearningCorrections, callLLM } from '@/api/tauri';
 import type { DispatchResult } from '@/types';
 
 export async function fetchContext(): Promise<{ dispatchPrompt: string; preferenceText: string; learningText: string }> {
@@ -66,40 +66,20 @@ export function buildSystemMessage(
 }
 
 export async function dispatchLLM(text: string): Promise<DispatchResult> {
-  const config = await getAllConfig();
-  if (!config.ai_api_key) {
-    throw new Error('未配置 AI API Key，请在设置中配置');
-  }
-
+  // callLLM (Rust backend) checks for active AI service internally
   const context = await fetchContext();
   const systemMessage = buildSystemMessage(context.dispatchPrompt, context.preferenceText, context.learningText);
 
-  const response = await fetch(`${config.ai_api_url}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.ai_api_key}`,
-    },
-    body: JSON.stringify({
-      model: config.ai_model,
-      messages: [
-        { role: 'system', content: systemMessage },
-        { role: 'user', content: text },
-      ],
-      temperature: 0.1,
-      max_tokens: 1000,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`LLM API 错误 (${response.status}): ${errText}`);
+  console.log('[dispatchLLM] calling LLM with:', text.substring(0, 50));
+  const content = await callLLM(systemMessage, text);
+  console.log('[dispatchLLM] raw response length:', content?.length ?? 0);
+  if (content) {
+    console.log('[dispatchLLM] raw response charCodes:', Array.from(content.substring(0, 20)).map(c => c.charCodeAt(0)));
+    console.log('[dispatchLLM] raw response:', JSON.stringify(content.substring(0, 200)));
   }
 
-  const json = await response.json();
-  const content = json.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('LLM 返回空响应');
+  if (!content || content.trim().length === 0) {
+    throw new Error('LLM 返回空响应（可能服务未启动、网络超时或 API Key 无效）');
   }
 
   // Extract JSON from possible markdown code blocks

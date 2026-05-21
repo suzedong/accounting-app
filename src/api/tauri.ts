@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AccountRecord, RecordInput, TripRecord, ApiResponse, StatsSummary, CategoryStat, AccountStat, MonthTrend, ComparisonResult, BudgetAnalysis, AppConfig } from '@/types';
+import type { AccountRecord, RecordInput, TripRecord, ApiResponse, StatsSummary, CategoryStat, AccountStat, MonthTrend, ComparisonResult, BudgetAnalysis, AppConfig, AiService } from '@/types';
 
 // Records
 export async function getRecords(params: {
@@ -144,6 +144,32 @@ export async function saveChatMessage(role: string, content: string | null, data
 
 export async function clearChatHistory(): Promise<void> {
   return invoke('clear_chat_history');
+}
+
+// LLM (via Rust backend, avoids CORS)
+export async function callLLM(systemMessage: string, userMessage: string): Promise<string> {
+  console.log('[callLLM invoke] calling call_llm, systemMessage len:', systemMessage.length);
+  try {
+    const result = await invoke('call_llm', { systemMessage, userMessage });
+    console.log('[callLLM invoke] returned, result type:', typeof result, 'length:', typeof result === 'string' ? result.length : 'N/A');
+    return result as string;
+  } catch (e) {
+    console.error('[callLLM invoke] error:', e);
+    throw e;
+  }
+}
+
+// AI Services Management
+export async function getAiServices(): Promise<AiService[]> {
+  return invoke('get_ai_services');
+}
+
+export async function saveAiServices(services: AiService[]): Promise<void> {
+  return invoke('save_ai_services', { services });
+}
+
+export async function activateAiService(id: string): Promise<void> {
+  return invoke('activate_ai_service', { id });
 }
 
 // Config test

@@ -119,6 +119,21 @@ export interface ChatMessage {
   created_at: string;
 }
 
+export interface AiService {
+  id: string;
+  name: string;
+  api_url: string;
+  api_key: string;
+  model: string;
+  active: boolean;
+}
+
+export interface FollowUpResult {
+  question: string;
+  missingFields: string[];
+  originalFields: Record<string, unknown>;
+}
+
 export interface AppConfig {
   ai_api_key: string;
   ai_api_url: string;
