@@ -55,8 +55,10 @@
 
 - 通过 `rusqlite` crate 操作
 - 与现有 NocoBase collections 完全对齐
-- 本地存储路径：`$APP_DATA/app_data.db`
-- 配置文件路径：`$APP_CONFIG/config.json`
+- 本地存储路径：
+  - 开发模式：`项目根目录/database/app_data.db`
+  - 发布模式：`$APP_DATA/app_data.db`
+- 配置文件存储在 SQLite `app_config` 表（非 config.json）
 
 ### 2.3 AI 层
 
@@ -69,12 +71,12 @@
 
 ### 2.4 OCR 层
 
-**RapidOCR（ONNX Runtime）**
+**macOS 快捷指令（Vision.framework）+ 跨平台占位**
 
-- 模型文件打包到应用资源中（~10MB）
-- 通过 `ort` crate（ONNX Runtime Rust 绑定）推理
-- 纯 Rust 实现，无 Python 依赖
-- 输入：图片 base64 / 二进制
+- macOS 端通过 `shortcuts` 命令调用系统自带 Vision.framework OCR
+- 零配置，无需下载 ONNX 模型
+- Windows/Linux 使用占位方案（需后续实现 RapidOCR ONNX 或其他引擎）
+- 输入：图片 base64
 - 输出：识别文本
 
 ## 3. 数据模型设计
@@ -323,20 +325,23 @@ accounting-app/
 │   ├── api/
 │   │   └── tauri.ts              # invoke() 封装（records, trips, stats, config, OCR）
 │   ├── utils/
-│   │   ├── formatters.ts         # formatMoney, formatDatetime, formatDate
-│   │   └── dateRange.ts          # 日期范围计算（this_month, last_month, year 等）
+│   │   ├── formatters.ts         # formatMoney, formatDatetime
+│   │   └── dateRange.ts          # 日期范围计算（month, last_month, week, year）
 │   ├── views/
-│   │   ├── Home.vue              # 首页仪表盘（统计卡片 + 分类分析 + 预算执行）
+│   │   ├── Home.vue              # 首页仪表盘（统计卡片 + 分类分析 + 账户分析 + 预算执行）
 │   │   ├── Records.vue           # 记录管理（ElTable + 筛选 + 分页 + 编辑对话框）
-│   │   ├── Budget.vue            # 预算管理（Phase 2 占位）
-│   │   ├── Stats.vue             # 统计分析（Phase 2 占位）
-│   │   ├── TripAllowance.vue     # 差旅补助（Phase 2 占位）
-│   │   └── Settings.vue          # 设置页（Phase 2 占位）
+│   │   ├── Budget.vue            # 预算管理
+│   │   ├── Stats.vue             # 统计分析
+│   │   ├── TripAllowance.vue     # 差旅补助
+│   │   └── Settings.vue          # 设置页
 │   └── components/
 │       ├── layout/
 │       │   └── AppNavbar.vue     # 顶部导航栏（渐变色 + 路由链接）
 │       ├── chat/
-│       │   └── ChatWidget.vue    # 悬浮对话面板（Phase 3 骨架）
+│       │   ├── ChatWidget.vue    # 悬浮对话面板（完整实现）
+│       │   ├── ChatMessage.vue   # 消息渲染（文本/卡片/列表）
+│       │   ├── ChatInput.vue     # 输入框 + 图片上传
+│       │   └── RecordCard.vue    # 记录确认卡片
 │       └── stats/
 │           ├── CategoryBarChart.vue  # Vue Data UI：分类柱状图
 │           ├── AccountPieChart.vue   # Vue Data UI：账户环形图
@@ -344,7 +349,7 @@ accounting-app/
 │           └── ComparisonChart.vue   # Vue Data UI：环比对比
 ├── src-tauri/                    # Tauri 2 后端（Rust）
 │   ├── src/
-│   │   ├── main.rs               # 入口：初始化 Database + AppConfig，注册 30+ 命令
+│   │   ├── main.rs               # 入口：初始化 Database + AppConfig + OcrEngine，注册 30+ 命令
 │   │   ├── db/
 │   │   │   ├── mod.rs            # 模块根，导出 Database, RecordInput 等
 │   │   │   ├── connection.rs     # SQLite 连接（Arc<Mutex<Connection>>，构造函数打开）
@@ -355,7 +360,7 @@ accounting-app/
 │   │   │   ├── learning.rs       # learning_data CRUD（修正映射）
 │   │   │   ├── chat_history.rs   # chat_history CRUD
 │   │   │   ├── sync_log.rs       # sync_log 写入 + 查询
-│   │   │   └── preferences.rs    # 偏好 CRUD（独立模块，Phase 4 用）
+│   │   └── preferences.rs    # 偏好 CRUD
 │   │   ├── commands/
 │   │   │   ├── mod.rs            # 模块声明
 │   │   │   ├── records.rs        # 记录 Tauri Commands（5 个）
@@ -366,9 +371,9 @@ accounting-app/
 │   │   │   ├── chat.rs           # 对话历史（3 个命令）
 │   │   │   ├── config.rs         # 配置读写（3 个命令）
 │   │   │   ├── sync.rs           # 同步占位（5 个命令）
-│   │   │   └── ocr.rs            # OCR 占位（1 个命令）
+│   │   │   └── ocr.rs            # OCR（macOS 快捷指令 + 占位）
 │   │   └── models/
-│   │       └── mod.rs            # RapidOCR ONNX 模块（Phase 4）
+│   │       └── mod.rs            # 数据模型定义
 │   ├── capabilities/
 │   │   └── default.json          # Tauri 2 权限配置
 │   ├── icons/

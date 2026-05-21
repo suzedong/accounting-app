@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | Phase 1: Tauri 骨架 + SQLite | ✅ 已完成 | 数据库、CRUD、前端基础 |
-| Phase 2: 业务逻辑迁移 | ⚠️ 后端完成，前端待接入 | Rust commands 齐全，Vue 页面/AI 对话/OCR 待完成 |
+| Phase 2: 业务逻辑迁移 | ✅ 已完成 | Rust commands 齐全，Vue 6 个页面（首页含账户分析+预算执行）全部可用 |
 | Phase 3: 同步层 | ❌ 未开始 | push/pull/import 全部占位 |
 | Phase 4: 桌面增强 + 清理 | ❌ 未开始 | server.py 待删除，文档待更新 |
 
@@ -54,6 +54,40 @@ npm run dev         # Tauri 开发模式（Vite + Rust，桌面窗口）
 npm run build       # 构建生产产物（TypeScript 检查 + Vite 构建）
 npm run tauri dev   # 同上（显式调用 tauri）
 ```
+
+### 重要开发约定
+
+#### Tauri 2 camelCase 序列化
+
+Tauri 2 默认使用 camelCase 反序列化命令参数。所有 `invoke()` 调用必须使用 **camelCase** 键名，对应 Rust 端的 **snake_case** 参数：
+
+```typescript
+// ✅ 正确：前端用 camelCase
+invoke('get_stats_summary', { datetimeGte: '2026-05-01 00:00:00' })
+
+// ❌ 错误：snake_case 会导致参数丢失
+invoke('get_stats_summary', { datetime_gte: '2026-05-01 00:00:00' })
+```
+
+**规则**：Rust 函数参数 `datetime_gte: String` ↔ 前端传 `{ datetimeGte: value }`。
+**例外**：`Option<String>` 或 `Option<T>` 参数应使用条件展开 `...(value ? { key: value } : {})` 而非传 `null`。
+
+#### SQLite 时间格式
+
+SQLite 无原生 DATE/TIMESTAMP 类型，所有时间字段使用 **TEXT** 存储，格式为：
+
+```
+YYYY-MM-DD HH:MM:SS   (空格分隔，24 小时制)
+```
+
+- Rust 生成时间：`chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S")`
+- 前端生成过滤条件：`dateRange.ts` 输出相同格式
+- SQLite 内置函数：`datetime('now')` 默认返回此格式
+- 比较规则：字符串字典序 = 时间顺序，可直接 `>=` 比较
+
+#### 预算分析规则
+
+预算执行只计算 `account = '个人'` 的支出。
 
 ---
 

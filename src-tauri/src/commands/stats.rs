@@ -234,7 +234,7 @@ pub async fn get_budget_analysis(
 
     let actual_expense: f64 = guard
         .query_row(
-            &format!("SELECT COALESCE(SUM(amount), 0) FROM records WHERE type = '支出' AND datetime >= '{}'", date_gte),
+            &format!("SELECT COALESCE(SUM(amount), 0) FROM records WHERE type = '支出' AND account = '个人' AND datetime >= '{}'", date_gte),
             [],
             |row| row.get(0),
         )

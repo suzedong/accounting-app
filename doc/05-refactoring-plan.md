@@ -9,7 +9,7 @@
 | 数据层 | NocoBase REST API | SQLite + Tauri invoke | **大改** |
 | 后端服务 | server.py 代理 | Rust Tauri 后端 | **完全重写** |
 | AI 调用 | server.py 代理百炼 | 前端直连百炼 API | **中改** |
-| OCR | server.py + PaddleOCR | Rust + RapidOCR (ONNX) | **完全重写** |
+| OCR | server.py + PaddleOCR | macOS 快捷指令（Vision.framework）+ 跨平台占位 | **已实现（降级方案）** |
 | Prompt | server.py 文件管理 | SQLite 存储 | **中改** |
 | Preference | preferences.md | SQLite 存储 | **中改** |
 | 学习引擎 | localStorage | SQLite | **中改** |
@@ -190,40 +190,26 @@ const response = await fetch(apiUrl, {
 ### 4.2 目标流程
 
 ```
-前端图片 → invoke('ocr_recognize', { base64 })
-         → Rust → RapidOCR (ONNX) → 文本
+前端图片 → invoke('ocr_recognize', { imageBase64 })
+         → Rust → macOS `shortcuts` 命令 → Vision.framework OCR → 文本
 ```
 
-### 4.3 Rust 端实现
+**macOS 实现**：通过 `std::process::Command` 调用 `shortcuts run "提取图像中的文本"`，利用系统内置 Vision.framework。
+
+**跨平台占位**：Windows/Linux 需后续实现 RapidOCR ONNX 或其他引擎。
+
+### 4.3 Rust 端实现（已实现）
 
 ```rust
-// src-tauri/src/ocr.rs
-use ort::{Session, value::TensorRef};
-
-pub struct RapidOcr {
-    det_session: Session,   // 检测
-    cls_session: Session,   // 分类
-    rec_session: Session,   // 识别
-}
-
-impl RapidOcr {
-    pub fn new() -> Self {
-        // 从应用资源加载 ONNX 模型
-        let model_dir = /* app resources/models/ */;
-        Self {
-            det_session: Session::new(&format!("{}/det.onnx")).unwrap(),
-            cls_session: Session::new(&format!("{}/cls.onnx")).unwrap(),
-            rec_session: Session::new(&format!("{}/rec.onnx")).unwrap(),
-        }
-    }
-
-    pub fn recognize(&self, image_base64: &str) -> String {
-        // 1. base64 解码 → 图片
-        // 2. 检测：定位文字区域
-        // 3. 分类：方向校正
-        // 4. 识别：逐区域 OCR
-        // 5. 拼接结果
-    }
+// src-tauri/src/ocr/rapidocr.rs
+// macOS: 使用 shortcuts 命令调用 Vision.framework
+#[cfg(target_os = "macos")]
+pub fn recognize(&self, image_base64: &str) -> String {
+    let mut cmd = Command::new("shortcuts");
+    cmd.arg("run").arg("提取图像中的文本")
+       .stdin(Stdio::piped())
+       .stdout(Stdio::piped());
+    // base64 解码 → stdin → 读取 stdout
 }
 ```
 
@@ -347,12 +333,11 @@ package.json 中的 dev:backend       # 不再需要启动 server.py
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| RapidOCR 精度不足 | OCR 功能降级 | 保持 Tauri 可调用本地 Python PaddleOCR（可选依赖） |
+| macOS shortcuts 降级 | Windows/Linux 不可用 | 已使用占位方案，后续补充 RapidOCR |
 | Tauri WebView 版本不兼容 | 部分 API 不可用 | 测试主流平台 WebView 版本，必要时 polyfill |
 | SQLite 并发写入冲突 | 数据丢失 | 使用 WAL 模式，单连接写操作 |
 | 百炼 API 前端暴露 Key | 安全 | 个人使用可接受，加 Referer 白名单 |
 | NocoBase 同步失败 | 数据不同步 | 本地优先，同步失败不影响使用 |
-| ONNX 模型包体积 | 应用体积增大 | ~10MB 可接受，总包 < 15MB |
 
 ## 9. 兼容性过渡期
 

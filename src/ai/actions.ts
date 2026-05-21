@@ -1,4 +1,4 @@
-import { createRecord, updateRecord, getRecords, getStatsSummary, getStatsByCategory, getBudgetAnalysis } from '@/api/tauri';
+import { createRecord, updateRecord, getRecords, getStatsSummary, getStatsByCategory, getBudgetAnalysis, updateSystemPrompt, updatePreference, clearChatHistory } from '@/api/tauri';
 import type { RecordInput, AccountRecord, DispatchResult } from '@/types';
 
 export interface ActionResult {
@@ -241,6 +241,47 @@ export async function handleReplyText(params: Record<string, unknown>): Promise<
   };
 }
 
+export async function handleSavePreference(params: Record<string, unknown>): Promise<ActionResult> {
+  const key = params.key as string | undefined;
+  const value = params.value as string | undefined;
+
+  if (!key || !value) {
+    return { success: false, message: '缺少偏好键或值', render: 'text' };
+  }
+
+  try {
+    await updatePreference(key, value);
+    return { success: true, message: `已保存偏好: ${key} = ${value}`, render: 'text' };
+  } catch (e: unknown) {
+    return { success: false, message: `保存偏好失败: ${e instanceof Error ? e.message : String(e)}`, render: 'text' };
+  }
+}
+
+export async function handleUpdatePrompt(params: Record<string, unknown>): Promise<ActionResult> {
+  const name = params.name as string | undefined;
+  const content = params.content as string | undefined;
+
+  if (!name || !content) {
+    return { success: false, message: '缺少 prompt 名称或内容', render: 'text' };
+  }
+
+  try {
+    await updateSystemPrompt(name, content);
+    return { success: true, message: `已更新 prompt: ${name}`, render: 'text' };
+  } catch (e: unknown) {
+    return { success: false, message: `更新 prompt 失败: ${e instanceof Error ? e.message : String(e)}`, render: 'text' };
+  }
+}
+
+export async function handleClearChat(): Promise<ActionResult> {
+  try {
+    await clearChatHistory();
+    return { success: true, message: '已清空对话历史', render: 'text' };
+  } catch (e: unknown) {
+    return { success: false, message: `清空历史失败: ${e instanceof Error ? e.message : String(e)}`, render: 'text' };
+  }
+}
+
 // --- Auto-register all handlers ---
 
 registerActionHandler('create_record', handleCreateRecord);
@@ -251,3 +292,6 @@ registerActionHandler('render_stats', handleRenderStats);
 registerActionHandler('render_budget', handleRenderBudget);
 registerActionHandler('ask_follow_up', handleAskFollowUp);
 registerActionHandler('reply_text', handleReplyText);
+registerActionHandler('save_preference', handleSavePreference);
+registerActionHandler('update_prompt', handleUpdatePrompt);
+registerActionHandler('clear_chat', handleClearChat);

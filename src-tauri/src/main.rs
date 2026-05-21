@@ -3,6 +3,36 @@
 mod db;
 mod commands;
 mod models;
+mod ocr;
+
+use std::sync::Mutex;
+use ocr::rapidocr::RapidOcr;
+
+/// OCR 引擎状态（延迟加载）
+pub struct OcrEngine {
+    inner: Mutex<Option<RapidOcr>>,
+}
+
+impl OcrEngine {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(None),
+        }
+    }
+
+    /// 加载 OCR 引擎
+    pub fn load(&self, models_dir: std::path::PathBuf) -> Result<(), String> {
+        let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
+        let engine = RapidOcr::new(&models_dir)?;
+        *guard = Some(engine);
+        Ok(())
+    }
+
+    /// 获取 OCR 引擎实例
+    pub fn get(&self) -> Result<std::sync::MutexGuard<'_, Option<RapidOcr>>, String> {
+        self.inner.lock().map_err(|e| e.to_string())
+    }
+}
 
 fn main() {
     // Initialize database (opens connection in constructor)
@@ -11,10 +41,14 @@ fn main() {
     // Initialize app config (loads from SQLite)
     let app_config = commands::config::AppConfig::new(&database);
 
+    // Initialize OCR engine (lazy load)
+    let ocr_engine = OcrEngine::new();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(database)
         .manage(app_config)
+        .manage(ocr_engine)
         .invoke_handler(tauri::generate_handler![
             // Records
             commands::records::get_records,
@@ -59,6 +93,7 @@ fn main() {
             commands::sync::import_from_nocobase,
             commands::sync::get_sync_logs,
             // OCR
+            commands::ocr::load_ocr_models,
             commands::ocr::ocr_recognize,
         ])
         .run(tauri::generate_context!())

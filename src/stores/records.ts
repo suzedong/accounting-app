@@ -26,18 +26,22 @@ export const useRecordsStore = defineStore('records', () => {
     try {
       const params: Record<string, unknown> = {
         page: page.value,
-        page_size: pageSize.value,
+        pageSize: pageSize.value,
         sort: filters.value.sort || 'datetime_desc',
       };
-      if (filters.value.type) params.filter_type = filters.value.type;
-      if (filters.value.category) params.filter_category = filters.value.category;
-      if (filters.value.account) params.filter_account = filters.value.account;
-      if (filters.value.datetimeGte) params.datetime_gte = filters.value.datetimeGte;
-      if (filters.value.datetimeLte) params.datetime_lte = filters.value.datetimeLte;
+      if (filters.value.type) params.filterType = filters.value.type;
+      if (filters.value.category) params.filterCategory = filters.value.category;
+      if (filters.value.account) params.filterAccount = filters.value.account;
+      if (filters.value.datetimeGte) params.datetimeGte = filters.value.datetimeGte;
+      if (filters.value.datetimeLte) params.datetimeLte = filters.value.datetimeLte;
 
+      console.log('[Records] fetchRecords params:', JSON.stringify(params));
       const result = await api.getRecords(params);
+      console.log('[Records] 返回数据:', result.meta?.count, '条');
       records.value = result.data;
       total.value = result.meta?.count ?? 0;
+    } catch (e) {
+      console.error('[Records] fetchRecords 失败:', e);
     } finally {
       loading.value = false;
     }

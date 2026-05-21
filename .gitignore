@@ -34,3 +34,6 @@ src-tauri/gen/
 
 # Logs
 *.log
+
+# SQLite database (dev mode, generated in project root)
+app_data.db*

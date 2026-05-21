@@ -4,12 +4,12 @@ import type { AccountRecord, RecordInput, TripRecord, ApiResponse, StatsSummary,
 // Records
 export async function getRecords(params: {
   page?: number;
-  page_size?: number;
-  filter_type?: string;
-  filter_category?: string;
-  filter_account?: string;
-  datetime_gte?: string;
-  datetime_lte?: string;
+  pageSize?: number;
+  filterType?: string;
+  filterCategory?: string;
+  filterAccount?: string;
+  datetimeGte?: string;
+  datetimeLte?: string;
   sort?: string;
 }): Promise<ApiResponse<AccountRecord[]>> {
   return invoke('get_records', params);
@@ -36,7 +36,7 @@ export async function deleteRecord(id: number): Promise<void> {
 
 // Trips
 export async function getTrips(status?: string): Promise<ApiResponse<TripRecord[]>> {
-  return invoke('get_business_trips', { status: status || null });
+  return invoke('get_business_trips', { ...(status ? { status } : {}) });
 }
 
 export async function createTrip(fields: Partial<TripRecord>): Promise<TripRecord> {
@@ -55,19 +55,29 @@ export async function deleteTrip(id: number): Promise<void> {
 
 // Stats
 export async function getStatsSummary(datetimeGte: string, datetimeLte?: string): Promise<StatsSummary> {
-  return invoke('get_stats_summary', { datetime_gte: datetimeGte, datetime_lte: datetimeLte || null });
+  return invoke('get_stats_summary', {
+    datetimeGte,
+    ...(datetimeLte ? { datetimeLte } : {}),
+  });
 }
 
 export async function getStatsByCategory(datetimeGte: string, type: string, datetimeLte?: string): Promise<CategoryStat[]> {
-  return invoke('get_stats_by_category', { datetime_gte: datetimeGte, type, datetime_lte: datetimeLte || null });
+  return invoke('get_stats_by_category', {
+    datetimeGte,
+    type,
+    ...(datetimeLte ? { datetimeLte } : {}),
+  });
 }
 
 export async function getStatsByAccount(datetimeGte: string, datetimeLte?: string): Promise<AccountStat[]> {
-  return invoke('get_stats_by_account', { datetime_gte: datetimeGte, datetime_lte: datetimeLte || null });
+  return invoke('get_stats_by_account', {
+    datetimeGte,
+    ...(datetimeLte ? { datetimeLte } : {}),
+  });
 }
 
 export async function getMonthlyTrend(months?: number): Promise<MonthTrend[]> {
-  return invoke('get_monthly_trend', { months: months || null });
+  return invoke('get_monthly_trend', { months: months || undefined });
 }
 
 export async function getComparison(): Promise<ComparisonResult> {
@@ -75,7 +85,7 @@ export async function getComparison(): Promise<ComparisonResult> {
 }
 
 export async function getBudgetAnalysis(period: string, budgetMonthly: number): Promise<BudgetAnalysis> {
-  return invoke('get_budget_analysis', { period, budget_monthly: budgetMonthly });
+  return invoke('get_budget_analysis', { period, budgetMonthly });
 }
 
 // Config
@@ -93,7 +103,7 @@ export async function getAllConfig(): Promise<AppConfig> {
 
 // OCR
 export async function ocrRecognize(imageBase64: string): Promise<string> {
-  return invoke('ocr_recognize', { image_base64: imageBase64 });
+  return invoke('ocr_recognize', { imageBase64 });
 }
 
 // Prompts
@@ -140,3 +150,9 @@ export async function clearChatHistory(): Promise<void> {
 export async function testAiConnection(): Promise<{ success: boolean; message: string }> {
   return invoke('test_ai_connection');
 }
+
+// OCR
+export async function loadOcrModels(modelsDir: string): Promise<string> {
+  return invoke('load_ocr_models', { modelsDir });
+}
+

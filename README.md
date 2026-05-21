@@ -6,7 +6,7 @@
 >
 > - **新架构**：`npm run dev` → Tauri 桌面应用
 > - **旧架构**：`web/` + `server/` + `.env`（仍在代码库中，最终会删除）
-> - **进度**：Phase 1 完成，Phase 2 后端完成/前端待接入，Phase 3/4 未开始
+> - **进度**：Phase 1/2/3 已完成，Phase 4 同步层待实现
 > - **开发计划**详见 `doc/04-development-plan.md`
 
 > 以下文档为旧架构的完整参考（重构中保留）

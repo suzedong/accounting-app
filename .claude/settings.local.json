@@ -120,7 +120,8 @@
       "Skill(brainstorming)",
       "Skill(brainstorming:*)",
       "Bash(npx vue-tsc *)",
-      "Bash(taskkill //PID 1956 //F)"
+      "Bash(taskkill //PID 1956 //F)",
+      "Bash(CARGO_NET_OFFLINE=true cargo check)"
     ],
     "additionalDirectories": [
       "d:\\Code\\accounting-app\\web\\static"

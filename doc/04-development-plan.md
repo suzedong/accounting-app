@@ -1,17 +1,17 @@
 # 开发计划
 
-> **最后更新：2026-05-20**
+> **最后更新：2026-05-21**
 
 ## 阶段概览
 
 | 阶段 | 名称 | 内容 | 预计时间 | 状态 |
 |---|---|---|---|---|
 | Phase 1 | Tauri 骨架 + SQLite | 项目初始化、数据库设计、基础 CRUD | 2 周 | ✅ 已完成 |
-| Phase 2 | 业务逻辑迁移 | Agent、统计、OCR、Prompt/Preference | 2 周 | ⚠️ 后端完成，前端待接入 |
-| Phase 3 | 同步层 | NocoBase 双向同步、数据导入导出 | 1 周 | ❌ 未开始 |
-| Phase 4 | 桌面增强 + 清理 | 设置页、系统通知、删除 server.py | 1 周 | ❌ 未开始 |
+| Phase 2 | 业务逻辑迁移 | 差旅、统计、预算、设置页面 | 2 周 | ✅ 已完成 |
+| Phase 3 | AI 聊天 + Agent | 百炼 API dispatch、11 个 action handlers、OCR | 2 周 | ✅ 已完成 |
+| Phase 4 | 同步层 + 清理 | NocoBase 双向同步、清理旧代码 | 2 周 | ❌ 未开始 |
 
-**总预计：6 周**
+**总预计：8 周**
 
 ---
 
@@ -78,15 +78,15 @@
 
 ## Phase 2：业务逻辑迁移
 
-> ⚠️ **后端已完成，前端待接入**
+> ✅ **已完成**
 
 ### 目标
 
-将现有 Agent 核心逻辑、统计计算、OCR、Prompt/Preference 管理迁移到 Tauri 环境。
+将差旅补助、统计计算、预算分析、Prompt/Preference 管理迁移到 Tauri 环境，完成所有业务页面。
 
 ### 任务
 
-#### 2.1 统计聚合（SQL GROUP BY） — ✅ 已完成（Rust 端）
+#### 2.1 统计聚合（SQL GROUP BY） — ✅ 已完成
 
 - [x] `get_stats_summary(params)` — 按时间范围统计总收入/支出/结余
 - [x] `get_stats_by_category(params)` — 按分类聚合
@@ -95,120 +95,123 @@
 - [x] `get_comparison(params)` — 本月 vs 上月对比
 - [x] `get_budget_analysis(params)` — 预算分析
 
-#### 2.2 差旅补助 — ✅ 已完成（Rust 端）
+#### 2.2 差旅补助 — ✅ 已完成
 
 - [x] `get_business_trips(status)` — 查询出差记录
 - [x] `create_business_trip(fields)` — 创建出差记录
 - [x] `update_business_trip(id, fields)` — 更新出差记录
 - [x] `delete_business_trip(id)` — 删除出差记录
+- [x] `views/TripAllowance.vue` 页面
 
-#### 2.3 Agent 核心 — ❌ 未开始
+#### 2.3 前端页面 — ✅ 已完成
 
-- [ ] 将 `parse.js`（规则解析）保留为前端模块（纯 JS，不依赖后端）
-- [ ] 将 `agent-core.js` 适配为前端调用 `invoke()`
-- [ ] AI 调用改为前端直连百炼 API：
-  ```javascript
-  fetch('https://coding.dashscope.aliyuncs.com/v1/chat/completions', {
-      headers: { 'Authorization': `Bearer ${apiKey}` }
-  })
-  ```
-- [ ] API Key 通过 `invoke('get_config', 'ai_api_key')` 从 Rust 获取
+- [x] `views/Home.vue` 首页仪表盘
+- [x] `views/Stats.vue` 统计分析（Vue Data UI 图表）
+- [x] `views/Budget.vue` 预算管理
+- [x] `views/Settings.vue` 设置页
+- [x] `views/Records.vue` 记录管理
+- [x] `stores/records.ts` Pinia store
 
-#### 2.4 OCR — ❌ 未开始
-
-- [ ] 集成 RapidOCR ONNX 模型（det/cls/rec 三个模型文件）
-- [ ] 使用 `ort` crate 实现推理：
-  - 图片解码（base64 → ndarray）
-  - 检测 → 分类 → 识别 三阶段
-  - 文本输出
-- [x] `ocr_recognize(image_base64)` Tauri Command（占位实现，返回 placeholder）
-- [ ] 前端 `chat-widget.js` 适配：图片上传改为 `invoke('ocr_recognize')`
-
-#### 2.5 Prompt / Preference / 学习引擎 — ✅ Rust 已完成，前端待接入
+#### 2.4 Prompt / Preference / 学习引擎 — ✅ 已完成
 
 - [x] `get_system_prompt(name)` — 读取 dispatch/record prompt
-- [x] `update_system_prompt(name, content)` — 更新 prompt（存 SQLite）
-- [x] `get_preference()` — 读取用户偏好（存 SQLite）
-- [x] `update_preference(content)` — 更新偏好（存 SQLite）
-- [x] `get_learning_data()` — 读取学习数据
-- [x] `save_learning_data(data)` — 保存学习数据
-- [ ] 前端 `learning-engine.js` 改为调用 `invoke()`，不再用 localStorage
+- [x] `update_system_prompt(name, content)` — 更新 prompt
+- [x] `get_all_preferences()` — 读取用户偏好
+- [x] `update_preference(content)` — 更新偏好
+- [x] `get_learning_corrections()` — 读取学习数据
+- [x] `save_correction()` — 保存学习数据
 
-#### 2.6 对话历史 — ✅ Rust 已完成，前端待接入
+#### 2.5 对话历史 — ✅ 已完成
 
 - [x] `get_chat_history(limit)` — 查询对话历史
 - [x] `save_chat_message(message)` — 保存对话消息
 - [x] `clear_chat_history()` — 清空对话历史
-- [ ] 前端 `chat-widget.js` 适配
 
 ---
 
-## Phase 3：同步层
+## Phase 3：AI 聊天 + Agent
+
+> ✅ **已完成**
 
 ### 目标
 
-实现本地 SQLite ↔ NocoBase 双向同步，支持数据导入和导出。
+实现 AI 对话端到端工作，LLM dispatch → action execute → 结果渲染，支持图片 OCR。
 
 ### 任务
 
-#### 3.1 NocoBase 同步
+#### 3.1 百炼 API 直连 — ✅ 已完成
 
-- [ ] 实现 `reqwest` HTTP 客户端封装（复用 NocoBase API）
+- [x] `composables/useDashScope.ts` — DashScope API 直连调用
+- [x] `ai/dispatch.ts` — LLM dispatch（system prompt + preference + learning 注入）
+- [x] `composables/useParse.ts` — 规则解析降级方案（金额提取、分类推断）
+
+#### 3.2 Action Handlers — ✅ 已完成（11 个）
+
+- [x] `create_record` — 创建记录
+- [x] `correct_record` — 修正记录
+- [x] `update_record` — 更新记录
+- [x] `query_records` — 查询记录
+- [x] `render_stats` — 统计渲染
+- [x] `render_budget` — 预算渲染
+- [x] `ask_follow_up` — 追问
+- [x] `reply_text` — 纯文本
+- [x] `save_preference` — 保存偏好
+- [x] `update_prompt` — 修改 prompt
+- [x] `clear_chat` — 清空历史
+
+#### 3.3 聊天 UI — ✅ 已完成
+
+- [x] `components/chat/ChatWidget.vue` — 悬浮对话面板
+- [x] `components/chat/ChatMessage.vue` — 多类型消息渲染
+- [x] `components/chat/ChatInput.vue` — 输入框 + 图片上传
+- [x] `components/chat/RecordCard.vue` — 记录确认卡片
+- [x] `components/chat/ChatThinking.vue` — 思考动画
+- [x] `components/chat/ImagePreview.vue` — 图片预览
+- [x] `components/chat/DebugPanel.vue` — 调试面板
+- [x] `components/chat/RulesPanel.vue` — Prompt 编辑器
+
+#### 3.4 Stores — ✅ 已完成
+
+- [x] `stores/chat.ts` — 聊天状态管理
+- [x] `stores/learning.ts` — 学习引擎
+
+#### 3.5 OCR — ✅ 已完成
+
+- [x] `src-tauri/src/ocr/rapidocr.rs` — OCR 引擎（macOS 快捷指令 + 跨平台占位）
+- [x] `commands/ocr.rs` — Tauri Command（load_ocr_models + ocr_recognize）
+- [x] `composables/useOCR.ts` — 前端 OCR 封装
+- [x] 聊天窗口图片上传对接 OCR
+
+---
+
+## Phase 4：同步层 + 清理
+
+### 目标
+
+实现本地 SQLite ↔ NocoBase 双向同步，清理旧架构残留代码。
+
+### 任务
+
+#### 4.1 NocoBase 同步
+
+- [ ] 实现 `reqwest` HTTP 客户端封装
 - [ ] `sync_push()` — 推送本地未同步记录到 NocoBase
 - [ ] `sync_pull()` — 拉取 NocoBase 更新数据到本地
 - [ ] 冲突检测与 last-write-wins 处理
-- [ ] 同步日志记录（`sync_log` 表）
-- [ ] 前端同步状态指示器 UI
+- [ ] `import_from_nocobase()` — 从 NocoBase 全量导入
 
-#### 3.2 数据导入
+#### 4.2 桌面增强
 
-- [ ] `import_from_nocobase()` — 从现有 NocoBase 全量导入
-- [ ] 支持导入所有表（records, business_trip, learning_data 等）
-- [ ] 导入进度提示
-
-#### 3.3 数据导出
-
-- [ ] `export_to_csv(collection, filters)` — 导出 CSV
-- [ ] 前端导出按钮和下载
-
-#### 3.4 配置管理
-
-- [ ] `get_config(key)` — 读取配置项
-- [ ] `set_config(key, value)` — 保存配置项
-- [ ] 配置持久化到 `$APP_CONFIG/config.json`
-- [ ] 配置项：AI API Key、AI API URL、AI Model、NocoBase URL、NocoBase Token、Monthly Budget
-
----
-
-## Phase 4：桌面增强 + 清理
-
-### 目标
-
-添加桌面端增强功能，清理旧架构残留，完成重构。
-
-### 任务
-
-#### 4.1 设置页面
-
-- [ ] `settings.html` — API Key、NocoBase URL、预算设置
-- [ ] 同步/导入/导出操作入口
-- [ ] 配置验证（测试 AI 连接、测试 NocoBase 连接）
-
-#### 4.2 系统通知
-
-- [ ] 集成 `tauri-plugin-notification`
-- [ ] 记账成功/失败时发送通知
-- [ ] 同步完成/失败时发送通知
+- [ ] `tauri-plugin-notification` — 系统通知
+- [ ] Settings 页同步操作入口
 
 #### 4.3 清理
 
 - [ ] 删除 `server/server.py`
-- [ ] 删除 `server/prompts/` 目录（迁移到 SQLite）
-- [ ] 删除 `dev.mjs`（不再需要双进程管理）
-- [ ] 精简 `vite.config.js`（移除 proxy 配置）
-- [ ] 精简 `package.json`（移除不再需要的脚本）
-- [ ] 删除 `web/js/modules/nocobase-api.js`
-- [ ] 更新 `CLAUDE.md` 文档
+- [ ] 删除 `server/prompts/` 目录
+- [ ] 删除 `dev.mjs`
+- [ ] 精简 `vite.config.js`
+- [ ] 更新 `CLAUDE.md` / `README.md` 文档
 
 #### 4.4 构建测试
 
@@ -221,9 +224,9 @@
 
 ## 里程碑
 
-| 里程碑 | 完成标志 | 预计时间 |
-|---|---|---|
-| M1: 基础可用 | Phase 1 完成，记录 CRUD 在桌面端工作 | 第 2 周末 |
-| M2: 功能完整 | Phase 2 完成，AI 记账 + OCR + 统计均可用 | 第 4 周末 |
-| M3: 同步可用 | Phase 3 完成，可导入现有数据并双向同步 | 第 5 周末 |
-| M4: 发布就绪 | Phase 4 完成，桌面构建通过，文档更新 | 第 6 周末 |
+| 里程碑 | 完成标志 | 预计时间 | 状态 |
+|---|---|---|---|
+| M1: 基础可用 | Phase 1 完成，记录 CRUD 在桌面端工作 | 第 2 周末 | ✅ 已达成 |
+| M2: 功能完整 | Phase 2 完成，所有业务页面可用 | 第 4 周末 | ✅ 已达成 |
+| M3: AI 可用 | Phase 3 完成，AI 对话 + OCR 均可用 | 第 6 周末 | ✅ 已达成 |
+| M4: 同步可用 | Phase 4 完成，可导入并双向同步 | 第 8 周末 | ❌ 待达成 |

@@ -163,7 +163,7 @@ pub fn create_record(
     let conn = state.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
     let uuid = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S").to_string();
 
     guard.execute(
         "INSERT INTO records (uuid, datetime, type, category, amount, account, note, payment_method, local_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -201,7 +201,7 @@ pub fn update_record(
         };
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S").to_string();
     add_set!("datetime", input.datetime.as_ref());
     add_set!("type", input.r#type.as_ref());
     add_set!("category", input.category.as_ref());
