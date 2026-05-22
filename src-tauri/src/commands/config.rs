@@ -2,14 +2,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::State;
 use serde::Serialize;
-use std::io::Write;
-
-fn debug_log(msg: &str) {
-    let path = std::path::PathBuf::from("D:\\Code\\accounting-app\\llm_debug.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(f, "{}", msg);
-    }
-}
 
 use crate::db::Database;
 use crate::models::AiService;
@@ -229,37 +221,19 @@ pub async fn activate_ai_service(
     Ok(())
 }
 
-/// Resolve the active AI service. Falls back to legacy config fields if no services defined.
+/// Resolve the active AI service from the ai_services list.
 fn resolve_active_service(guard: &std::sync::MutexGuard<'_, HashMap<String, String>>) -> Result<AiService, String> {
-    // Try ai_services list first
-    if let Some(json) = guard.get("ai_services") {
-        let services: Vec<AiService> = serde_json::from_str(json)
-            .map_err(|e| format!("解析 AI 服务配置失败: {}", e))?;
-        if let Some(active) = services.iter().find(|s| s.active) {
-            return Ok(active.clone());
-        }
-        if let Some(first) = services.first() {
-            return Ok(first.clone());
-        }
+    let json = guard.get("ai_services")
+        .ok_or_else(|| "未配置 AI 服务列表".to_string())?;
+    let services: Vec<AiService> = serde_json::from_str(json)
+        .map_err(|e| format!("解析 AI 服务配置失败: {}", e))?;
+
+    if let Some(active) = services.iter().find(|s| s.active) {
+        return Ok(active.clone());
     }
-
-    // Fallback: build from legacy fields
-    let api_key = guard.get("ai_api_key").cloned().ok_or_else(|| "未配置 AI API Key".to_string())?;
-    let api_url = guard.get("ai_api_url")
+    services.first()
         .cloned()
-        .unwrap_or_else(|| "https://coding.dashscope.aliyuncs.com/v1".to_string());
-    let model = guard.get("ai_model")
-        .cloned()
-        .unwrap_or_else(|| "qwen3.6-plus".to_string());
-
-    Ok(AiService {
-        id: "legacy".to_string(),
-        name: "旧版配置".to_string(),
-        api_url,
-        api_key,
-        model,
-        active: true,
-    })
+        .ok_or_else(|| "AI 服务列表为空".to_string())
 }
 
 fn build_endpoint(api_url: &str) -> String {
@@ -274,98 +248,105 @@ pub async fn call_llm(
     system_message: String,
     user_message: String,
 ) -> Result<String, String> {
-    debug_log("[call_llm] FUNCTION CALLED");
+    call_llm_with_tools(app_config, system_message, Some(user_message), None, false).await
+}
 
+#[tauri::command]
+pub async fn call_llm_with_tools(
+    app_config: State<'_, AppConfig>,
+    system_message: String,
+    user_message: Option<String>,
+    tools_json: Option<String>,
+    include_tool_calls: bool,
+) -> Result<String, String> {
     let svc = {
-        let guard = app_config.data.lock().map_err(|e| {
-            let msg = e.to_string();
-            debug_log(&format!("[call_llm] lock error: {}", msg));
-            msg
-        })?;
-        resolve_active_service(&guard).map_err(|e| {
-            debug_log(&format!("[call_llm] resolve error: {}", e));
-            e
-        })?
+        let guard = app_config.data.lock().map_err(|e| e.to_string())?;
+        resolve_active_service(&guard).map_err(|e| e)?
     };
 
-    debug_log(&format!("[call_llm] service: {} model: {}", svc.name, svc.model));
-    debug_log(&format!("[call_llm] api_key len: {}", svc.api_key.len()));
-
     if svc.api_key.is_empty() {
-        debug_log("[call_llm] ERROR: empty api key");
         return Err("未配置 API Key".to_string());
     }
 
     let endpoint = build_endpoint(&svc.api_url);
-    debug_log(&format!("[call_llm] endpoint: {}", endpoint));
+
+    // Build messages array
+    let mut messages: Vec<serde_json::Value> = vec![
+        serde_json::json!({ "role": "system", "content": system_message }),
+    ];
+    if let Some(msg) = user_message {
+        messages.push(serde_json::json!({ "role": "user", "content": msg }));
+    }
+
+    // Build request body
+    let mut body = serde_json::json!({
+        "model": svc.model,
+        "messages": messages,
+        "temperature": 0.1,
+        "max_tokens": 4000,
+    });
+
+    // Add tools if provided
+    if let Some(tools_str) = &tools_json {
+        let tools: Vec<serde_json::Value> = serde_json::from_str(tools_str)
+            .map_err(|e| format!("解析 tools 失败: {}", e))?;
+        if !tools.is_empty() {
+            body["tools"] = serde_json::json!(tools);
+            body["tool_choice"] = serde_json::json!("auto");
+        }
+    }
 
     let client = reqwest::Client::new();
     let response = client
         .post(&endpoint)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", svc.api_key))
-        .json(&serde_json::json!({
-            "model": svc.model,
-            "messages": [
-                { "role": "system", "content": system_message },
-                { "role": "user", "content": user_message }
-            ],
-            "temperature": 0.1,
-            "max_tokens": 2000,
-        }))
+        .json(&body)
         .send()
         .await
-        .map_err(|e| {
-            let msg = format!("请求失败: {}", e);
-            debug_log(&format!("[call_llm] REQUEST ERROR: {}", msg));
-            msg
-        })?;
+        .map_err(|e| format!("请求失败: {}", e))?;
 
     let status = response.status();
-    debug_log(&format!("[call_llm] status: {}", status));
 
-    let body = response
+    let body_text = response
         .text()
         .await
-        .map_err(|e| {
-            let msg = format!("读取响应失败: {}", e);
-            debug_log(&format!("[call_llm] READ ERROR: {}", msg));
-            msg
-        })?;
+        .map_err(|e| format!("读取响应失败: {}", e))?;
 
-    debug_log(&format!("[call_llm] body len: {}", body.len()));
+    if !status.is_success() {
+        eprintln!("[LLM] Request failed: status={}, model={}, url={}", status, svc.model, endpoint);
+        eprintln!("[LLM] Request body size: {} bytes", serde_json::to_string(&body).unwrap_or_default().len());
+        eprintln!("[LLM] Response: {}", body_text.chars().take(500).collect::<String>());
+        return Err(format!("API 返回错误 ({}): {}", status, body_text));
+    }
 
-    if status.is_success() {
-        let json: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| {
-                let msg = format!("解析响应失败: {}", e);
-                debug_log(&format!("[call_llm] PARSE ERROR: {}", msg));
-                msg
-            })?;
-        // Log the full response structure for debugging
-        debug_log(&format!("[call_llm] choices count: {}", json["choices"].as_array().map_or(0, |a| a.len())));
-        if let Some(choices) = json["choices"].as_array() {
-            if let Some(first) = choices.first() {
-                debug_log(&format!("[call_llm] first choice keys: {:?}", first.as_object().map_or(vec![], |o| o.keys().collect::<Vec<_>>())));
-                debug_log(&format!("[call_llm] message.content: {:?}", first["message"]["content"]));
-                if let Some(tool_calls) = first["message"]["tool_calls"].as_array() {
-                    debug_log(&format!("[call_llm] tool_calls count: {}", tool_calls.len()));
-                }
-            }
+    let json: serde_json::Value = serde_json::from_str(&body_text)
+        .map_err(|e| format!("解析响应失败: {}", e))?;
+
+    let choice = &json["choices"][0];
+    let message = &choice["message"];
+
+    // Extract tool_calls if present and requested
+    let tool_calls = if include_tool_calls {
+        if let Some(calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
+            Some(serde_json::json!(calls))
+        } else {
+            None
         }
-        let content = json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| {
-                let msg = format!("LLM 返回空响应, JSON: {}", &body[..body.len().min(500)]);
-                debug_log(&format!("[call_llm] EMPTY CONTENT: {}", msg));
-                msg
-            })?;
-        debug_log(&format!("[call_llm] content len: {}", content.len()));
-        Ok(content.to_string())
     } else {
-        let msg = format!("API 返回错误 ({}): {}", status, body);
-        debug_log(&format!("[call_llm] ERROR: {}", msg));
-        Err(msg)
+        None
+    };
+
+    let content = message["content"].as_str().unwrap_or("");
+
+    // Return structured response if tool_calls are requested
+    if include_tool_calls {
+        Ok(serde_json::json!({
+            "content": content,
+            "tool_calls": tool_calls,
+        }).to_string())
+    } else {
+        Ok(content.to_string())
     }
 }
 

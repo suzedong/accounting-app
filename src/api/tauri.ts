@@ -115,7 +115,7 @@ export async function ocrRecognize(imageBase64: string): Promise<string> {
   return invoke('ocr_recognize', { imageBase64 });
 }
 
-// Prompts
+// Prompts (includes preferences as a prompt document)
 export async function getSystemPrompt(name: string): Promise<{ data: { name: string; content: string } }> {
   return invoke('get_system_prompt', { name });
 }
@@ -124,11 +124,7 @@ export async function updateSystemPrompt(name: string, content: string): Promise
   return invoke('update_system_prompt', { name, content });
 }
 
-// Preferences
-export async function getAllPreferences(): Promise<{ data: Array<{ key: string; value: string }> }> {
-  return invoke('get_all_preferences');
-}
-
+// Preferences: update a single key within preferences.md document
 export async function updatePreference(key: string, value: string): Promise<void> {
   return invoke('update_preference', { key, value });
 }
@@ -165,13 +161,35 @@ export async function clearChatHistory(): Promise<void> {
 
 // LLM (via Rust backend, avoids CORS)
 export async function callLLM(systemMessage: string, userMessage: string): Promise<string> {
-  console.log('[callLLM invoke] calling call_llm, systemMessage len:', systemMessage.length);
   try {
     const result = await invoke('call_llm', { systemMessage, userMessage });
-    console.log('[callLLM invoke] returned, result type:', typeof result, 'length:', typeof result === 'string' ? result.length : 'N/A');
     return result as string;
   } catch (e) {
     console.error('[callLLM invoke] error:', e);
+    throw e;
+  }
+}
+
+/** LLM Function Calling — 带 tools 参数，返回 { content, toolCalls } */
+export async function callLLMWithTools(
+  systemMessage: string,
+  userMessage: string,
+  tools: string, // JSON string of tool definitions
+): Promise<{ content: string; toolCalls: Array<{ id: string; type?: string; function: { name: string; arguments: string } }> | null }> {
+  try {
+    const result = await invoke('call_llm_with_tools', {
+      systemMessage,
+      userMessage,
+      toolsJson: tools,
+      includeToolCalls: true,
+    });
+    const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+    return {
+      content: parsed.content || '',
+      toolCalls: parsed.tool_calls || null,
+    };
+  } catch (e) {
+    console.error('[callLLMWithTools invoke] error:', e);
     throw e;
   }
 }

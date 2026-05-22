@@ -43,7 +43,7 @@
       "Bash(curl -s http://localhost:5175/index.html)",
       "Bash(curl -s http://localhost:5175/static/globals.js)",
       "Bash(curl -s http://localhost:5175/static/chat-widget.js)",
-      "Bash(curl -s http://localhost:5173/static/globals.js)",
+      "Bash(curl -s http://localhost:5174/static/globals.js)",
       "Bash(rm d:/Code/accounting-app/web/static/entry-index.js)",
       "WebSearch",
       "Bash(npm run *)",
@@ -108,7 +108,7 @@
       "Bash(curl -sI --connect-timeout 5 https://index.crates.io/config.json)",
       "Bash(cargo build *)",
       "Bash(cd /d/Code/accounting-app && ls src-tauri/target/debug/ 2>/dev/null | head -5)",
-      "Bash(curl -s --connect-timeout 5 http://localhost:5173/)",
+      "Bash(curl -s --connect-timeout 5 http://localhost:5174/)",
       "Bash(cargo check *)",
       "Bash(taskkill //PID 31448 //F)",
       "Bash(taskkill //PID 12024 //F)",
@@ -155,7 +155,15 @@
       "Bash(curl -s -X POST https://coding.dashscope.aliyuncs.com/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9' -d '{\"model\":\"qwen3.5-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}')",
       "Bash(curl -s http://121.17.49.99:1234/chat/completions -X POST -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-sp-4cf0ff7b598444949af23ee397b4cdf9\" -d '{\"model\":\"qwen3.6-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}],\"max_tokens\":10}')",
       "Bash(curl -s http://121.17.49.99:1234/v1/chat/completions -X POST -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-123\" -d '{\"model\":\"qwen3.6-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}],\"max_tokens\":10}')",
-      "Bash(curl -s http://121.17.49.99:1234/v1/chat/completions -X POST -H \"Content-Type: application/json\" -d '{\"model\":\"qwen3.6-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}],\"max_tokens\":10}')"
+      "Bash(curl -s http://121.17.49.99:1234/v1/chat/completions -X POST -H \"Content-Type: application/json\" -d '{\"model\":\"qwen3.6-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}],\"max_tokens\":10}')",
+      "Bash(sqlite3 /Users/szd/Documents/Code/accounting-app/database/app_data.db \".tables\")",
+      "WebFetch(domain:lmstudio.ai)",
+      "Bash(curl -s http://localhost:5174/src/stores/chat.ts)",
+      "Bash(curl -s http://localhost:5174/src/ai/agent-engine.ts)",
+      "Bash(curl -s \"http://localhost:5174/@fs/Users/szd/Documents/Code/accounting-app/src/components/chat/ChatWidget.vue\")",
+      "Bash(curl -s \"http://localhost:5174/src/components/chat/SettingsPanel.vue\")",
+      "Bash(curl -s \"http://localhost:5174/src/components/chat/ChatWidget.vue\")",
+      "Bash(curl -s http://localhost:5174/)"
     ],
     "additionalDirectories": [
       "d:\\Code\\accounting-app\\web\\static"

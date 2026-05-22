@@ -101,7 +101,7 @@ doc/              # 设计文档和开发计划
 ### 旧开发命令（已废弃，仅供了解历史）
 
 ```bash
-npm run dev          # Vite HMR + API 代理（端口 5173）
+npm run dev          # Vite HMR + API 代理（端口 5174）
 npm run build        # 构建到 dist/
 cd server && python3 server.py 18080   # 旧 Python 服务器
 ```
@@ -109,7 +109,7 @@ cd server && python3 server.py 18080   # 旧 Python 服务器
 ### 旧架构概览
 
 ```
-浏览器 → Vite dev server (5173) ──→ server.py (18080) ──→ 云端 NocoBase
+浏览器 → Vite dev server (5174) ──→ server.py (18080) ──→ 云端 NocoBase
                          │                 │
                          ├─ HMR + ESM      ├─ 代理 /api/* → NocoBase
                          └─ proxy /api/* ──┤─ /api/ai/parse → 百炼

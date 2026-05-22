@@ -54,13 +54,6 @@ CREATE TABLE IF NOT EXISTS system_prompts (
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- 用户偏好
-CREATE TABLE IF NOT EXISTS user_preferences (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT DEFAULT (datetime('now'))
-);
-
 -- 学习数据
 CREATE TABLE IF NOT EXISTS learning_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,6 +139,29 @@ CREATE TABLE IF NOT EXISTS app_config (
         [],
     );
 
+    // Migration: seed preferences prompt if missing
+    let pref_exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM system_prompts WHERE name = 'preferences'",
+        [],
+        |row| row.get(0),
+    )?;
+    if pref_exists == 0 {
+        conn.execute(
+            "INSERT INTO system_prompts (name, content) VALUES ('preferences', ?)",
+            [include_str!("../../prompts/preferences.md")],
+        )?;
+    }
+
+    // Cleanup: drop deprecated user_preferences table (KV model abandoned, preferences are now markdown docs)
+    let _ = conn.execute("DROP TABLE IF EXISTS user_preferences", []);
+
+    // Cleanup: learning_data with value containing |field (from short-lived composite-key experiment)
+    // These rows are invalid since they stored field in value as JSON, but the new format stores field in key
+    let _ = conn.execute(
+        "DELETE FROM learning_data WHERE type = 'correction' AND (value LIKE '{%\"field\"%' OR value LIKE '{%field:%}')",
+        [],
+    );
+
     Ok(())
 }
 
@@ -162,6 +178,10 @@ fn seed_prompts(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO system_prompts (name, content) VALUES (?, ?)",
         ["record", record_content],
+    )?;
+    conn.execute(
+        "INSERT INTO system_prompts (name, content) VALUES (?, ?)",
+        ["preferences", include_str!("../../prompts/preferences.md")],
     )?;
 
     Ok(())

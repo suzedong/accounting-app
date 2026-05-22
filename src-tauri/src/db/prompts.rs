@@ -42,42 +42,33 @@ pub fn update_prompt(state: &Database, name: &str, content: &str) -> Result<(), 
     Ok(())
 }
 
-pub fn get_all_preferences(state: &Database) -> Result<Vec<PreferenceRow>, String> {
-    let conn = state.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = guard
-        .prepare("SELECT key, value, updated_at FROM user_preferences")
-        .map_err(|e| e.to_string())?;
+/// Update a single key-value pair within the preferences markdown document.
+/// Finds lines matching `- key：value` and replaces or appends.
+pub fn update_preference_in_doc(state: &Database, key: &str, value: &str) -> Result<(), String> {
+    let current = get_prompt(state, "preferences")?
+        .map(|p| p.content)
+        .unwrap_or_default();
 
-    let rows: Vec<PreferenceRow> = stmt
-        .query_map([], |row| {
-            Ok(PreferenceRow {
-                key: row.get(0)?,
-                value: row.get(1)?,
-                updated_at: row.get(2)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+    // Find and replace existing line, or append
+    let lines: Vec<&str> = current.split('\n').collect();
+    let mut found = false;
+    let new_lines: Vec<String> = lines.iter().map(|line| {
+        // Match "- key：value" or "- key: value" (both full-width and half-width colon)
+        if let Some(pos) = line.find(['：', ':']) {
+            let prefix = line[..pos].trim().trim_start_matches('-').trim();
+            if prefix == key {
+                found = true;
+                return format!("- {}：{}", key, value);
+            }
+        }
+        line.to_string()
+    }).collect();
 
-    Ok(rows)
-}
+    let new_content = if found {
+        new_lines.join("\n")
+    } else {
+        format!("{}\n- {}：{}", current, key, value)
+    };
 
-#[derive(Serialize)]
-pub struct PreferenceRow {
-    pub key: String,
-    pub value: String,
-    pub updated_at: String,
-}
-
-pub fn update_preference(state: &Database, key: &str, value: &str) -> Result<(), String> {
-    let conn = state.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
-    guard.execute(
-        "INSERT INTO user_preferences (key, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
-        [key, value],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    update_prompt(state, "preferences", &new_content)
 }

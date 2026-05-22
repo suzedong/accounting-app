@@ -5,12 +5,33 @@
       <router-view />
     </main>
     <ChatWidget />
+    <DevConsole ref="devConsoleRef" />
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue';
 import AppNavbar from '@/components/layout/AppNavbar.vue';
 import ChatWidget from '@/components/chat/ChatWidget.vue';
+import DevConsole from '@/components/chat/DevConsole.vue';
+
+const devConsoleRef = ref<InstanceType<typeof DevConsole> | null>(null);
+
+function handleKeyDown(e: KeyboardEvent) {
+  // Ctrl+` (backtick)
+  if (e.ctrlKey && e.key === '`') {
+    e.preventDefault();
+    devConsoleRef.value?.toggle();
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleKeyDown);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeyDown);
+});
 </script>
 
 <style>

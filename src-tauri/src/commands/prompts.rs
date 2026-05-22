@@ -23,18 +23,10 @@ pub async fn update_system_prompt(
 }
 
 #[tauri::command]
-pub async fn get_all_preferences(
-    state: State<'_, Database>,
-) -> Result<serde_json::Value, String> {
-    let prefs = crate::db::prompts::get_all_preferences(state.inner())?;
-    Ok(serde_json::json!({ "data": prefs }))
-}
-
-#[tauri::command]
 pub async fn update_preference(
     state: State<'_, Database>,
     key: String,
     value: String,
 ) -> Result<(), String> {
-    crate::db::prompts::update_preference(state.inner(), &key, &value)
+    crate::db::prompts::update_preference_in_doc(state.inner(), &key, &value)
 }

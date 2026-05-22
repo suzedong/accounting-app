@@ -15,10 +15,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| Phase 1: Tauri 骨架 + SQLite | ✅ 已完成 | 数据库、CRUD、前端基础 |
-| Phase 2: 业务逻辑迁移 | ✅ 已完成 | Rust commands 齐全，Vue 6 个页面（首页含账户分析+预算执行）全部可用 |
-| Phase 3: 同步层 | ❌ 未开始 | push/pull/import 全部占位 |
-| Phase 4: 桌面增强 + 清理 | ❌ 未开始 | server.py 待删除，文档待更新 |
+| Phase 1: Tauri 骨架 + SQLite | ✅ 已完成 | 数据库（7 张表）、CRUD、前端基础 |
+| Phase 2: 业务逻辑迁移 | ✅ 已完成 | Rust commands 齐全（记录/差旅/统计），Vue 6 个页面全部可用 |
+| Phase 3: AI 聊天 + Agent | ✅ 已完成 | 百炼 API 直连、LLM dispatch、action handlers、ChatWidget、学习引擎、对话历史 |
+| Phase 4: 同步层 + 清理 | ❌ 未开始 | push/pull/import 占位，server.py 待删除，文档待更新 |
 
 ### 新架构目录
 
@@ -27,17 +27,34 @@ src/              # Vue 3 前端（TypeScript + Element Plus + Pinia）
 ├── main.ts       # 入口
 ├── App.vue       # 根组件（Navbar + Router + ChatWidget）
 ├── router/       # 路由：/ /records /budget /stats /trips /settings
-├── stores/       # Pinia 状态管理（records）
+├── stores/       # Pinia 状态管理（records、chat、learning）
 ├── api/          # Tauri invoke 封装（tauri.ts）
 ├── types/        # TypeScript 类型定义
 ├── utils/        # 工具函数（formatters, dateRange）
 ├── views/        # 页面组件（Home, Records, Budget, Stats, TripAllowance, Settings）
-└── components/   # 共享组件（AppNavbar, ChatWidget, 统计图表）
+└── components/   # 共享组件
+    ├── AppNavbar.vue           # 顶部导航栏
+    ├── chat/                   # AI 对话组件（10 个）
+    │   ├── ChatWidget.vue      # 悬浮对话面板
+    │   ├── ChatMessage.vue     # 消息渲染
+    │   ├── ChatInput.vue       # 输入框 + 图片上传
+    │   ├── ChatThinking.vue    # 思考中状态
+    │   ├── ConfirmCard.vue     # 确认卡片
+    │   ├── DebugPanel.vue      # 调试面板
+    │   ├── FollowUpCard.vue    # 追问卡片
+    │   ├── ImagePreview.vue    # 图片预览
+    │   ├── RecordCard.vue      # 记录卡片
+    │   └── RulesPanel.vue      # 规则面板
+    └── stats/                  # 统计图表
+        ├── CategoryBarChart.vue
+        ├── AccountPieChart.vue
+        ├── MonthlyTrendChart.vue
+        └── ComparisonChart.vue
 
 src-tauri/        # Rust 后端（Tauri 2 + SQLite）
 ├── src/
-│   ├── main.rs   # Tauri 入口，注册所有 commands
-│   ├── commands/ # Tauri Commands（records, trips, stats, sync, chat, config, ocr 等）
+│   ├── main.rs   # Tauri 入口，注册 38 个 commands
+│   ├── commands/ # 8 个模块（records/trips/stats/prompts/learning/chat/config/sync/ocr）
 │   ├── db/       # SQLite 数据库（schema, CRUD, 聚合查询）
 │   └── models/   # 数据模型
 └── capabilities/ # Tauri 权限配置
@@ -98,7 +115,7 @@ YYYY-MM-DD HH:MM:SS   (空格分隔，24 小时制)
 ## 开发命令
 
 ```bash
-# 开发模式（Vite HMR + API 代理，端口 5173）
+# 开发模式（Vite HMR + API 代理，端口 5174）
 npm run dev
 
 # 构建生产产物（输出到 dist/）
@@ -108,12 +125,12 @@ npm run build
 cd server && python3 server.py 18080
 
 # 浏览器访问
-# 开发模式: http://localhost:5173/（推荐，支持 HMR，自动重定向到 /pages/index.html）
+# 开发模式: http://localhost:5174/（推荐，支持 HMR，自动重定向到 /pages/index.html）
 # 服务器模式: http://localhost:18080/（自动重定向到 /pages/index.html）
-# http://localhost:5173/pages/records.html      - 记录管理（增删改查 + 分页）
-# http://localhost:5173/pages/budget.html       - 预算管理
-# http://localhost:5173/pages/stats.html        - 统计分析（多维度图表）
-# http://localhost:5173/pages/trip_allowance.html - 差旅补助
+# http://localhost:5174/pages/records.html      - 记录管理（增删改查 + 分页）
+# http://localhost:5174/pages/budget.html       - 预算管理
+# http://localhost:5174/pages/stats.html        - 统计分析（多维度图表）
+# http://localhost:5174/pages/trip_allowance.html - 差旅补助
 ```
 
 ## 目录结构
@@ -167,7 +184,7 @@ cd server && python3 server.py 18080
 ### 开发架构（双端口，统一走 server.py）
 
 ```
-浏览器 → Vite dev server (localhost:5173) ──→ server.py (localhost:18080) ──→ 云端 NocoBase
+浏览器 → Vite dev server (localhost:5174) ──→ server.py (localhost:18080) ──→ 云端 NocoBase
                          │                        │
                          ├─ HMR + ESM 模块解析     ├─ 代理 /api/* 转发到 NocoBase
                          ├─ 静态文件服务            ├─ /api/ai/parse  → 阿里云百炼
@@ -175,7 +192,7 @@ cd server && python3 server.py 18080
                                                     └─ Prompt/Preference 文件管理
 ```
 
-**Vite dev server（5173）**: HMR 热更新 + ESM 模块解析 + 静态文件 + `/` 重定向到 `/pages/index.html` + `/api/*` 代理到 server.py
+**Vite dev server（5174）**: HMR 热更新 + ESM 模块解析 + 静态文件 + `/` 重定向到 `/pages/index.html` + `/api/*` 代理到 server.py
 **server.py（18080）**: NocoBase API 代理 + AI 代理 + Prompt/Preference 管理
 **npm run dev**: 通过 `dev.mjs` 同时启动 Vite 和 server.py，Ctrl+C 一并关闭
 
@@ -296,7 +313,9 @@ whenGlobalsReady(() => {
 
 **解析策略**：主流程由 LLM 通过 `/api/ai/dispatch` 完成意图识别和参数提取。`parse.js` 和 `ai-parser.js` 作为 LLM 失败时的降级方案保留。
 
-## 数据模型 (NocoBase Collections)
+## 数据模型
+
+### 旧架构：NocoBase Collections
 
 | Collection | 说明 | 关键字段 |
 |---|---|---|
@@ -306,12 +325,24 @@ whenGlobalsReady(() => {
 | `budgets` | 预算 | month, amount, category |
 | `learning_data` | AI 学习数据 | type, key, value(json), count, updated_at |
 
+### 新架构：SQLite 表（7 张）
+
+| 表名 | 说明 | 关键字段 |
+|---|---|---|
+| `records` | 收支记录 | uuid, datetime, type, category, amount, account, note, payment_method, synced, nocobase_id |
+| `business_trip` | 差旅补助 | uuid, trip_id, start_date, end_date, days, trip_allowance, transport_allowance, status |
+| `system_prompts` | AI 提示词 | name (dispatch/record), content, updated_at |
+| `learning_data` | 学习数据 | uuid, type, key, value(json), count |
+| `chat_history` | 对话历史 | uuid, role, content, data(json), skill, confidence |
+| `sync_log` | 同步日志 | direction, collection, status, count, error |
+| `app_config` | 应用配置 | key (ai_services), value(json) |
+
+> 注意：新架构无 `accounts` 和 `budgets` 独立表，账户从 `records.account` 字段提取，预算在 Settings 中硬编码为 `budget_monthly` 配置项。
+
 ## 统计模式
 
-NocoBase 不提供 GROUP BY 聚合，所有统计在前端计算：
-1. 通过 `getRecordsForStats()` 获取全量记录（`pageSize=10000`）
-2. 在前端按日期/类型/分类过滤
-3. 使用 `utils.js` 工具函数聚合
+新架构：SQLite 支持 GROUP BY，聚合直接在 SQL 中完成（`stats.rs` 6 个聚合查询命令）。
+旧架构（NocoBase 无聚合）：通过 `getRecordsForStats()` 获取全量记录（`pageSize=10000`），在前端用 `utils.js` 聚合。
 
 ## 重要约定
 

@@ -73,7 +73,6 @@ fn main() {
             // Prompts
             commands::prompts::get_system_prompt,
             commands::prompts::update_system_prompt,
-            commands::prompts::get_all_preferences,
             commands::prompts::update_preference,
             // Learning
             commands::learning::get_learning_corrections,
@@ -90,6 +89,7 @@ fn main() {
             commands::config::get_all_config,
             commands::config::test_ai_connection,
             commands::config::call_llm,
+            commands::config::call_llm_with_tools,
             commands::config::get_ai_services,
             commands::config::save_ai_services,
             commands::config::activate_ai_service,

@@ -4,7 +4,7 @@
   "identifier": "com.accounting-app.app",
   "build": {
     "beforeDevCommand": "npm run dev:frontend",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:5174",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },

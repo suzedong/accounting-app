@@ -315,7 +315,7 @@ whenGlobalsReady().then(() => {
 ```bash
 # 方式一：Vite 开发服务器（推荐，支持 HMR 热更新）
 npm run dev
-# 浏览器访问 http://localhost:5173/index.html
+# 浏览器访问 http://localhost:5174/index.html
 
 # 方式二：Python 服务器（模拟部署环境）
 cd web && python3 server.py 18080
@@ -328,7 +328,7 @@ npm run build
 
 **本地测试流程：**
 1. `npm run dev` 启动 Vite 开发服务器，享受 HMR
-2. 浏览器打开 http://localhost:5173/index.html 验证功能
+2. 浏览器打开 http://localhost:5174/index.html 验证功能
 3. 测试通过后，`npm run build` 构建生产产物
 4. 同步到 NAS 或云端
 

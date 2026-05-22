@@ -20,7 +20,6 @@
 │                          │  │  本地存储              │      │   │
 │                          │  │  ├─ SQLite DB        │      │   │
 │                          │  │  │  (app_data.db)    │      │   │
-│                          │  │  └─ config.json       │      │   │
 │                          │  └──────────────────────┘      │   │
 │                          │                              │   │
 │                          │  ┌──────────────────────┐      │   │
@@ -58,16 +57,16 @@
 - 本地存储路径：
   - 开发模式：`项目根目录/database/app_data.db`
   - 发布模式：`$APP_DATA/app_data.db`
-- 配置文件存储在 SQLite `app_config` 表（非 config.json）
+- 配置文件存储在 SQLite `app_config` 表（AI 服务列表、月度预算等）
 
 ### 2.3 AI 层
 
 **百炼 API 直连**
 
-- 前端 `fetch()` 直接调用百炼 API
-- API Key 存储在本地 `config.json`
+- Rust 后端 `reqwest` 直接调用百炼 API
+- API Key 存储在 SQLite `app_config` 表
 - 不需要代理层，个人使用 API Key 暴露在前端可接受
-- 支持 Referer 白名单限制
+- 支持多服务管理（`ai_services` JSON 数组，active 标记当前使用）
 
 ### 2.4 OCR 层
 
@@ -133,14 +132,14 @@ CREATE TABLE business_trip (
 
 -- 系统 Prompt（替代 server/prompts/*.md）
 CREATE TABLE system_prompts (
-    name TEXT PRIMARY KEY,              -- dispatch / record
+    name TEXT PRIMARY KEY,              -- dispatch / record / preferences
     content TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- 用户偏好（替代 preferences.md）
-CREATE TABLE user_preferences (
-    key TEXT PRIMARY KEY,
+-- 应用配置（KV 存储）
+CREATE TABLE app_config (
+    key TEXT PRIMARY KEY,               -- ai_services, budget_monthly 等
     value TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -191,7 +190,8 @@ CREATE TABLE sync_log (
 -- 默认 Prompt
 INSERT INTO system_prompts (name, content) VALUES
     ('dispatch', <从现有 dispatch.md 导入>),
-    ('record', <从现有 record.md 导入>);
+    ('record', <从现有 record.md 导入>),
+    ('preferences', <从现有 preferences.md 导入>);
 ```
 
 ## 4. 通信架构
@@ -287,13 +287,9 @@ if 本地 modified && NocoBase modified:
 Prompt、Preference、Learning Data 三类数据需要跨设备同步（与 records 不同，records 是用户写入，每台设备写不同数据；这三类是 Agent 写入，多台设备可能写同一个 key）：
 
 **system_prompts 表**
-- 每条 prompt 通过 `name`（dispatch / record）唯一标识
+- 每条 prompt 通过 `name`（dispatch / record / preferences）唯一标识
 - 同步时按 `name` 匹配，比较 `updated_at`，新覆盖旧
 - Agent 修改频率低，冲突概率小
-
-**user_preferences 表**
-- 按 `key` 唯一标识
-- 同步逻辑同 prompts
 
 **learning_data 表**
 - 每条学习记录带独立 `uuid`，新增直接插入，不会冲突
@@ -335,10 +331,16 @@ accounting-app/
 │       ├── layout/
 │       │   └── AppNavbar.vue     # 顶部导航栏（渐变色 + 路由链接）
 │       ├── chat/
-│       │   ├── ChatWidget.vue    # 悬浮对话面板（完整实现）
-│       │   ├── ChatMessage.vue   # 消息渲染（文本/卡片/列表）
-│       │   ├── ChatInput.vue     # 输入框 + 图片上传
-│       │   └── RecordCard.vue    # 记录确认卡片
+│       │   ├── ChatWidget.vue      # 悬浮对话面板（完整实现）
+│       │   ├── ChatMessage.vue     # 消息渲染（文本/卡片/列表）
+│       │   ├── ChatInput.vue       # 输入框 + 图片上传
+│       │   ├── ChatThinking.vue    # 思考中状态
+│       │   ├── ConfirmCard.vue     # 确认卡片
+│       │   ├── DebugPanel.vue      # 调试面板
+│       │   ├── FollowUpCard.vue    # 追问卡片
+│       │   ├── ImagePreview.vue    # 图片预览
+│       │   ├── RecordCard.vue      # 记录确认卡片
+│       │   └── RulesPanel.vue      # 规则面板
 │       └── stats/
 │           ├── CategoryBarChart.vue  # ECharts：分类柱状图
 │           ├── AccountPieChart.vue   # ECharts：账户环形图
@@ -346,27 +348,27 @@ accounting-app/
 │           └── ComparisonChart.vue   # ECharts：环比对比
 ├── src-tauri/                    # Tauri 2 后端（Rust）
 │   ├── src/
-│   │   ├── main.rs               # 入口：初始化 Database + AppConfig + OcrEngine，注册 30+ 命令
+│   │   ├── main.rs               # 入口：初始化 Database + AppConfig + OcrEngine，注册 38 个命令
 │   │   ├── db/
 │   │   │   ├── mod.rs            # 模块根，导出 Database, RecordInput 等
 │   │   │   ├── connection.rs     # SQLite 连接（Arc<Mutex<Connection>>，构造函数打开）
 │   │   │   ├── schema.rs         # 建表（7 张）+ 预置 dispatch/record Prompt
 │   │   │   ├── records.rs        # records CRUD（分页、筛选、排序）
 │   │   │   ├── trips.rs          # business_trip CRUD（自动计算补助）
-│   │   │   ├── prompts.rs        # system_prompts + user_preferences CRUD
+│   │   │   ├── prompts.rs        # system_prompts CRUD（dispatch/record/preferences 均在此表）
 │   │   │   ├── learning.rs       # learning_data CRUD（修正映射）
 │   │   │   ├── chat_history.rs   # chat_history CRUD
 │   │   │   ├── sync_log.rs       # sync_log 写入 + 查询
-│   │   └── preferences.rs    # 偏好 CRUD
+│   │   │   └── app_config.rs     # app_config CRUD
 │   │   ├── commands/
 │   │   │   ├── mod.rs            # 模块声明
-│   │   │   ├── records.rs        # 记录 Tauri Commands（5 个）
+│   │   │   ├── records.rs        # 记录 Tauri Commands（7 个）
 │   │   │   ├── trips.rs          # 差旅 Tauri Commands（4 个）
 │   │   │   ├── stats.rs          # 统计聚合（6 个命令）
-│   │   │   ├── prompts.rs        # Prompt/偏好（4 个命令）
-│   │   │   ├── learning.rs       # 学习数据（3 个命令）
+│   │   │   ├── prompts.rs        # Prompt/偏好（3 个命令）
+│   │   │   ├── learning.rs       # 学习数据（4 个命令）
 │   │   │   ├── chat.rs           # 对话历史（3 个命令）
-│   │   │   ├── config.rs         # 配置读写（3 个命令）
+│   │   │   ├── config.rs         # 配置读写（8 个命令，含 AI 服务管理）
 │   │   │   ├── sync.rs           # 同步占位（5 个命令）
 │   │   │   └── ocr.rs            # OCR（macOS 快捷指令 + 占位）
 │   │   └── models/
@@ -387,7 +389,7 @@ accounting-app/
 ├── package.json
 ├── tsconfig.json
 ├── tsconfig.node.json
-├── vite.config.ts                # Vite + Vue 插件，端口 5173
+├── vite.config.ts                # Vite + Vue 插件，端口 5174
 └── index.html
 ```
 
