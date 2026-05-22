@@ -32,6 +32,10 @@ const fieldLabels: Record<string, string> = {
   payment: '支付方式',
   datetime: '时间',
   note: '备注',
+  trip_id: '申请单号',
+  start_date: '出发日期',
+  end_date: '返程日期',
+  days: '出差天数',
 };
 </script>
 

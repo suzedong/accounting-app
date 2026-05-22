@@ -71,3 +71,20 @@ pub async fn delete_record(
 ) -> Result<(), String> {
     crate::db::records::delete_record(state.inner(), id)
 }
+
+/// Get distinct categories from existing records
+#[tauri::command]
+pub async fn get_categories(
+    state: State<'_, Database>,
+    record_type: Option<String>,
+) -> Result<Vec<String>, String> {
+    crate::db::records::get_categories(state.inner(), record_type.as_deref())
+}
+
+/// Get distinct payment methods from existing records
+#[tauri::command]
+pub async fn get_payment_methods(
+    state: State<'_, Database>,
+) -> Result<Vec<String>, String> {
+    crate::db::records::get_payment_methods(state.inner())
+}

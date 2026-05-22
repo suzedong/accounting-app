@@ -171,7 +171,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { ElMessageBox, ElMessage } from 'element-plus';
 import { getTrips, createTrip, updateTrip, deleteTrip } from '@/api/tauri';
-import { formatMoney, formatIntMoney } from '@/utils/formatters';
+import { formatIntMoney } from '@/utils/formatters';
 import type { TripRecord, TripStatus } from '@/types';
 
 const trips = ref<TripRecord[]>([]);

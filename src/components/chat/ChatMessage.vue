@@ -1,8 +1,14 @@
 <template>
   <div class="message" :class="role">
     <div class="bubble">
+      <!-- Skill tag (AI messages only) -->
+      <span v-if="role === 'ai' && skill" class="skill-tag" :title="`置信度: ${(skill.confidence * 100).toFixed(0)}%`">
+        ⚙️ {{ skill.displayName }}{{ skill.confidence < 1 ? ` (${skill.confidence.toFixed(2)})` : '' }}
+      </span>
+
       <!-- User message -->
       <template v-if="role === 'user'">
+        <img v-if="imageSrc" :src="imageSrc" alt="" class="user-image" />
         {{ content }}
       </template>
 
@@ -48,6 +54,16 @@
                 {{ r.type === '收入' ? '+' : '-' }}{{ r.amount.toFixed(2) }}
               </span>
             </div>
+          </div>
+        </template>
+
+        <!-- Table (query collection) -->
+        <template v-else-if="render === 'table' && data">
+          <div class="result-table">
+            <div class="table-title">{{ content }}</div>
+            <el-table :data="Array.isArray(data) ? data : []" size="small" border max-height="300" style="width: 100%">
+              <el-table-column v-for="col in getTableColumns(data)" :key="col.prop" :prop="col.prop" :label="col.label" :width="col.width" show-overflow-tooltip />
+            </el-table>
           </div>
         </template>
 
@@ -131,15 +147,18 @@
 import ChatThinking from './ChatThinking.vue';
 import ConfirmCard from './ConfirmCard.vue';
 import FollowUpCard from './FollowUpCard.vue';
+import type { SkillMeta } from '@/types';
 
 defineProps<{
   role: 'user' | 'ai';
   content: string;
+  imageSrc?: string;
   data?: any;
   render?: string;
   title?: string;
   loading?: boolean;
   status?: string;
+  skill?: SkillMeta;
 }>();
 
 defineEmits<{
@@ -151,6 +170,27 @@ function formatShortDate(datetime: string) {
   if (!datetime) return '';
   const parts = datetime.split(' ');
   return parts[1] ? `${parts[0]} ${parts[1].substring(0, 5)}` : parts[0];
+}
+
+function getTableColumns(data: unknown[]): Array<{ prop: string; label: string; width?: number }> {
+  if (!data || data.length === 0) return [];
+  const first = data[0] as Record<string, unknown>;
+  const keys = Object.keys(first).filter(k => !k.startsWith('nocobase') && k !== 'synced' && k !== 'uuid' && k !== 'id' && k !== 'created_at' && k !== 'local_updated_at');
+
+  const labels: Record<string, string> = {
+    datetime: '时间', type: '类型', category: '分类', amount: '金额',
+    account: '账户', note: '备注', payment_method: '支付方式',
+    trip_id: '申请单号', start_date: '出发日期', end_date: '返程日期',
+    days: '天数', trip_allowance: '差旅补助', transport_allowance: '交通补助',
+    total: '合计', status: '状态', notes: '备注', paid_date: '发放日期',
+    name: '名称', balance: '余额', month: '月份',
+  };
+
+  return keys.map(k => ({
+    prop: k,
+    label: labels[k] || k,
+    width: k === 'amount' || k === 'total' || k === 'trip_allowance' || k === 'transport_allowance' ? 100 : undefined,
+  }));
 }
 
 function budgetProgressColor(rate: number) {
@@ -198,6 +238,16 @@ function budgetTagType(status: string) {
   color: white;
 }
 
+/* User image thumbnail */
+.user-image {
+  display: block;
+  max-width: 200px;
+  max-height: 150px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  object-fit: cover;
+}
+
 /* Result list */
 .result-list {
   min-width: 260px;
@@ -229,6 +279,16 @@ function budgetTagType(status: string) {
 
 .item-amount {
   font-weight: 600;
+}
+
+/* Result table */
+.result-table {
+  min-width: 260px;
+}
+
+.table-title {
+  font-weight: 600;
+  margin-bottom: 8px;
 }
 
 /* Result chart */
@@ -315,4 +375,24 @@ function budgetTagType(status: string) {
 
 .text-success { color: #52c41a; }
 .text-danger { color: #ff4d4f; }
+
+/* Skill tag */
+.skill-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 12px;
+  font-size: 0.72em;
+  font-weight: 500;
+  margin-bottom: 6px;
+  letter-spacing: 0.3px;
+  opacity: 0.85;
+  cursor: default;
+  transition: opacity 0.2s;
+}
+
+.skill-tag:hover {
+  opacity: 1;
+}
 </style>

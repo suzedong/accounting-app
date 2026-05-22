@@ -154,9 +154,6 @@
     "start_date": "出发时间（YYYY-MM-DD）",
     "end_date": "返程时间（YYYY-MM-DD）",
     "days": 出差天数（数字）,
-    "destination": "出差城市（如 沈阳/德州/深州）",
-    "employee_name": "出差人员姓名",
-    "reason": "出差事由",
     "notes": "备注（可选）"
   }
 }
@@ -175,8 +172,7 @@
 {
   "fields": {
     "amount": 转账金额（正数）,
-    "datetime": "YYYY-MM-DD HH:mm:ss",
-    "employee_name": "收款人姓名（如有）"
+    "datetime": "YYYY-MM-DD HH:mm:ss"
   }
 }
 ```
@@ -253,7 +249,7 @@
 - OCR 文本中确实没有金额信息
 
 **出差记录场景**：
-- `create_trip_record` 缺少 `trip_id`、`start_date`、`end_date`、`days`、`destination`、`employee_name` 中的任意一个时追问
+- `create_trip_record` 缺少 `trip_id`、`start_date`、`end_date`、`days` 中的任意一个时追问
 - 不要追问 `note`，出差记录不需要独立备注字段
 
 **params**:

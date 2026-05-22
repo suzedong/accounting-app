@@ -253,3 +253,50 @@ fn get_record_by_uuid(state: &Database, uuid: &str) -> Result<Option<RecordRow>,
         .optional()
         .map_err(|e| e.to_string())
 }
+
+/// Get distinct categories from existing records
+pub fn get_categories(state: &Database, record_type: Option<&str>) -> Result<Vec<String>, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+
+    let (sql, param): (&str, Box<dyn rusqlite::ToSql>) = if let Some(t) = record_type {
+        (
+            "SELECT DISTINCT category FROM records WHERE category IS NOT NULL AND category != '' AND type = ? ORDER BY category",
+            Box::new(t.to_string()),
+        )
+    } else {
+        (
+            "SELECT DISTINCT category FROM records WHERE category IS NOT NULL AND category != '' ORDER BY category",
+            Box::new(String::new()),
+        )
+    };
+
+    let mut stmt = guard.prepare(sql).map_err(|e| e.to_string())?;
+    let categories: Vec<String> = stmt
+        .query_map([&param], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(categories)
+}
+
+/// Get distinct payment methods from existing records
+pub fn get_payment_methods(state: &Database) -> Result<Vec<String>, String> {
+    let conn = state.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = guard
+        .prepare(
+            "SELECT DISTINCT payment_method FROM records WHERE payment_method IS NOT NULL AND payment_method != '' ORDER BY payment_method",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let methods: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(methods)
+}

@@ -34,6 +34,15 @@ export async function deleteRecord(id: number): Promise<void> {
   return invoke('delete_record', { id });
 }
 
+// Categories & Payment Methods
+export async function getCategories(type?: string): Promise<string[]> {
+  return invoke('get_categories', { ...(type ? { type } : {}) });
+}
+
+export async function getPaymentMethods(): Promise<string[]> {
+  return invoke('get_payment_methods');
+}
+
 // Trips
 export async function getTrips(status?: string): Promise<ApiResponse<TripRecord[]>> {
   return invoke('get_business_trips', { ...(status ? { status } : {}) });
@@ -125,12 +134,20 @@ export async function updatePreference(key: string, value: string): Promise<void
 }
 
 // Learning
-export async function getLearningCorrections(): Promise<{ data: Array<{ keyword: string; field: string; value: string }> }> {
+export async function getLearningCorrections(): Promise<{ data: Array<{ id: number; keyword: string; field: string; value: string }> }> {
   return invoke('get_learning_corrections');
 }
 
 export async function saveCorrection(keyword: string, field: string, value: string): Promise<void> {
   return invoke('save_correction', { keyword, field, value });
+}
+
+export async function deleteCorrection(id: number): Promise<void> {
+  return invoke('delete_correction', { id });
+}
+
+export async function clearCorrections(): Promise<void> {
+  return invoke('clear_corrections');
 }
 
 // Chat History

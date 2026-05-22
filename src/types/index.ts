@@ -1,6 +1,6 @@
 export type RecordType = '收入' | '支出';
 export type AccountType = '个人' | '家庭' | '公司';
-export type TripStatus = ' 待发放' | '✅ 已发放' | '❌ 已过期';
+export type TripStatus = '⏳ 待发放' | '✅ 已发放' | '❌ 已过期';
 
 export interface AccountRecord {
   id: number;
@@ -100,12 +100,22 @@ export interface ComparisonResult {
   previous: ComparisonPeriod;
 }
 
+export interface SkillMeta {
+  name: string;
+  displayName: string;
+  confidence: number;
+}
+
 export interface DispatchResult {
   action: string;
   params: Record<string, unknown>;
   render: 'text' | 'table' | 'card' | 'list' | 'chart';
   title: string;
   confidence: number;
+  /** Skill metadata (set by dispatch or action handler) */
+  _skill?: SkillMeta;
+  /** Intent label for thinking UI */
+  _intent?: string;
 }
 
 export interface ChatMessage {

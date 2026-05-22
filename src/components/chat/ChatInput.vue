@@ -48,7 +48,7 @@ import { Picture, Promotion } from '@element-plus/icons-vue';
 import ImagePreview from './ImagePreview.vue';
 
 const emit = defineEmits<{
-  send: [text: string, imageBase64?: string];
+  send: [text: string, imageBase64?: string, imageFullSrc?: string];
 }>();
 
 const text = ref('');
@@ -86,7 +86,7 @@ function removeImage() {
 
 function handleSend() {
   if (!text.value.trim() && !imageBase64.value) return;
-  emit('send', text.value.trim(), imageBase64.value ?? undefined);
+  emit('send', text.value.trim(), imageBase64.value ?? undefined, imageSrc.value ?? undefined);
   text.value = '';
   removeImage();
 }

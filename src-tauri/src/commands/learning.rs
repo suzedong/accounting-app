@@ -24,3 +24,11 @@ pub async fn save_correction(
 pub async fn clear_corrections(state: State<'_, Database>) -> Result<(), String> {
     crate::db::learning::clear_corrections(state.inner())
 }
+
+#[tauri::command]
+pub async fn delete_correction(
+    state: State<'_, Database>,
+    id: i64,
+) -> Result<(), String> {
+    crate::db::learning::delete_correction(state.inner(), id)
+}

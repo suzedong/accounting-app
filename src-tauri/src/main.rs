@@ -56,6 +56,8 @@ fn main() {
             commands::records::create_record,
             commands::records::update_record,
             commands::records::delete_record,
+            commands::records::get_categories,
+            commands::records::get_payment_methods,
             // Trips
             commands::trips::get_business_trips,
             commands::trips::create_business_trip,
@@ -76,6 +78,7 @@ fn main() {
             // Learning
             commands::learning::get_learning_corrections,
             commands::learning::save_correction,
+            commands::learning::delete_correction,
             commands::learning::clear_corrections,
             // Chat
             commands::chat::get_chat_history,

@@ -10,13 +10,13 @@
       <!-- Last Dispatch Result -->
       <div class="debug-section">
         <h4>LLM Dispatch 结果</h4>
-        <pre class="debug-json">{{ dispatchResult || '无' }}</pre>
+        <pre class="debug-json">{{ dispatchResult ? formatJson(dispatchResult) : '无' }}</pre>
       </div>
 
       <!-- Last Action Result -->
       <div class="debug-section">
         <h4>Action 执行结果</h4>
-        <pre class="debug-json">{{ actionResult || '无' }}</pre>
+        <pre class="debug-json">{{ actionResult ? formatJson(actionResult) : '无' }}</pre>
       </div>
 
       <!-- Messages -->
@@ -38,16 +38,24 @@
 import { Close } from '@element-plus/icons-vue';
 
 defineProps<{
-  dispatchResult?: Record<string, unknown>;
-  actionResult?: Record<string, unknown>;
+  dispatchResult?: Record<string, unknown> | null;
+  actionResult?: Record<string, unknown> | null;
   messageCount?: number;
   messagesSummary?: string;
-  lastError?: string;
+  lastError?: string | null;
 }>();
 
 defineEmits<{
   close: [];
 }>();
+
+function formatJson(obj: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(obj, null, 2);
+  } catch {
+    return String(obj);
+  }
+}
 </script>
 
 <style scoped>
