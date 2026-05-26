@@ -11,10 +11,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { ElMessageBox } from 'element-plus';
 import AppNavbar from '@/components/layout/AppNavbar.vue';
 import ChatWidget from '@/components/chat/ChatWidget.vue';
 import DevConsole from '@/components/chat/DevConsole.vue';
+import { checkOcrStatus } from '@/api/tauri';
 
+const router = useRouter();
 const devConsoleRef = ref<InstanceType<typeof DevConsole> | null>(null);
 
 function handleKeyDown(e: KeyboardEvent) {
@@ -25,8 +29,30 @@ function handleKeyDown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   document.addEventListener('keydown', handleKeyDown);
+
+  // Check OCR status on startup
+  try {
+    const status = await checkOcrStatus();
+    if (!status.available) {
+      ElMessageBox.confirm(
+        'OCR 识别功能需要模型文件才能使用。是否前往设置页下载？',
+        'OCR 模型未找到',
+        {
+          confirmButtonText: '前往设置',
+          cancelButtonText: '稍后再说',
+          type: 'warning',
+        }
+      ).then(() => {
+        router.push('/settings');
+      }).catch(() => {
+        // User dismissed
+      });
+    }
+  } catch {
+    // Ignore check errors
+  }
 });
 
 onUnmounted(() => {

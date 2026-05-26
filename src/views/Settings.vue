@@ -92,14 +92,64 @@
         </el-form-item>
       </el-form>
     </el-card>
+
+    <!-- OCR 模型管理 -->
+    <el-card class="section">
+      <template #header>OCR 识别</template>
+      <div style="max-width: 700px">
+        <div class="ocr-status">
+          <el-tag :type="ocrAvailable ? 'success' : 'warning'" size="large">
+            {{ ocrAvailable ? '✅ 已就绪' : '⚠️ 未就绪' }}
+          </el-tag>
+          <span class="ocr-hint">{{ ocrAvailable ? 'OCR 识别功能可用' : '请安装模型后使用' }}</span>
+        </div>
+
+        <el-table :data="ocrModels" size="small" border style="margin-top: 12px">
+          <el-table-column prop="name" label="模型" />
+          <el-table-column label="大小" width="80">
+            <template #default="{ row }">{{ row.size_mb }} MB</template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.downloaded ? 'success' : 'info'" size="small">
+                {{ row.downloaded ? '已安装' : '未安装' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button
+                v-if="!row.downloaded"
+                size="small"
+                type="primary"
+                :loading="downloadingModel === row.id"
+                @click="handleDownloadModel(row)"
+              >下载</el-button>
+              <el-button
+                v-else
+                size="small"
+                type="danger"
+                text
+                @click="handleDeleteModel(row)"
+              >删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div v-if="downloadProgress" class="download-progress">
+          <el-progress :percentage="downloadProgress" :stroke-width="8" />
+          <span class="progress-text">{{ downloadStatusText }}</span>
+        </div>
+      </div>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService } from '@/api/tauri';
-import type { AiService } from '@/types';
+import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatus, getOcrModels, downloadOcrModel, deleteOcrModel } from '@/api/tauri';
+import type { AiService, OcrModel } from '@/types';
 
 const saving = ref(false);
 const testing = ref(false);
@@ -125,6 +175,13 @@ const syncForm = ref({
 });
 
 const budgetMonthly = ref(3500);
+
+// OCR models
+const ocrAvailable = ref(false);
+const ocrModels = ref<OcrModel[]>([]);
+const downloadingModel = ref<string | null>(null);
+const downloadProgress = ref(0);
+const downloadStatusText = ref('');
 
 onMounted(async () => {
   try {
@@ -163,6 +220,16 @@ onMounted(async () => {
     budgetMonthly.value = config.budget_monthly;
   } catch {
     // 配置为空时使用默认值
+  }
+
+  // Load OCR status
+  try {
+    const status = await checkOcrStatus();
+    ocrAvailable.value = status.available;
+    const models = await getOcrModels();
+    ocrModels.value = models;
+  } catch {
+    // OCR not available
   }
 });
 
@@ -305,6 +372,46 @@ function testNocobaseConnection() {
   }
   ElMessage.info('NocoBase 连接测试（Phase 4 实现）');
 }
+
+// OCR model handlers
+async function handleDownloadModel(model: OcrModel) {
+  downloadingModel.value = model.id;
+  downloadProgress.value = 0;
+  downloadStatusText.value = '正在下载...';
+
+  try {
+    const result = await downloadOcrModel(model.id);
+    ElMessage.success(result);
+    // Refresh model list
+    const models = await getOcrModels();
+    ocrModels.value = models;
+    // Check status
+    const status = await checkOcrStatus();
+    ocrAvailable.value = status.available;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ElMessage.error(`下载失败: ${msg}`);
+  } finally {
+    downloadingModel.value = null;
+    downloadProgress.value = 0;
+    downloadStatusText.value = '';
+  }
+}
+
+async function handleDeleteModel(model: OcrModel) {
+  await ElMessageBox.confirm(`确定删除「${model.name}」？`, '确认删除', { type: 'warning' });
+  try {
+    const result = await deleteOcrModel(model.id);
+    ElMessage.success(result);
+    const models = await getOcrModels();
+    ocrModels.value = models;
+    const status = await checkOcrStatus();
+    ocrAvailable.value = status.available;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ElMessage.error(`删除失败: ${msg}`);
+  }
+}
 </script>
 
 <style scoped>
@@ -357,5 +464,28 @@ function testNocobaseConnection() {
   margin-left: 12px;
   color: #999;
   font-size: 0.9em;
+}
+
+.ocr-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ocr-hint {
+  color: #666;
+  font-size: 0.9em;
+}
+
+.download-progress {
+  margin-top: 12px;
+}
+
+.progress-text {
+  display: block;
+  text-align: center;
+  color: #999;
+  font-size: 0.85em;
+  margin-top: 4px;
 }
 </style>

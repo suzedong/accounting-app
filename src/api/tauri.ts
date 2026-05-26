@@ -110,11 +110,6 @@ export async function getAllConfig(): Promise<AppConfig> {
   return invoke('get_all_config');
 }
 
-// OCR
-export async function ocrRecognize(imageBase64: string): Promise<string> {
-  return invoke('ocr_recognize', { imageBase64 });
-}
-
 // Prompts (includes preferences as a prompt document)
 export async function getSystemPrompt(name: string): Promise<{ data: { name: string; content: string } }> {
   return invoke('get_system_prompt', { name });
@@ -213,7 +208,33 @@ export async function testAiConnection(): Promise<{ success: boolean; message: s
 }
 
 // OCR
-export async function loadOcrModels(modelsDir: string): Promise<string> {
-  return invoke('load_ocr_models', { modelsDir });
+export async function checkOcrStatus(): Promise<{ available: boolean }> {
+  return invoke('check_ocr_status');
+}
+
+export interface OcrModel {
+  id: string;
+  name: string;
+  size_mb: number;
+  sha256: string;
+  file_name: string;
+  download_urls: string[];
+  downloaded: boolean;
+}
+
+export async function getOcrModels(): Promise<OcrModel[]> {
+  return invoke('get_ocr_models');
+}
+
+export async function downloadOcrModel(modelId: string): Promise<string> {
+  return invoke('download_ocr_model', { modelId });
+}
+
+export async function deleteOcrModel(modelId: string): Promise<string> {
+  return invoke('delete_ocr_model', { modelId });
+}
+
+export async function ocrRecognize(imageBase64: string): Promise<string> {
+  return invoke('ocr_recognize', { imageBase64 });
 }
 

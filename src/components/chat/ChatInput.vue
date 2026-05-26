@@ -30,6 +30,7 @@
         v-model="text"
         placeholder="输入消费或收入，或粘贴截图..."
         @keyup.enter.exact="handleSend"
+        @paste="handlePaste"
         resize="none"
         :autosize="{ minRows: 1, maxRows: 4 }"
       />
@@ -66,7 +67,25 @@ function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
+  loadImageFile(file);
+  input.value = '';
+}
 
+function handlePaste(event: ClipboardEvent) {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      event.preventDefault();
+      const file = item.getAsFile();
+      if (file) loadImageFile(file);
+      return;
+    }
+  }
+}
+
+function loadImageFile(file: File) {
   const reader = new FileReader();
   reader.onload = () => {
     const result = reader.result as string;
@@ -74,9 +93,6 @@ function handleFileChange(event: Event) {
     imageBase64.value = result.includes(',') ? result.split(',')[1] : result;
   };
   reader.readAsDataURL(file);
-
-  // Reset input so same file can be selected again
-  input.value = '';
 }
 
 function removeImage() {

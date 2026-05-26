@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { ocrRecognize, loadOcrModels } from '@/api/tauri';
+import { ocrRecognize, checkOcrStatus } from '@/api/tauri';
 
 /**
  * OCR composable
@@ -12,15 +12,16 @@ export function useOCR() {
   const ready = ref(false);
 
   /**
-   * 加载 OCR 模型
+   * 检查 OCR 是否可用
    */
-  async function loadModels(modelsDir: string): Promise<void> {
+  async function checkReady(): Promise<boolean> {
     try {
-      await loadOcrModels(modelsDir);
-      ready.value = true;
-    } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : String(e);
-      throw e;
+      const status = await checkOcrStatus();
+      ready.value = status.available;
+      return status.available;
+    } catch {
+      ready.value = false;
+      return false;
     }
   }
 
@@ -51,7 +52,6 @@ export function useOCR() {
       const reader = new FileReader();
       reader.onload = () => {
         const result = reader.result as string;
-        // Keep full data URL for display, strip prefix for API
         resolve(result);
       };
       reader.onerror = reject;
@@ -66,17 +66,8 @@ export function useOCR() {
     return dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
   }
 
-  /**
-   * 从图片 URL 读取 Base64
-   */
-  async function imageUrlToBase64(url: string): Promise<string> {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    return fileToBase64(new File([blob], 'image.png', { type: blob.type }));
-  }
-
   return {
     loading, error, lastResult, ready,
-    loadModels, recognize, fileToBase64, extractBase64, imageUrlToBase64,
+    checkReady, recognize, fileToBase64, extractBase64,
   };
 }

@@ -41,8 +41,16 @@ fn main() {
     // Initialize app config (loads from SQLite)
     let app_config = commands::config::AppConfig::new(&database);
 
-    // Initialize OCR engine (lazy load)
+    // Initialize OCR engine — try to load models on startup
     let ocr_engine = OcrEngine::new();
+    let model_paths = find_ocr_model_paths();
+    if let Some(dir) = model_paths {
+        if let Err(e) = ocr_engine.load(dir) {
+            eprintln!("OCR model load failed (will be unavailable): {}", e);
+        }
+    } else {
+        eprintln!("OCR models not found in any search path");
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -100,9 +108,61 @@ fn main() {
             commands::sync::import_from_nocobase,
             commands::sync::get_sync_logs,
             // OCR
-            commands::ocr::load_ocr_models,
+            commands::ocr::check_ocr_status,
+            commands::ocr::get_ocr_models,
+            commands::ocr::download_ocr_model,
+            commands::ocr::delete_ocr_model,
             commands::ocr::ocr_recognize,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Find OCR model directory by searching multiple paths.
+/// Returns the first existing directory containing ONNX model files.
+fn find_ocr_model_paths() -> Option<std::path::PathBuf> {
+    // 1. Check bundled/dev paths for actual ONNX files (Windows/Linux)
+    let candidates: Vec<std::path::PathBuf> = vec![
+        std::path::PathBuf::from("./models"),
+        std::path::PathBuf::from("src-tauri/models"),
+        std::path::PathBuf::from("models"),
+    ];
+
+    for path in &candidates {
+        if path.exists() && path.is_dir() {
+            let has_onnx = std::fs::read_dir(path)
+                .ok()
+                .map_or(false, |entries| {
+                    entries.filter_map(|e| e.ok()).any(|e| {
+                        e.path().extension().map_or(false, |ext| ext == "onnx")
+                    })
+                });
+            if has_onnx {
+                return Some(path.clone());
+            }
+        }
+    }
+
+    // 2. On macOS, OCR uses system Shortcuts — any existing dir works
+    #[cfg(target_os = "macos")]
+    {
+        // Try app data dir
+        if let Some(app_dir) = dirs::data_local_dir() {
+            let data_models = app_dir.join("ai-jizhang/models");
+            if data_models.exists() {
+                return Some(data_models);
+            }
+            // Create it so engine can load
+            if std::fs::create_dir_all(&data_models).is_ok() {
+                return Some(data_models);
+            }
+        }
+        // Fallback: try current dir
+        let local = std::path::PathBuf::from("models");
+        if std::fs::create_dir_all(&local).is_ok() {
+            return Some(local);
+        }
+    }
+
+    None
 }
