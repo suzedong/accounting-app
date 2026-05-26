@@ -9,30 +9,40 @@
 │  ┌──────────────────┐    ┌──────────────────────────────┐   │
 │  │  前端（WebView）    │    │  后端（Rust 进程）              │   │
 │  │                  │    │                              │   │
-│  │  web/pages/*.html │    │  ┌──────────────────────┐   │   │
-│  │  web/js/*.js      │    │  │  Tauri Commands       │   │   │
-│  │  web/assets/*.css │    │  │  ├─ db operations     │   │   │
-│  │  ECharts     │    │  │  ├─ sync operations   │   │   │
+│  │  Vue 3 SPA       │    │  ┌──────────────────────┐   │   │
+│  │  Element Plus    │    │  │  Tauri Commands       │   │   │
+│  │  TypeScript      │    │  │  ├─ db operations     │   │   │
+│  │  Pinia           │    │  │  ├─ sync operations   │   │   │
 │  │                  │    │  │  ├─ OCR operations    │   │   │
-│  │  invoke() ──────┼──IPC┤──│  └──────────────────────┘   │   │
-│  │                │    │    │                              │   │
-│  └──────────────────┘    │  ┌──────────────────────┐      │   │
+│  │  invoke() ──────┼──IPC┤──│  ├─ LLM operations    │   │   │
+│  │                │    │    │  └──────────────────────┘   │   │
+│  └──────────────────┘    │                              │   │
+│                          │  ┌──────────────────────┐      │   │
 │                          │  │  本地存储              │      │   │
 │                          │  │  ├─ SQLite DB        │      │   │
 │                          │  │  │  (app_data.db)    │      │   │
+│                          │  │  └───────────────────┘      │   │
+│                          │  │  ├─ ONNX 模型 (OCR)    │      │   │
+│                          │  │  └───────────────────┘      │   │
+│                          │  │  ├─ GGUF 模型 (LLM)    │      │   │
+│                          │  │  └───────────────────┘      │   │
 │                          │  └──────────────────────┘      │   │
 │                          │                              │   │
 │                          │  ┌──────────────────────┐      │   │
-│                          │  │  OCR 引擎              │      │   │
-│                          │  │  RapidOCR (ONNX)     │      │   │
+│                          │  │  AI 推理引擎           │      │   │
+│                          │  │  ├─ Candle (LLM)    │      │   │
+│                          │  │  │  Metal/CUDA/CPU   │      │   │
+│                          │  │  └───────────────────┘      │   │
+│                          │  │  ├─ RapidOCR (ONNX)   │      │   │
+│                          │  │  └───────────────────┘      │   │
 │                          │  └──────────────────────┘      │   │
 │                          └──────────────────────────────┘   │
 │                                                              │
 │  外部服务（可选，直连无需代理）                                  │
-│  ┌──────────────┐  ┌──────────────┐                        │
-│  │  百炼 API     │  │  NocoBase API │                        │
-│  │  (AI)         │  │  (同步)       │                        │
-│  └──────────────┘  └──────────────┘                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │  百炼 API     │  │  NocoBase API │  │  HuggingFace │      │
+│  │  (云端 AI)     │  │  (同步)       │  │  (模型下载)    │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -70,13 +80,35 @@
 
 ### 2.4 OCR 层
 
-**macOS 快捷指令（Vision.framework）+ 跨平台占位**
+**RapidOCR ONNX + macOS 快捷指令（Vision.framework）+ 模型管理**
 
-- macOS 端通过 `shortcuts` 命令调用系统自带 Vision.framework OCR
-- 零配置，无需下载 ONNX 模型
-- Windows/Linux 使用占位方案（需后续实现 RapidOCR ONNX 或其他引擎）
+- macOS 端优先通过 `shortcuts` 命令调用系统自带 Vision.framework OCR
+- 跨平台支持 RapidOCR ONNX 模型（det / rec / cls 三个模型文件）
+- 模型存储在 `$APP_DATA/ai-jizhang/models/`，首次使用需在 Settings 页下载
+- 启动时自动搜索模型目录，找到则初始化 OCR 引擎
+- Settings 页提供模型管理（下载 / 删除 / 状态查看）
 - 输入：图片 base64
 - 输出：识别文本
+
+### 2.5 本地 LLM 层
+
+**Candle（Hugging Face 纯 Rust 推理框架）+ Qwen2 中文模型**
+
+| 选型 | 理由 |
+|---|---|
+| Candle vs Ollama | 完全自包含，无需外部进程，跨平台原生 |
+| GGUF 4-bit 量化 | 模型体积 ~0.9GB，内存占用低，CPU 可用 |
+| Qwen2-1.5B-Instruct | 中文能力好，体积小，Candle 官方支持 |
+
+- **推理引擎**：`candle-transformers` crate（Qwen2 架构原生支持）
+- **模型格式**：GGUF 量化（4-bit / 8-bit），通过 `hf-hub` 下载
+- **GPU 策略**：
+  - macOS：自动启用 Metal（`candle-core` 原生支持）
+  - Windows：检测 NVIDIA GPU，有则启用 CUDA，无则回退 CPU
+  - 启动时日志输出：`LLM device: Metal / CUDA / CPU`
+- **模型存储**：与 OCR 模型同目录 `$APP_DATA/ai-jizhang/models/`
+- **下载策略**：HF 默认源 + 镜像源备选 + 断点续传 + 代理配置
+- **云端 / 本地切换**：Settings 页严格二选一，不自动回退
 
 ## 3. 数据模型设计
 
@@ -402,3 +434,7 @@ accounting-app/
 | SQLite WAL 模式 | `PRAGMA journal_mode=WAL`，提升并发写入性能 |
 | 字段类型 | `records.category` 和 `payment_method` 为自由文本，非枚举 |
 | 数据层 | SQLite 通过 `rusqlite` crate，7 张表 + 预置数据 |
+| OCR 模型存储 | `$APP_DATA/ai-jizhang/models/`，启动时自动搜索并初始化 |
+| LLM 模型存储 | 与 OCR 模型同目录，GGUF 格式（4-bit 量化 ~0.9GB） |
+| GPU 策略 | macOS Metal / Windows CUDA（检测后自动启用）/ CPU 回退 |
+| AI 引擎切换 | 百炼 API ↔ 本地 LLM，严格二选一，不自动回退 |

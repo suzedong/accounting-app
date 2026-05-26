@@ -9,7 +9,7 @@
 | 数据层 | NocoBase REST API | SQLite + Tauri invoke | **大改** |
 | 后端服务 | server.py 代理 | Rust Tauri 后端 | **完全重写** |
 | AI 调用 | server.py 代理百炼 | 前端直连百炼 API | **中改** |
-| OCR | server.py + PaddleOCR | macOS 快捷指令（Vision.framework）+ 跨平台占位 | **已实现（降级方案）** |
+| OCR | server.py + PaddleOCR | RapidOCR ONNX + 模型管理 | **已实现（ONNX 模型管理）** |
 | Prompt | server.py 文件管理 | SQLite 存储 | **中改** |
 | Preference | preferences.md | SQLite 存储 | **中改** |
 | 学习引擎 | localStorage | SQLite | **中改** |
@@ -191,27 +191,32 @@ const response = await fetch(apiUrl, {
 
 ```
 前端图片 → invoke('ocr_recognize', { imageBase64 })
-         → Rust → macOS `shortcuts` 命令 → Vision.framework OCR → 文本
+         → Rust → RapidOCR ONNX 推理 → 文本
 ```
 
-**macOS 实现**：通过 `std::process::Command` 调用 `shortcuts run "提取图像中的文本"`，利用系统内置 Vision.framework。
-
-**跨平台占位**：Windows/Linux 需后续实现 RapidOCR ONNX 或其他引擎。
+**OCR 模型**：
+- 3 个 ONNX 模型（det / rec / cls），存储在 `$APP_DATA/ai-jizhang/models/`
+- Settings 页提供模型管理（下载 / 删除 / 状态查看）
+- 启动时自动搜索并初始化 OCR 引擎
+- 剪贴板图片粘贴（Cmd+V / Ctrl+V）已支持
 
 ### 4.3 Rust 端实现（已实现）
 
 ```rust
 // src-tauri/src/ocr/rapidocr.rs
-// macOS: 使用 shortcuts 命令调用 Vision.framework
-#[cfg(target_os = "macos")]
-pub fn recognize(&self, image_base64: &str) -> String {
-    let mut cmd = Command::new("shortcuts");
-    cmd.arg("run").arg("提取图像中的文本")
-       .stdin(Stdio::piped())
-       .stdout(Stdio::piped());
-    // base64 解码 → stdin → 读取 stdout
+// 跨平台：RapidOCR ONNX 推理（ort crate）
+pub fn recognize(&self, image_path: &str) -> Result<String, String> {
+    // 加载 det / rec / cls 模型
+    // 文本检测 → 方向分类 → 文本识别 → 拼接结果
 }
 ```
+
+**Tauri Commands**：
+- `check_ocr_status()` — 检查 OCR 引擎状态
+- `get_ocr_models()` — 获取模型列表及下载状态
+- `download_ocr_model(model_id)` — 下载模型（HF 源 + 镜像 + 断点续传）
+- `delete_ocr_model(model_id)` — 删除已安装模型
+- `ocr_recognize(image_base64)` — 执行 OCR 识别
 
 ### 4.4 前端适配
 
@@ -333,7 +338,7 @@ package.json 中的 dev:backend       # 不再需要启动 server.py
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| macOS shortcuts 降级 | Windows/Linux 不可用 | 已使用占位方案，后续补充 RapidOCR |
+| ONNX 模型下载失败 | OCR 不可用 | HF 默认源 + 镜像备选 + 代理支持 + 断点续传 |
 | Tauri WebView 版本不兼容 | 部分 API 不可用 | 测试主流平台 WebView 版本，必要时 polyfill |
 | SQLite 并发写入冲突 | 数据丢失 | 使用 WAL 模式，单连接写操作 |
 | 百炼 API 前端暴露 Key | 安全 | 个人使用可接受，加 Referer 白名单 |

@@ -10,8 +10,9 @@
 | Phase 2 | 业务逻辑迁移 | 差旅、统计、预算、设置页面 | 2 周 | ✅ 已完成 |
 | Phase 3 | AI 聊天 + Agent | 百炼 API dispatch、11 个 action handlers、OCR | 2 周 | ✅ 已完成 |
 | Phase 4 | 同步层 + 清理 | NocoBase 双向同步、清理旧代码 | 2 周 | ❌ 未开始 |
+| Phase 5 | 本地 LLM | Candle 推理引擎、Qwen2 模型、GPU 自动检测 | ~7 天 | 📝 规划中 |
 
-**总预计：8 周**
+**总预计：约 10 周**
 
 ---
 
@@ -178,9 +179,11 @@
 #### 3.5 OCR — ✅ 已完成
 
 - [x] `src-tauri/src/ocr/rapidocr.rs` — OCR 引擎（macOS 快捷指令 + 跨平台占位）
-- [x] `commands/ocr.rs` — Tauri Command（load_ocr_models + ocr_recognize）
+- [x] `commands/ocr.rs` — Tauri Commands（check_ocr_status, get_ocr_models, download_ocr_model, delete_ocr_model, ocr_recognize）
 - [x] `composables/useOCR.ts` — 前端 OCR 封装
-- [x] 聊天窗口图片上传对接 OCR
+- [x] 聊天窗口图片上传对接 OCR（含剪贴板粘贴 Cmd+V / Ctrl+V）
+- [x] Settings 页 OCR 模型管理（下载 / 删除 / 进度条）
+- [x] 启动时自动检查 OCR 状态，无模型时引导用户前往设置页下载
 
 ---
 
@@ -222,6 +225,58 @@
 
 ---
 
+## Phase 5：本地 LLM
+
+> 📝 **规划中**
+
+### 目标
+
+实现完全自包含的本地 LLM 推理能力，不依赖 Ollama 等外部服务，跨平台支持 macOS / Windows。
+
+### 任务
+
+#### 5.0 最小验证（Phase 0）
+
+- [ ] Candle + Qwen2-1.5B-Instruct 最小 demo（Rust CLI，能输出有效回复）
+- [ ] 验证 token 速度（CPU vs GPU）
+
+#### 5.1 Candle 推理引擎集成
+
+- [ ] `src-tauri/Cargo.toml` 添加 Candle 依赖（`candle-core`, `candle-transformers`, `candle-nn`, `hf-hub`）
+- [ ] `src-tauri/src/llm/mod.rs` — LLM 引擎模块
+- [ ] 模型加载：`.gguf` 量化格式（4-bit / 8-bit）
+- [ ] 推理接口：`generate(system_prompt, user_message, max_tokens) -> String`
+- [ ] Tauri Commands：`local_llm_chat`, `local_llm_health_check`
+
+#### 5.2 GPU 自动检测
+
+- [ ] macOS：自动启用 Metal（`candle-core` 原生支持）
+- [ ] Windows：检测 NVIDIA GPU（`cuda` feature），有则启用，无则回退 CPU
+- [ ] 启动时日志输出：`LLM device: Metal / CUDA / CPU`
+
+#### 5.3 模型下载与部署
+
+- [ ] 默认模型：Qwen2-1.5B-Instruct（GGUF 4-bit, ~0.9GB）
+- [ ] HF 默认源 + 镜像源备选 + 断点续传 + 代理支持
+- [ ] 首次启动引导 + 后台静默下载
+- [ ] Settings 页模型管理（与 OCR 模型管理类似的 UI）
+- [ ] 模型切换（支持多个模型下载管理）
+
+#### 5.4 云端 / 本地严格切换
+
+- [ ] Settings 页"AI 引擎"选择：百炼 API ↔ 本地 LLM（严格二选一，不自动回退）
+- [ ] 本地模式：`local_llm_chat` command 调用 Candle 推理
+- [ ] 云端模式：现有 `call_llm` command（reqwest 调百炼 API）
+- [ ] Agent dispatch 逻辑无需修改，仅底层 LLM 调用方式不同
+
+### 里程碑
+
+| 里程碑 | 完成标志 | 预计时间 | 状态 |
+|---|---|---|---|
+| M5: 本地 LLM 可用 | Phase 5 完成，本地模型可完成记账 dispatch | 第 10 周末 | 📝 待达成 |
+
+---
+
 ## 里程碑
 
 | 里程碑 | 完成标志 | 预计时间 | 状态 |
@@ -230,3 +285,4 @@
 | M2: 功能完整 | Phase 2 完成，所有业务页面可用 | 第 4 周末 | ✅ 已达成 |
 | M3: AI 可用 | Phase 3 完成，AI 对话 + OCR 均可用 | 第 6 周末 | ✅ 已达成 |
 | M4: 同步可用 | Phase 4 完成，可导入并双向同步 | 第 8 周末 | ❌ 待达成 |
+| M5: 本地 LLM 可用 | Phase 5 完成，本地模型可完成记账 dispatch | 第 10 周末 | 📝 待达成 |
