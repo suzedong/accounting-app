@@ -212,7 +212,7 @@ export async function checkOcrStatus(): Promise<{
   available: boolean;
   enabled: boolean;
   activePython: { path: string; version: string; isBundled: boolean; hasPaddleocr: boolean } | null;
-  systemPythons: Array<{ path: string; version: string; minorVersion: number; isCompatible: boolean; hasPaddleocr: boolean }>;
+  systemPythons: Array<{ path: string; version: string; minorVersion: number; isCompatible: boolean; hasPaddleocr: boolean; source: string }>;
   bundledPythonInstalled: boolean;
   message: string;
 }> {
@@ -231,8 +231,8 @@ export async function installPaddleocrForPython(pythonPath: string, sessionId: s
   return invoke('install_paddleocr_for_python', { pythonPath, sessionId });
 }
 
-export async function uninstallPaddleocrForPython(pythonPath: string): Promise<string> {
-  return invoke('uninstall_paddleocr_for_python', { pythonPath });
+export async function uninstallPaddleocrForPython(pythonPath: string, sessionId: string): Promise<string> {
+  return invoke('uninstall_paddleocr_for_python', { pythonPath, sessionId });
 }
 
 export async function reinstallPaddleocrForPython(pythonPath: string, sessionId: string): Promise<string> {

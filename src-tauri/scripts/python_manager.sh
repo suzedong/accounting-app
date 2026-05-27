@@ -12,6 +12,76 @@ set -euo pipefail
 BUNDLED_PYTHON_DIR="$HOME/Library/Application Support/accounting-app/python"
 BUNDLED_PYTHON="$BUNDLED_PYTHON_DIR/bin/python3"
 
+# --- install_bundled: 安装内置 Python ---
+install_bundled() {
+    local session_id="$1"
+
+    # Check brew
+    local brew_prefix
+    brew_prefix="$(brew --prefix 2>/dev/null)" || {
+        echo '{"error":"Homebrew 未安装"}'
+        return 1
+    }
+    local brew_fw="$brew_prefix/opt/python@3.12/Frameworks/Python.framework"
+
+    if [ ! -d "$brew_fw" ]; then
+        echo ">>> 正在安装 python@3.12 (通过 Homebrew)..."
+        brew install python@3.12 2>&1 || {
+            echo '{"error":"安装 python@3.12 失败"}'
+            return 1
+        }
+    fi
+
+    # Clean old installation
+    if [ -d "$BUNDLED_PYTHON_DIR" ]; then
+        rm -rf "$BUNDLED_PYTHON_DIR"
+    fi
+
+    # Create dirs
+    mkdir -p "$BUNDLED_PYTHON_DIR/Frameworks"
+
+    # Ditto copy Framework
+    echo ">>> 正在复制 Python Framework..."
+    ditto "$brew_fw" "$BUNDLED_PYTHON_DIR/Frameworks/Python.framework" 2>&1 || {
+        echo '{"error":"复制 Framework 失败"}'
+        return 1
+    }
+    echo "✓ Python Framework 复制完成"
+
+    # Strip signature and re-sign ad-hoc
+    local py_bin="$BUNDLED_PYTHON_DIR/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+    if [ -f "$py_bin" ]; then
+        echo ">>> 正在处理代码签名..."
+        codesign --remove-signature "$py_bin" 2>/dev/null
+        codesign -s - "$py_bin" 2>/dev/null && echo "✓ 代码签名处理完成" || echo "⚠ 代码签名处理失败"
+    fi
+
+    # Create bin symlink (remove if exists as dir first)
+    if [ -d "$BUNDLED_PYTHON_DIR/bin" ]; then
+        rm -rf "$BUNDLED_PYTHON_DIR/bin"
+    fi
+    ln -s "$BUNDLED_PYTHON_DIR/Frameworks/Python.framework/Versions/3.12/bin" "$BUNDLED_PYTHON_DIR/bin"
+    ln -s "python3.12" "$BUNDLED_PYTHON_DIR/bin/python3"
+
+    # Verify
+    local version
+    version=$("$BUNDLED_PYTHON" --version 2>&1) || {
+        echo '{"error":"Python 验证失败"}'
+        return 1
+    }
+    echo "✓ 验证成功: $version"
+    echo "✓ 内置 Python 安装完成"
+}
+
+# --- uninstall_bundled: 卸载内置 Python ---
+uninstall_bundled() {
+    if [ -d "$BUNDLED_PYTHON_DIR" ]; then
+        rm -rf "$BUNDLED_PYTHON_DIR"
+        echo "✓ 内置 Python 已卸载"
+    fi
+    echo "{\"status\":\"ok\"}"
+}
+
 # --- discover: 发现所有 Python ---
 discover() {
     local candidates=()
@@ -111,7 +181,25 @@ discover() {
             has_paddle="true"
         fi
 
-        json_items+=("{\"path\":\"$path\",\"version\":\"$version\",\"minor_version\":$minor,\"is_compatible\":$is_compatible,\"has_paddleocr\":$has_paddle}")
+        # Detect Python source
+        local source=""
+        if [[ "$resolved" == *"/Library/Developer/CommandLineTools"* ]] || [[ "$resolved" == "/usr/bin/python"* ]]; then
+            source="macos"
+        elif [[ "$resolved" == *"/.local/share/uv/python"* ]] || [[ "$resolved" == *"/.local/bin/python"* ]]; then
+            source="uv"
+        elif [[ "$resolved" == *"/opt/homebrew/"* ]]; then
+            source="homebrew"
+        elif [[ "$resolved" == *"/usr/local/"* ]]; then
+            source="homebrew"
+        elif [[ "$resolved" == *"/Library/Frameworks/"* ]]; then
+            source="pythonorg"
+        elif [[ "$resolved" == *"/.pyenv/"* ]]; then
+            source="pyenv"
+        else
+            source="unknown"
+        fi
+
+        json_items+=("{\"path\":\"$path\",\"version\":\"$version\",\"minor_version\":$minor,\"is_compatible\":$is_compatible,\"has_paddleocr\":$has_paddle,\"source\":\"$source\"}")
     done
 
     # Build JSON array
@@ -136,12 +224,27 @@ install_paddleocr() {
     local python_path="$1"
     local packages=("paddlepaddle" "paddleocr")
 
+    # Check if pip supports --break-system-packages (pip >= 23.0.1 / PEP 668)
+    local break_flag=""
+    local pip_major
+    pip_major=$("$python_path" -m pip --version 2>/dev/null | grep -o 'pip [0-9]*' | head -1 | grep -o '[0-9]*')
+    if [ -n "$pip_major" ] && [ "$pip_major" -ge 23 ] 2>/dev/null; then
+        break_flag="--break-system-packages"
+    fi
+
     for pkg in "${packages[@]}"; do
         echo ">>> 正在安装 $pkg ..."
-        "$python_path" -m pip install --upgrade "$pkg" 2>&1 || {
-            echo "✗ 安装 $pkg 失败"
-            return 1
-        }
+        if [ -n "$break_flag" ]; then
+            "$python_path" -m pip install --upgrade "$break_flag" "$pkg" 2>&1 || {
+                echo "✗ 安装 $pkg 失败"
+                return 1
+            }
+        else
+            "$python_path" -m pip install --upgrade "$pkg" 2>&1 || {
+                echo "✗ 安装 $pkg 失败"
+                return 1
+            }
+        fi
         echo "✓ $pkg 安装完成"
     done
     echo ">>> 全部安装完成！"
@@ -152,11 +255,25 @@ uninstall_paddleocr() {
     local python_path="$1"
     local packages=("paddleocr" "paddlepaddle")
 
+    # Check if pip supports --break-system-packages
+    local break_flag=""
+    local pip_major
+    pip_major=$("$python_path" -m pip --version 2>/dev/null | grep -o 'pip [0-9]*' | head -1 | grep -o '[0-9]*')
+    if [ -n "$pip_major" ] && [ "$pip_major" -ge 23 ] 2>/dev/null; then
+        break_flag="--break-system-packages"
+    fi
+
     for pkg in "${packages[@]}"; do
         echo ">>> 正在卸载 $pkg ..."
-        "$python_path" -m pip uninstall -y "$pkg" 2>&1 || {
-            echo "⚠ 卸载 $pkg 可能不完整"
-        }
+        if [ -n "$break_flag" ]; then
+            "$python_path" -m pip uninstall -y "$break_flag" "$pkg" 2>&1 || {
+                echo "⚠ 卸载 $pkg 可能不完整"
+            }
+        else
+            "$python_path" -m pip uninstall -y "$pkg" 2>&1 || {
+                echo "⚠ 卸载 $pkg 可能不完整"
+            }
+        fi
         echo "✓ $pkg 已卸载"
     done
     echo ">>> 卸载完成"
@@ -188,6 +305,13 @@ case "${1:-}" in
     check_paddle)
         shift
         check_paddle "$1"
+        ;;
+    install_bundled)
+        shift
+        install_bundled "${1:-}"
+        ;;
+    uninstall_bundled)
+        uninstall_bundled
         ;;
     *)
         echo '{"error":"未知操作。用法: discover|install|uninstall|check_paddle [python_path]"}' >&2

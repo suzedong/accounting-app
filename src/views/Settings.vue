@@ -137,10 +137,13 @@
         <div class="system-python-section">
           <div class="section-title">Python 列表</div>
           <el-table :data="systemPythons" size="small" border stripe class="python-table">
-            <el-table-column label="版本" width="90">
+            <el-table-column label="版本" width="120">
               <template #default="{ row }">
                 <span>{{ versionDisplay(row.version) }}</span>
-                <el-tag v-if="!row.isCompatible" type="danger" size="small" class="compat-tag">不兼容</el-tag>
+                <el-tag v-if="!row.isCompatible" type="danger" size="small" class="source-tag">不兼容</el-tag>
+                <el-tag v-else-if="row.source === 'macos'" type="warning" size="small" class="source-tag">只读</el-tag>
+                <el-tag v-else-if="row.source === 'uv'" type="info" size="small" class="source-tag">uv</el-tag>
+                <el-tag v-else-if="row.source === 'bundled'" type="primary" size="small" class="source-tag">内置</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="路径" min-width="200">
@@ -155,26 +158,29 @@
                 <el-tag v-else type="info" size="small">—</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="220">
+            <el-table-column label="操作" width="160">
               <template #default="{ row }">
-                <template v-if="row.isCompatible">
-                  <el-button
-                    v-if="activePython && activePython.path !== row.path"
-                    size="small"
-                    type="primary"
-                    text
-                    @click="handleSelectPython(row.path)"
-                  >使用</el-button>
-                  <el-tag v-else-if="activePython" type="primary" size="small">当前</el-tag>
-                  <el-button size="small" text @click="handleInstallDepsForPython(row.path)">安装</el-button>
-                  <el-button
-                    v-if="row.hasPaddleocr"
-                    size="small"
-                    text
-                    @click="handleUninstallDepsForPython(row.path)"
-                  >卸载</el-button>
-                </template>
-                <span v-else class="no-action">—</span>
+                <div class="action-buttons">
+                  <template v-if="row.isCompatible && row.source !== 'macos'">
+                    <el-button
+                      v-if="activePython && activePython.path !== row.path"
+                      size="small"
+                      type="primary"
+                      text
+                      @click="handleSelectPython(row.path)"
+                    >使用</el-button>
+                    <el-tag v-else-if="activePython" type="primary" size="small">当前</el-tag>
+                    <el-button size="small" text @click="handleInstallDepsForPython(row.path)">安装</el-button>
+                    <el-button
+                      v-if="row.hasPaddleocr"
+                      size="small"
+                      text
+                      @click="handleUninstallDepsForPython(row.path)"
+                    >卸载</el-button>
+                  </template>
+                  <span v-else-if="row.isCompatible && row.source === 'macos'" class="no-action"> 只读</span>
+                  <span v-else class="no-action">—</span>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -249,6 +255,7 @@ interface SystemPython {
   minorVersion: number;
   isCompatible: boolean;
   hasPaddleocr: boolean;
+  source: string; // macos | uv | homebrew | pythonorg | pyenv | unknown
 }
 
 interface ActivePython {
@@ -302,13 +309,13 @@ const operationSessionId = ref('');
 const isOperationRunning = computed(() => currentOperation.value !== '');
 
 // Auto-scroll terminal on new lines
-watch(terminalLines, () => {
+watch(() => terminalLines.value.length, () => {
   nextTick(() => {
     if (terminalBodyRef.value) {
       terminalBodyRef.value.scrollTop = terminalBodyRef.value.scrollHeight;
     }
   });
-});
+}, { flush: 'post' });
 
 // Event listener for OCR install logs
 let unlisten: (() => void) | null = null;
@@ -371,7 +378,7 @@ onMounted(async () => {
     ocrAvailable.value = status.available;
     ocrEnabled.value = status.enabled;
     activePython.value = status.activePython || null;
-    systemPythons.value = status.systemPythons || [];
+    systemPythons.value = status.systemPythons || ([] as SystemPython[]);
     ocrMessage.value = status.message || '';
     bundledPythonInstalled.value = status.bundledPythonInstalled;
   } catch {
@@ -546,11 +553,12 @@ async function refreshOcrStatus() {
     const status = await checkOcrStatus();
     ocrAvailable.value = status.available;
     activePython.value = status.activePython || null;
-    systemPythons.value = status.systemPythons || [];
+    systemPythons.value = status.systemPythons || ([] as SystemPython[]);
     ocrMessage.value = status.message || '';
     bundledPythonInstalled.value = status.bundledPythonInstalled;
-  } catch {
-    // ignore
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ElMessage.error(`刷新 OCR 状态失败: ${msg}`);
   }
 }
 
@@ -590,16 +598,20 @@ async function handleInstallDepsForPython(pythonPath: string) {
 }
 
 async function handleUninstallDepsForPython(pythonPath: string) {
+  startOperation('uninstall', '>>> 正在卸载 PaddleOCR...');
   try {
-    await ElMessageBox.confirm('确定卸载此 Python 的 PaddleOCR？', '确认卸载', { type: 'warning' });
-    const result = await uninstallPaddleocrForPython(pythonPath);
+    const result = await uninstallPaddleocrForPython(pythonPath, operationSessionId.value);
+    terminalLines.value.push(`✓ ${result}`);
     ElMessage.success(result);
     await refreshOcrStatus();
   } catch (e: unknown) {
     if (e !== 'cancel') {
       const msg = e instanceof Error ? e.message : String(e);
+      terminalLines.value.push(`✗ ${msg}`);
       ElMessage.error(`卸载失败: ${msg}`);
     }
+  } finally {
+    currentOperation.value = '';
   }
 }
 
@@ -812,16 +824,29 @@ function versionDisplay(version: string): string {
   font-size: 0.8em;
   color: #6b7280;
   word-break: break-all;
-  white-space: nowrap;
+  white-space: normal;
 }
 
-.compat-tag {
+.compat-tag, .source-tag {
   margin-left: 4px;
 }
 
 .no-action {
   color: #ccc;
   font-size: 0.9em;
+}
+
+.action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+}
+
+/* Override Element Plus cell padding for action column */
+:deep(.python-table .el-table__cell:last-child) {
+  padding: 8px 0;
 }
 
 /* Section title */

@@ -1,6 +1,6 @@
 use std::process::{Command, Stdio};
 use tokio::process::Command as TokioCommand;
-use tauri::{State, AppHandle, Emitter};
+use tauri::{State, AppHandle, Emitter, Manager};
 use serde::Serialize;
 
 use crate::commands::config::AppConfig;
@@ -16,6 +16,7 @@ pub struct SystemPython {
     pub minor_version: u8,
     pub is_compatible: bool,
     pub has_paddleocr: bool,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,6 +48,7 @@ struct ShellPythonInfo {
     minor_version: u8,
     is_compatible: bool,
     has_paddleocr: bool,
+    source: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -208,6 +210,7 @@ fn discover_system_pythons() -> Vec<SystemPython> {
                             minor_version: p.minor_version,
                             is_compatible: p.is_compatible,
                             has_paddleocr: p.has_paddleocr,
+                            source: p.source,
                         })
                         .collect()
                 }
@@ -239,6 +242,7 @@ fn discover_all_pythons(bundled_installed: bool) -> Vec<SystemPython> {
                     minor_version: info.minor_version,
                     is_compatible: is_python_compatible(info.minor_version),
                     has_paddleocr: info.has_paddleocr,
+                    source: "bundled".to_string(),
                 });
             }
         }
@@ -289,6 +293,23 @@ fn set_active_python_path(app_config: &State<'_, AppConfig>, db: &State<'_, Data
     {
         let mut config_guard = app_config.data.lock().map_err(|e| e.to_string())?;
         config_guard.insert("active_python_path".to_string(), path.to_string());
+    }
+    Ok(())
+}
+
+/// Try to set the bundled Python as active (if no active Python configured yet).
+/// Best-effort — callers ignore errors.
+/// Try to set the bundled Python as active. Best-effort — callers ignore errors.
+fn try_set_active_python(app: &AppHandle, session_id: &str) -> Result<(), String> {
+    let app_config: State<'_, AppConfig> = app.state::<AppConfig>();
+    let db: State<'_, Database> = app.state::<Database>();
+
+    let bundled_path = get_bundled_python_path();
+    if bundled_path.exists() {
+        if let Some(path_str) = bundled_path.to_str() {
+            set_active_python_path(&app_config, &db, path_str)?;
+            emit_line(app, session_id, ">>> 已自动设置为当前使用的 Python");
+        }
     }
     Ok(())
 }
@@ -413,28 +434,41 @@ fn spawn_stream_readers(
     app: &AppHandle,
     session_id: &str,
     child: &mut tokio::process::Child,
+    last_output_ts: std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) {
     if let Some(stdout) = child.stdout.take() {
         let app_ref = app.clone();
         let sid = session_id.to_string();
+        let ts = last_output_ts.clone();
         tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stdout);
             use tokio::io::AsyncBufReadExt;
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 emit_line(&app_ref, &sid, &line);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                ts.store(now, std::sync::atomic::Ordering::Relaxed);
             }
         });
     }
     if let Some(stderr) = child.stderr.take() {
         let app_ref = app.clone();
         let sid = session_id.to_string();
+        let ts = last_output_ts;
         tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stderr);
             use tokio::io::AsyncBufReadExt;
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 emit_line(&app_ref, &sid, &line);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                ts.store(now, std::sync::atomic::Ordering::Relaxed);
             }
         });
     }
@@ -461,6 +495,8 @@ pub async fn install_paddleocr_for_python(
 
     let script = get_script_path();
     let mut child = TokioCommand::new("bash")
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PIP_PROGRESS_BAR", "on")
         .arg(&script)
         .args(["install", &python_path])
         .stdout(Stdio::piped())
@@ -468,10 +504,40 @@ pub async fn install_paddleocr_for_python(
         .spawn()
         .map_err(|e| format!("启动安装脚本失败: {}", e))?;
 
-    spawn_stream_readers(&app, &session_id, &mut child);
+    // Shared heartbeat: stream readers update this timestamp on each line
+    let last_output_ts = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+    ));
+
+    spawn_stream_readers(&app, &session_id, &mut child, last_output_ts.clone());
+
+    // Heartbeat: emit progress message every 5 seconds if no recent output
+    let heartbeat_sid = session_id.clone();
+    let heartbeat_app = app.clone();
+    let heartbeat_ts = last_output_ts.clone();
+    let heartbeat = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+            let last = heartbeat_ts.load(std::sync::atomic::Ordering::Relaxed);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            if now - last > 5000 {
+                emit_line(&heartbeat_app, &heartbeat_sid, "  ⏳ 正在下载依赖包，请稍候...");
+                heartbeat_ts.store(now, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    });
 
     let status = child.wait().await
         .map_err(|e| format!("等待安装完成失败: {}", e))?;
+
+    heartbeat.abort();
+    let _ = heartbeat.await;
 
     if !status.success() {
         emit_line(&app, &session_id, "✗ 安装失败");
@@ -487,24 +553,24 @@ pub async fn install_paddleocr_for_python(
 pub async fn uninstall_paddleocr_for_python(
     app: AppHandle,
     python_path: String,
+    session_id: String,
 ) -> Result<String, String> {
-    emit_line(&app, "uninstall", ">>> 正在卸载 PaddleOCR...");
-
     let script = get_script_path();
-    let output = Command::new("bash")
+    let mut child = TokioCommand::new("bash")
         .arg(&script)
         .args(["uninstall", &python_path])
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("启动卸载脚本失败: {}", e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        emit_line(&app, "uninstall", line);
-    }
+    spawn_stream_readers(&app, &session_id, &mut child, Default::default());
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        emit_line(&app, "uninstall", &format!("✗ 卸载失败: {}", stderr.lines().next().unwrap_or("")));
+    let status = child.wait().await
+        .map_err(|e| format!("等待卸载完成失败: {}", e))?;
+
+    if !status.success() {
+        emit_line(&app, &session_id, "✗ 卸载失败");
         return Err("卸载 PaddleOCR 失败".to_string());
     }
 
@@ -519,8 +585,8 @@ pub async fn reinstall_paddleocr_for_python(
     python_path: String,
     session_id: String,
 ) -> Result<String, String> {
-    emit_line(&app, &session_id, ">>> 正在重新安装 PaddleOCR...");
-    let _ = uninstall_paddleocr_for_python(app.clone(), python_path.clone()).await;
+    let _ = uninstall_paddleocr_for_python(app.clone(), python_path.clone(), session_id.clone()).await;
+    // install_paddleocr_for_python 会输出 ">>> 正在安装 PaddleOCR 依赖..."，不再重复
     install_paddleocr_for_python(app, app_config, db, python_path, session_id).await
 }
 
@@ -547,219 +613,67 @@ pub async fn install_bundled_python(
     session_id: String,
 ) -> Result<String, String> {
     emit_line(&app, &session_id, ">>> 正在安装内置 Python 3.12...");
-    let python_dir = get_bundled_python_path();
-    if let Some(parent) = python_dir.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建目录失败: {}", e))?;
-    }
 
-    #[cfg(target_os = "macos")]
-    {
-        install_python_macos(&app, &session_id, &python_dir).await
-    }
-    #[cfg(windows)]
-    {
-        install_python_windows(&app, &session_id, &python_dir).await
-    }
-    #[cfg(not(any(target_os = "macos", windows)))]
-    {
-        let _ = (&app, &session_id, &python_dir);
-        Err("当前平台不支持内置 Python 安装".to_string())
-    }
-}
+    let script = get_script_path();
+    let mut child = TokioCommand::new("bash")
+        .arg(&script)
+        .args(["install_bundled", &session_id])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动安装脚本失败: {}", e))?;
 
-async fn install_python_macos(
-    app: &AppHandle,
-    session_id: &str,
-    python_dir: &std::path::Path,
-) -> Result<String, String> {
-    emit_line(app, session_id, ">>> 正在安装 Python 3.12 (通过 Homebrew)...");
+    let last_output_ts = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+    ));
 
-    let brew_check = Command::new("brew").arg("--prefix").output();
-    let brew_prefix = match brew_check {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        }
-        _ => {
-            emit_line(app, session_id, "✗ Homebrew 未安装");
-            return Err("请先安装 Homebrew: https://brew.sh".to_string());
-        }
-    };
+    spawn_stream_readers(&app, &session_id, &mut child, last_output_ts.clone());
 
-    let brew_bin_path = format!("{}/opt/python@3.12/bin/python3.12", brew_prefix);
-    let brew_framework = format!("{}/opt/python@3.12/Frameworks/Python.framework", brew_prefix);
-
-    if !std::path::Path::new(&brew_bin_path).exists() {
-        emit_line(app, session_id, ">>> 正在安装 python@3.12 (可能需要几分钟)...");
-        let mut install_output = TokioCommand::new("brew")
-            .args(["install", "python@3.12"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("brew 启动失败: {}", e))?;
-
-        let app_ref = app.clone();
-        let sid = session_id.to_string();
-        let stderr_handle = if let Some(stderr) = install_output.stderr.take() {
-            Some(tokio::spawn(async move {
-                use tokio::io::{AsyncBufReadExt, BufReader};
-                let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    emit_line(&app_ref, &sid, &line);
-                }
-            }))
-        } else { None };
-
-        let mut stdout_futures = Vec::new();
-        if let Some(stdout) = install_output.stdout.take() {
-            let app_ref = app.clone();
-            let sid = session_id.to_string();
-            stdout_futures.push(tokio::spawn(async move {
-                use tokio::io::{AsyncBufReadExt, BufReader};
-                let mut lines = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    emit_line(&app_ref, &sid, &line);
-                }
-            }));
-        }
-
-        let status = install_output.wait().await
-            .map_err(|e| format!("等待安装完成失败: {}", e))?;
-        for f in stdout_futures { let _ = f.await; }
-        if let Some(f) = stderr_handle { let _ = f.await; }
-
-        if !status.success() {
-            emit_line(app, session_id, "✗ 安装 python@3.12 失败");
-            return Err("安装 python@3.12 失败".to_string());
-        }
-    }
-
-    emit_line(app, session_id, ">>> Python 3.12 已就绪，正在复制到应用目录...");
-
-    if python_dir.exists() {
-        std::fs::remove_dir_all(python_dir)
-            .map_err(|e| format!("清理旧安装失败: {}", e))?;
-    }
-
-    let target_bin = python_dir.join("bin");
-    std::fs::create_dir_all(&target_bin)
-        .map_err(|e| format!("创建目录失败: {}", e))?;
-
-    let actual_binary = std::path::Path::new(&brew_bin_path).canonicalize()
-        .map_err(|e| format!("无法解析 Python 二进制文件: {}", e))?;
-
-    emit_line(app, session_id, &format!(">>> 复制二进制文件: {}", actual_binary.display()));
-    let dest_bin = target_bin.join("python3.12");
-    std::fs::copy(&actual_binary, &dest_bin)
-        .map_err(|e| format!("复制 Python 二进制文件失败: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&dest_bin).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&dest_bin, perms).ok();
-    }
-
-    let _ = std::fs::remove_file(target_bin.join("python3"));
-    std::os::unix::fs::symlink("python3.12", target_bin.join("python3"))
-        .map_err(|e| format!("创建 python3 链接失败: {}", e))?;
-    let _ = std::fs::remove_file(target_bin.join("python"));
-    std::os::unix::fs::symlink("python3", target_bin.join("python"))
-        .map_err(|e| format!("创建 python 链接失败: {}", e))?;
-
-    let brew_fw_bin = format!("{}/Versions/3.12/bin", brew_framework);
-    if std::path::Path::new(&brew_fw_bin).exists() {
-        for entry in std::fs::read_dir(&brew_fw_bin).ok().into_iter().flatten() {
-            if let Ok(entry) = entry {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with("pip") || name_str.starts_with("2to3") ||
-                   name_str.starts_with("idle") || name_str.starts_with("pydoc") {
-                    let _ = std::fs::copy(&entry.path(), &target_bin.join(&name));
-                }
+    let heartbeat_sid = session_id.clone();
+    let heartbeat_app = app.clone();
+    let heartbeat_ts = last_output_ts.clone();
+    let heartbeat = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+            let last = heartbeat_ts.load(std::sync::atomic::Ordering::Relaxed);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            if now - last > 5000 {
+                emit_line(&heartbeat_app, &heartbeat_sid, "  ⏳ 正在下载依赖包，请稍候...");
+                heartbeat_ts.store(now, std::sync::atomic::Ordering::Relaxed);
             }
         }
+    });
+
+    let status = child.wait().await
+        .map_err(|e| format!("等待安装完成失败: {}", e))?;
+    heartbeat.abort();
+    let _ = heartbeat.await;
+
+    if !status.success() {
+        emit_line(&app, &session_id, "✗ 安装失败");
+        return Err("安装内置 Python 失败".to_string());
     }
 
-    emit_line(app, session_id, ">>> 复制 Python 标准库 (约 50MB，请稍候)...");
-    let dest_framework = python_dir.join("Frameworks");
-    std::fs::create_dir_all(&dest_framework).ok();
+    // Auto-set as active Python
+    let _ = try_set_active_python(&app, &session_id);
 
-    let ditto = Command::new("ditto")
-        .args([&brew_framework, dest_framework.join("Python.framework").to_str().unwrap()])
-        .output();
-    match ditto {
-        Ok(output) if output.status.success() => {
-            emit_line(app, session_id, "✓ Python 标准库复制完成");
-        }
-        Ok(output) => {
-            let err = String::from_utf8_lossy(&output.stderr);
-            emit_line(app, session_id, &format!("⚠ ditto 警告: {}", err.lines().next().unwrap_or("")));
-        }
-        Err(e) => {
-            emit_line(app, session_id, &format!("⚠ ditto 失败: {}", e));
-        }
-    }
-
-    let test_output = Command::new(&dest_bin).arg("--version").output();
-    match test_output {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let version = if version.is_empty() {
-                String::from_utf8_lossy(&output.stderr).trim().to_string()
-            } else { version };
-            emit_line(app, session_id, &format!("✓ 验证成功: {}", version));
-        }
-        _ => {
-            emit_line(app, session_id, "⚠ 验证失败，请检查安装日志");
-        }
-    }
-
-    emit_line(app, session_id, "✓ 内置 Python 3.12 配置完成");
-    Ok("内置 Python 安装完成".to_string())
-}
-
-#[cfg(windows)]
-async fn install_python_windows(
-    app: &AppHandle,
-    session_id: &str,
-    python_dir: &std::path::Path,
-) -> Result<String, String> {
-    emit_line(app, session_id, ">>> 正在下载 Python 3.12 embeddable...");
-    let url = "https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip";
-    let zip_path = python_dir.parent().unwrap().join("python-3.12.9-embed-amd64.zip");
-
-    let client = reqwest::Client::new();
-    let response = client.get(url).send().await
-        .map_err(|e| format!("下载失败: {}", e))?;
-    let bytes = response.bytes().await
-        .map_err(|e| format!("下载失败: {}", e))?;
-    std::fs::write(&zip_path, &bytes)
-        .map_err(|e| format!("保存文件失败: {}", e))?;
-
-    emit_line(app, session_id, ">>> 正在解压...");
-    let output = Command::new("tar")
-        .args(["-xf", zip_path.to_str().unwrap(), "-C", python_dir.to_str().unwrap()])
-        .output()
-        .map_err(|e| format!("解压失败: {}", e))?;
-    let _ = std::fs::remove_file(&zip_path);
-
-    if !output.status.success() {
-        return Err("解压失败".to_string());
-    }
-    emit_line(app, session_id, "✓ 内置 Python 3.12 安装完成");
-    Ok("内置 Python 安装完成".to_string())
+    Ok("安装完成".to_string())
 }
 
 #[tauri::command]
 pub async fn uninstall_bundled_python() -> Result<String, String> {
-    let python_dir = get_bundled_python_path();
-    if python_dir.exists() {
-        std::fs::remove_dir_all(&python_dir)
-            .map_err(|e| format!("删除失败: {}", e))?;
+    let result = run_script(&["uninstall_bundled"])?;
+    if result.contains("error") {
+        Err("卸载内置 Python 失败".to_string())
+    } else {
+        Ok("内置 Python 已卸载".to_string())
     }
-    Ok("内置 Python 已卸载".to_string())
 }
 
 // --- Legacy compatibility ---
@@ -814,14 +728,44 @@ pub async fn install_ocr_dependencies(
         }
         args.push(pkg);
         let mut child = TokioCommand::new(python)
+            .env("PYTHONUNBUFFERED", "1")
+            .env("PIP_PROGRESS_BAR", "on")
             .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("pip 启动失败: {}", e))?;
-        spawn_stream_readers(&app, &session_id, &mut child);
+
+        let last_output_ts = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+        ));
+        spawn_stream_readers(&app, &session_id, &mut child, last_output_ts.clone());
+
+        let heartbeat_sid = session_id.clone();
+        let heartbeat_app = app.clone();
+        let heartbeat_ts = last_output_ts.clone();
+        let heartbeat = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                let last = heartbeat_ts.load(std::sync::atomic::Ordering::Relaxed);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                if now - last > 5000 {
+                    emit_line(&heartbeat_app, &heartbeat_sid, "  ⏳ 正在下载依赖包，请稍候...");
+                    heartbeat_ts.store(now, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        });
+
         let status = child.wait().await
             .map_err(|e| format!("等待进程失败: {}", e))?;
+        heartbeat.abort();
+        let _ = heartbeat.await;
         if !status.success() {
             emit_line(&app, &session_id, &format!("✗ 安装 {} 失败", pkg));
             return Err(format!("安装 {} 失败", pkg));
