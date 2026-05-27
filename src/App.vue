@@ -32,19 +32,18 @@ function handleKeyDown(e: KeyboardEvent) {
 onMounted(async () => {
   document.addEventListener('keydown', handleKeyDown);
 
-  // Check OCR status on startup
+  // Check OCR status on startup — prompt only if enabled but not ready
   try {
     const status = await checkOcrStatus();
-    if (!status.available) {
-      ElMessageBox.confirm(
-        'OCR 识别功能需要模型文件才能使用。是否前往设置页下载？',
-        'OCR 模型未找到',
-        {
-          confirmButtonText: '前往设置',
-          cancelButtonText: '稍后再说',
-          type: 'warning',
-        }
-      ).then(() => {
+    if (!status.available && status.enabled) {
+      const msg = status.activePython
+        ? 'OCR 识别已启用，但尚未安装 PaddleOCR 依赖。是否前往设置页安装？'
+        : 'OCR 识别已启用，但未找到 Python 3.8+。是否前往设置页查看？';
+      ElMessageBox.confirm(msg, 'OCR 未就绪', {
+        confirmButtonText: '前往设置',
+        cancelButtonText: '稍后再说',
+        type: 'warning',
+      }).then(() => {
         router.push('/settings');
       }).catch(() => {
         // User dismissed

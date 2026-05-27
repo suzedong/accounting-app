@@ -1,83 +1,126 @@
-use std::process::Command;
-use tauri::State;
+use std::process::{Command, Stdio};
+use tokio::process::Command as TokioCommand;
+use tauri::{State, AppHandle, Emitter};
 use serde::Serialize;
 
 use crate::commands::config::AppConfig;
 use crate::db::Database;
 
-// --- Python Detection ---
+// --- Data Structures ---
 
-/// 跨平台 Python 可执行文件路径
 #[derive(Debug, Clone, Serialize)]
-pub struct PythonInfo {
+#[serde(rename_all = "camelCase")]
+pub struct SystemPython {
     pub path: String,
     pub version: String,
+    pub minor_version: u8,
+    pub is_compatible: bool,
     pub has_paddleocr: bool,
 }
 
-/// 探测系统 Python（跨平台、多路径尝试）
-fn detect_python() -> Option<PythonInfo> {
-    // 候选命令（按优先级排序）
-    let candidates = if cfg!(windows) {
-        vec!["py", "python", "python3", "python3.11", "python3.12"]
-    } else if cfg!(target_os = "macos") {
-        vec!["python3", "python", "/usr/bin/python3", "/opt/homebrew/bin/python3"]
-    } else {
-        vec!["python3", "python", "/usr/bin/python3"]
-    };
-
-    for cmd in &candidates {
-        if let Some(info) = try_python_cmd(cmd) {
-            debug_log(&format!("[python] found: path={}, version={}, has_paddleocr={}",
-                info.path, info.version, info.has_paddleocr));
-            return Some(info);
-        }
-    }
-
-    // Windows 额外尝试常见安装路径
-    if cfg!(windows) {
-        let common_paths = [
-            "C:\\Python311\\python.exe",
-            "C:\\Python312\\python.exe",
-            "C:\\Program Files\\Python311\\python.exe",
-            "C:\\Program Files\\Python312\\python.exe",
-        ];
-        for path in &common_paths {
-            if let Some(info) = try_python_cmd(path) {
-                debug_log(&format!("[python] found (common path): path={}, version={}, has_paddleocr={}",
-                    info.path, info.version, info.has_paddleocr));
-                return Some(info);
-            }
-        }
-    }
-
-    None
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivePython {
+    pub path: String,
+    pub version: String,
+    pub is_bundled: bool,
+    pub has_paddleocr: bool,
 }
 
-/// 尝试执行一个 Python 命令，返回版本和 paddleocr 状态
-fn try_python_cmd(cmd: &str) -> Option<PythonInfo> {
-    // 先检查版本
-    let version_output = Command::new(cmd)
-        .arg("--version")
-        .output()
-        .ok()?;
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrStatus {
+    pub available: bool,
+    pub enabled: bool,
+    pub active_python: Option<ActivePython>,
+    pub system_pythons: Vec<SystemPython>,
+    pub bundled_python_installed: bool,
+    pub message: String,
+}
 
-    if !version_output.status.success() {
-        return None;
+// --- Intermediate structs for shell script JSON parsing ---
+
+#[derive(serde::Deserialize)]
+struct ShellPythonInfo {
+    path: String,
+    version: String,
+    minor_version: u8,
+    is_compatible: bool,
+    has_paddleocr: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct ShellDiscoverResult {
+    pythons: Vec<ShellPythonInfo>,
+    #[allow(dead_code)]
+    bundled_python_installed: bool,
+    #[allow(dead_code)]
+    bundled_python_path: String,
+}
+
+// --- Log emit ---
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct InstallLog {
+    session_id: String,
+    text: String,
+}
+
+fn emit_line(app: &AppHandle, session_id: &str, text: &str) {
+    debug_log(&format!("[emit] session={}, text={}", session_id, text));
+    let _ = app.emit("ocr_install_log", InstallLog {
+        session_id: session_id.to_string(),
+        text: text.to_string(),
+    });
+}
+
+// --- Shell script invocation ---
+
+fn get_script_path() -> std::path::PathBuf {
+    let candidates = [
+        "scripts/python_manager.sh",
+        "../scripts/python_manager.sh",
+        "../../scripts/python_manager.sh",
+        "resources/scripts/python_manager.sh",
+    ];
+    for path in &candidates {
+        let p = std::path::Path::new(path);
+        if p.exists() {
+            return p.to_path_buf();
+        }
     }
+    std::path::PathBuf::from("scripts/python_manager.sh")
+}
 
-    let version = String::from_utf8_lossy(&version_output.stdout)
-        .trim()
-        .to_string();
+fn run_script(args: &[&str]) -> Result<String, String> {
+    let script = get_script_path();
+    debug_log(&format!("[script] running: bash {} {:?}", script.display(), args));
+    let output = Command::new("bash")
+        .arg(&script)
+        .args(args)
+        .output()
+        .map_err(|e| format!("启动 shell 脚本失败: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(stderr.lines().last().unwrap_or("脚本执行失败").to_string());
+    }
+    Ok(stdout)
+}
 
-    // 检查 paddleocr 是否可用
-    let has_paddleocr = check_module(cmd, "paddleocr").unwrap_or(false);
+/// 获取应用数据目录中内置 Python 的路径
+fn get_bundled_python_path() -> std::path::PathBuf {
+    let app_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("accounting-app")
+        .join("python");
+    app_dir.join("bin").join("python3")
+}
 
-    Some(PythonInfo {
-        path: cmd.to_string(),
-        version,
-        has_paddleocr,
-    })
+/// 判断 Python 是否兼容 PaddleOCR (3.8-3.12)
+fn is_python_compatible(minor: u8) -> bool {
+    (8..=12).contains(&minor)
 }
 
 /// 检查指定 Python 是否安装了某个模块
@@ -90,52 +133,168 @@ fn check_module(python: &str, module: &str) -> Option<bool> {
     Some(output.status.success())
 }
 
-// --- Auto Install ---
+// --- PythonInfo for internal use (with is_bundled) ---
 
-/// 自动安装 paddleocr（首次使用时调用）
-fn install_paddleocr(python: &str) -> Result<String, String> {
-    debug_log(&format!("[install] installing paddleocr via {}", python));
+#[derive(Debug, Clone)]
+struct PythonInfo {
+    path: String,
+    version: String,
+    minor_version: u8,
+    has_paddleocr: bool,
+    is_bundled: bool,
+}
 
-    // 先安装 paddlepaddle（CPU 版），再安装 paddleocr
-    let packages = ["paddlepaddle", "paddleocr"];
+fn parse_minor(version: &str) -> Option<u8> {
+    let parts: Vec<&str> = version.split_whitespace().collect();
+    let ver = parts.last()?;
+    let dots: Vec<&str> = ver.split('.').collect();
+    if dots.len() >= 2 {
+        dots[1].parse::<u8>().ok()
+    } else {
+        None
+    }
+}
 
-    for pkg in &packages {
-        // Skip if already installed
-        if check_module(python, pkg.split('-').next().unwrap()).unwrap_or(false) {
-            debug_log(&format!("[install] {} already installed", pkg));
-            continue;
+fn try_python_cmd(cmd: &str) -> Option<PythonInfo> {
+    let version_output = Command::new(cmd)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !version_output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&version_output.stdout).trim().to_string();
+    let version = if version.is_empty() {
+        String::from_utf8_lossy(&version_output.stderr).trim().to_string()
+    } else {
+        version
+    };
+    if version.is_empty() {
+        return None;
+    }
+    let minor_version = parse_minor(&version).unwrap_or(0);
+    let has_paddleocr = check_module(cmd, "paddleocr").unwrap_or(false);
+    Some(PythonInfo {
+        path: cmd.to_string(),
+        version,
+        minor_version,
+        has_paddleocr,
+        is_bundled: false,
+    })
+}
+
+fn build_active_python(info: &PythonInfo) -> ActivePython {
+    ActivePython {
+        path: info.path.clone(),
+        version: info.version.clone(),
+        is_bundled: info.is_bundled,
+        has_paddleocr: info.has_paddleocr,
+    }
+}
+
+// --- System Python Discovery (via shell script) ---
+
+fn discover_system_pythons() -> Vec<SystemPython> {
+    match run_script(&["discover"]) {
+        Ok(json) => {
+            debug_log(&format!("[discover] raw output: {}", json));
+            match serde_json::from_str::<ShellDiscoverResult>(&json) {
+                Ok(result) => {
+                    result.pythons
+                        .into_iter()
+                        .map(|p| SystemPython {
+                            path: p.path,
+                            version: p.version,
+                            minor_version: p.minor_version,
+                            is_compatible: p.is_compatible,
+                            has_paddleocr: p.has_paddleocr,
+                        })
+                        .collect()
+                }
+                Err(e) => {
+                    debug_log(&format!("[discover] JSON parse error: {}", e));
+                    Vec::new()
+                }
+            }
         }
-
-        debug_log(&format!("[install] installing {}...", pkg));
-
-        let output = Command::new(python)
-            .args(["-m", "pip", "install", "--quiet", "--upgrade", pkg])
-            .output()
-            .map_err(|e| format!("pip 启动失败: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            debug_log(&format!("[install] {} failed: {}", pkg, stderr));
-            return Err(format!("安装 {} 失败: {}", pkg, stderr.lines().last().unwrap_or(&stderr)));
+        Err(e) => {
+            debug_log(&format!("[discover] script error: {}", e));
+            Vec::new()
         }
+    }
+}
 
-        debug_log(&format!("[install] {} installed successfully", pkg));
+/// 合并内置 + 系统 Python 列表
+fn discover_all_pythons(bundled_installed: bool) -> Vec<SystemPython> {
+    let mut all: Vec<SystemPython> = Vec::new();
+
+    // Add bundled Python first
+    if bundled_installed {
+        let bundled_path = get_bundled_python_path();
+        if let Some(path_str) = bundled_path.to_str() {
+            if let Some(info) = try_python_cmd(path_str) {
+                all.push(SystemPython {
+                    path: info.path,
+                    version: info.version,
+                    minor_version: info.minor_version,
+                    is_compatible: is_python_compatible(info.minor_version),
+                    has_paddleocr: info.has_paddleocr,
+                });
+            }
+        }
     }
 
-    Ok("安装完成".to_string())
+    // Add system Pythons, deduplicate against bundled
+    let system = discover_system_pythons();
+    let bundled_path_str = get_bundled_python_path()
+        .canonicalize()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok();
+
+    for sys_python in system {
+        // Skip if same resolved path as bundled
+        let sys_resolved = std::path::Path::new(&sys_python.path)
+            .canonicalize()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| sys_python.path.clone());
+        if let Some(ref bundled) = bundled_path_str {
+            if sys_resolved == *bundled {
+                continue;
+            }
+        }
+        all.push(sys_python);
+    }
+
+    all
+}
+
+// --- Config helpers ---
+
+fn get_active_python_path(app_config: &State<'_, AppConfig>) -> Option<String> {
+    let config_guard = app_config.data.lock().ok()?;
+    config_guard.get("active_python_path").cloned()
+}
+
+fn set_active_python_path(app_config: &State<'_, AppConfig>, db: &State<'_, Database>, path: &str) -> Result<(), String> {
+    {
+        let conn = db.get_conn();
+        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
+        conn_guard
+            .execute(
+                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+                ("active_python_path", path),
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    {
+        let mut config_guard = app_config.data.lock().map_err(|e| e.to_string())?;
+        config_guard.insert("active_python_path".to_string(), path.to_string());
+    }
+    Ok(())
 }
 
 // --- Status ---
 
-#[derive(Serialize)]
-pub struct OcrStatus {
-    pub available: bool,
-    pub enabled: bool,
-    pub python: Option<PythonInfo>,
-    pub message: String,
-}
-
-/// 检查 OCR 引擎状态
 #[tauri::command]
 pub fn check_ocr_status(app_config: State<'_, AppConfig>) -> Result<OcrStatus, String> {
     let enabled = {
@@ -145,126 +304,569 @@ pub fn check_ocr_status(app_config: State<'_, AppConfig>) -> Result<OcrStatus, S
             .unwrap_or(true)
     };
 
+    let bundled_installed = get_bundled_python_path().exists();
+    let system_pythons = discover_all_pythons(bundled_installed);
+
     if !enabled {
         return Ok(OcrStatus {
             available: false,
             enabled: false,
-            python: None,
+            active_python: None,
+            system_pythons,
+            bundled_python_installed: bundled_installed,
             message: "OCR 已禁用".to_string(),
         });
     }
 
-    match detect_python() {
-        Some(info) => {
-            let available = info.has_paddleocr;
-            let message = if available {
+    let active_python_path = get_active_python_path(&app_config);
+    let active_info = match &active_python_path {
+        Some(path) => {
+            if std::path::Path::new(path).exists() {
+                try_python_cmd(path).map(|mut info| {
+                    let bundled_path = get_bundled_python_path();
+                    let resolved = std::path::Path::new(path).canonicalize()
+                        .unwrap_or_else(|_| std::path::PathBuf::from(path));
+                    let bundled_resolved = bundled_path.canonicalize()
+                        .unwrap_or_else(|_| bundled_path.clone());
+                    if resolved == bundled_resolved {
+                        info.is_bundled = true;
+                    }
+                    info
+                })
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let (active_info, message) = if let Some(info) = active_info {
+        let msg = if info.has_paddleocr {
+            if info.is_bundled {
+                "内置 Python + PaddleOCR 已就绪".to_string()
+            } else {
+                "PaddleOCR 已就绪".to_string()
+            }
+        } else if info.is_bundled {
+            "内置 Python 已安装，需要安装 PaddleOCR 依赖".to_string()
+        } else {
+            format!("Python 已安装 ({}), 需要安装 paddleocr 依赖", info.version)
+        };
+        (Some(info), msg)
+    } else {
+        let fallback = system_pythons.iter()
+            .find(|p| p.is_compatible && p.has_paddleocr)
+            .or_else(|| system_pythons.iter().find(|p| p.is_compatible));
+
+        if let Some(python) = fallback {
+            let info = PythonInfo {
+                path: python.path.clone(),
+                version: python.version.clone(),
+                minor_version: python.minor_version,
+                has_paddleocr: python.has_paddleocr,
+                is_bundled: false,
+            };
+            let msg = if python.has_paddleocr {
                 "PaddleOCR 已就绪".to_string()
             } else {
-                format!("Python 已安装 ({}), 需要安装 paddleocr 依赖", info.version)
+                format!("Python 已安装 ({}), 需要安装 paddleocr 依赖", python.version)
             };
-            Ok(OcrStatus {
-                available,
-                enabled: true,
-                python: Some(info),
-                message,
-            })
+            (Some(info), msg)
+        } else {
+            (None, "未找到兼容的 Python (需要 3.8-3.12)".to_string())
         }
-        None => Ok(OcrStatus {
-            available: false,
-            enabled: true,
-            python: None,
-            message: "未找到 Python，请安装 Python 3.11+ (https://www.python.org/downloads/)".to_string(),
-        })
+    };
+
+    let available = active_info.as_ref().map(|i| i.has_paddleocr).unwrap_or(false);
+    let active_python = active_info.map(|i| build_active_python(&i));
+
+    Ok(OcrStatus {
+        available,
+        enabled: true,
+        active_python,
+        system_pythons,
+        bundled_python_installed: bundled_installed,
+        message,
+    })
+}
+
+// --- Python Selection ---
+
+#[tauri::command]
+pub fn select_python(app_config: State<'_, AppConfig>, db: State<'_, Database>, path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Python 路径不存在: {}", path));
+    }
+    if let Some(info) = try_python_cmd(&path) {
+        if !is_python_compatible(info.minor_version) {
+            return Err(format!("Python {} 不兼容 PaddleOCR (需要 3.8-3.12)", info.version));
+        }
+    } else {
+        return Err(format!("无效的 Python 可执行文件: {}", path));
+    }
+    set_active_python_path(&app_config, &db, &path)
+}
+
+// --- Per-Python Dependency Management (via shell script) ---
+
+fn spawn_stream_readers(
+    app: &AppHandle,
+    session_id: &str,
+    child: &mut tokio::process::Child,
+) {
+    if let Some(stdout) = child.stdout.take() {
+        let app_ref = app.clone();
+        let sid = session_id.to_string();
+        tokio::spawn(async move {
+            let reader = tokio::io::BufReader::new(stdout);
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                emit_line(&app_ref, &sid, &line);
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let app_ref = app.clone();
+        let sid = session_id.to_string();
+        tokio::spawn(async move {
+            let reader = tokio::io::BufReader::new(stderr);
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                emit_line(&app_ref, &sid, &line);
+            }
+        });
     }
 }
 
-/// 安装 PaddleOCR 依赖
 #[tauri::command]
-pub async fn install_ocr_dependencies() -> Result<String, String> {
-    let python_info = detect_python().ok_or("未找到 Python，请先安装 Python")?;
-
-    if python_info.has_paddleocr {
-        return Ok("PaddleOCR 已安装，无需重复安装".to_string());
-    }
-
-    install_paddleocr(&python_info.path)
-}
-
-/// 设置 OCR 启用状态（持久化到数据库）
-#[tauri::command]
-pub async fn set_ocr_enabled(
-    state: State<'_, Database>,
+pub async fn install_paddleocr_for_python(
+    app: AppHandle,
     app_config: State<'_, AppConfig>,
-    enabled: bool,
-) -> Result<(), String> {
-    let val = if enabled { "true" } else { "false" };
-
-    {
-        let conn = state.get_conn();
-        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        conn_guard
-            .execute(
-                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
-                ("ocr_enabled", val),
-            )
-            .map_err(|e| e.to_string())?;
+    db: State<'_, Database>,
+    python_path: String,
+    session_id: String,
+) -> Result<String, String> {
+    // Quick check if already installed
+    match run_script(&["check_paddle", &python_path]) {
+        Ok(out) if out.trim() == "true" => {
+            emit_line(&app, &session_id, "PaddleOCR 已安装，无需重复安装");
+            return Ok("PaddleOCR 已安装".to_string());
+        }
+        _ => {}
     }
 
-    {
-        let mut config_guard = app_config.data.lock().map_err(|e| e.to_string())?;
-        config_guard.insert("ocr_enabled".to_string(), val.to_string());
+    emit_line(&app, &session_id, ">>> 正在安装 PaddleOCR 依赖...");
+
+    let script = get_script_path();
+    let mut child = TokioCommand::new("bash")
+        .arg(&script)
+        .args(["install", &python_path])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动安装脚本失败: {}", e))?;
+
+    spawn_stream_readers(&app, &session_id, &mut child);
+
+    let status = child.wait().await
+        .map_err(|e| format!("等待安装完成失败: {}", e))?;
+
+    if !status.success() {
+        emit_line(&app, &session_id, "✗ 安装失败");
+        return Err("安装 PaddleOCR 失败".to_string());
     }
 
-    Ok(())
+    let _ = set_active_python_path(&app_config, &db, &python_path);
+    emit_line(&app, &session_id, ">>> 全部安装完成！");
+    Ok("安装完成".to_string())
+}
+
+#[tauri::command]
+pub async fn uninstall_paddleocr_for_python(
+    app: AppHandle,
+    python_path: String,
+) -> Result<String, String> {
+    emit_line(&app, "uninstall", ">>> 正在卸载 PaddleOCR...");
+
+    let script = get_script_path();
+    let output = Command::new("bash")
+        .arg(&script)
+        .args(["uninstall", &python_path])
+        .output()
+        .map_err(|e| format!("启动卸载脚本失败: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        emit_line(&app, "uninstall", line);
+    }
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        emit_line(&app, "uninstall", &format!("✗ 卸载失败: {}", stderr.lines().next().unwrap_or("")));
+        return Err("卸载 PaddleOCR 失败".to_string());
+    }
+
+    Ok("卸载完成".to_string())
+}
+
+#[tauri::command]
+pub async fn reinstall_paddleocr_for_python(
+    app: AppHandle,
+    app_config: State<'_, AppConfig>,
+    db: State<'_, Database>,
+    python_path: String,
+    session_id: String,
+) -> Result<String, String> {
+    emit_line(&app, &session_id, ">>> 正在重新安装 PaddleOCR...");
+    let _ = uninstall_paddleocr_for_python(app.clone(), python_path.clone()).await;
+    install_paddleocr_for_python(app, app_config, db, python_path, session_id).await
+}
+
+// --- Built-in Python Commands ---
+
+#[tauri::command]
+pub async fn reinstall_bundled_python(
+    app: AppHandle,
+    session_id: String,
+) -> Result<String, String> {
+    emit_line(&app, &session_id, ">>> 正在重新安装内置 Python...");
+    let python_dir = get_bundled_python_path();
+    if python_dir.exists() {
+        emit_line(&app, &session_id, ">>> 正在删除旧版本...");
+        std::fs::remove_dir_all(&python_dir)
+            .map_err(|e| format!("清理旧版本失败: {}", e))?;
+    }
+    install_bundled_python(app.clone(), session_id).await
+}
+
+#[tauri::command]
+pub async fn install_bundled_python(
+    app: AppHandle,
+    session_id: String,
+) -> Result<String, String> {
+    emit_line(&app, &session_id, ">>> 正在安装内置 Python 3.12...");
+    let python_dir = get_bundled_python_path();
+    if let Some(parent) = python_dir.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("创建目录失败: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        install_python_macos(&app, &session_id, &python_dir).await
+    }
+    #[cfg(windows)]
+    {
+        install_python_windows(&app, &session_id, &python_dir).await
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = (&app, &session_id, &python_dir);
+        Err("当前平台不支持内置 Python 安装".to_string())
+    }
+}
+
+async fn install_python_macos(
+    app: &AppHandle,
+    session_id: &str,
+    python_dir: &std::path::Path,
+) -> Result<String, String> {
+    emit_line(app, session_id, ">>> 正在安装 Python 3.12 (通过 Homebrew)...");
+
+    let brew_check = Command::new("brew").arg("--prefix").output();
+    let brew_prefix = match brew_check {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => {
+            emit_line(app, session_id, "✗ Homebrew 未安装");
+            return Err("请先安装 Homebrew: https://brew.sh".to_string());
+        }
+    };
+
+    let brew_bin_path = format!("{}/opt/python@3.12/bin/python3.12", brew_prefix);
+    let brew_framework = format!("{}/opt/python@3.12/Frameworks/Python.framework", brew_prefix);
+
+    if !std::path::Path::new(&brew_bin_path).exists() {
+        emit_line(app, session_id, ">>> 正在安装 python@3.12 (可能需要几分钟)...");
+        let mut install_output = TokioCommand::new("brew")
+            .args(["install", "python@3.12"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("brew 启动失败: {}", e))?;
+
+        let app_ref = app.clone();
+        let sid = session_id.to_string();
+        let stderr_handle = if let Some(stderr) = install_output.stderr.take() {
+            Some(tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    emit_line(&app_ref, &sid, &line);
+                }
+            }))
+        } else { None };
+
+        let mut stdout_futures = Vec::new();
+        if let Some(stdout) = install_output.stdout.take() {
+            let app_ref = app.clone();
+            let sid = session_id.to_string();
+            stdout_futures.push(tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut lines = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    emit_line(&app_ref, &sid, &line);
+                }
+            }));
+        }
+
+        let status = install_output.wait().await
+            .map_err(|e| format!("等待安装完成失败: {}", e))?;
+        for f in stdout_futures { let _ = f.await; }
+        if let Some(f) = stderr_handle { let _ = f.await; }
+
+        if !status.success() {
+            emit_line(app, session_id, "✗ 安装 python@3.12 失败");
+            return Err("安装 python@3.12 失败".to_string());
+        }
+    }
+
+    emit_line(app, session_id, ">>> Python 3.12 已就绪，正在复制到应用目录...");
+
+    if python_dir.exists() {
+        std::fs::remove_dir_all(python_dir)
+            .map_err(|e| format!("清理旧安装失败: {}", e))?;
+    }
+
+    let target_bin = python_dir.join("bin");
+    std::fs::create_dir_all(&target_bin)
+        .map_err(|e| format!("创建目录失败: {}", e))?;
+
+    let actual_binary = std::path::Path::new(&brew_bin_path).canonicalize()
+        .map_err(|e| format!("无法解析 Python 二进制文件: {}", e))?;
+
+    emit_line(app, session_id, &format!(">>> 复制二进制文件: {}", actual_binary.display()));
+    let dest_bin = target_bin.join("python3.12");
+    std::fs::copy(&actual_binary, &dest_bin)
+        .map_err(|e| format!("复制 Python 二进制文件失败: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&dest_bin).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&dest_bin, perms).ok();
+    }
+
+    let _ = std::fs::remove_file(target_bin.join("python3"));
+    std::os::unix::fs::symlink("python3.12", target_bin.join("python3"))
+        .map_err(|e| format!("创建 python3 链接失败: {}", e))?;
+    let _ = std::fs::remove_file(target_bin.join("python"));
+    std::os::unix::fs::symlink("python3", target_bin.join("python"))
+        .map_err(|e| format!("创建 python 链接失败: {}", e))?;
+
+    let brew_fw_bin = format!("{}/Versions/3.12/bin", brew_framework);
+    if std::path::Path::new(&brew_fw_bin).exists() {
+        for entry in std::fs::read_dir(&brew_fw_bin).ok().into_iter().flatten() {
+            if let Ok(entry) = entry {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("pip") || name_str.starts_with("2to3") ||
+                   name_str.starts_with("idle") || name_str.starts_with("pydoc") {
+                    let _ = std::fs::copy(&entry.path(), &target_bin.join(&name));
+                }
+            }
+        }
+    }
+
+    emit_line(app, session_id, ">>> 复制 Python 标准库 (约 50MB，请稍候)...");
+    let dest_framework = python_dir.join("Frameworks");
+    std::fs::create_dir_all(&dest_framework).ok();
+
+    let ditto = Command::new("ditto")
+        .args([&brew_framework, dest_framework.join("Python.framework").to_str().unwrap()])
+        .output();
+    match ditto {
+        Ok(output) if output.status.success() => {
+            emit_line(app, session_id, "✓ Python 标准库复制完成");
+        }
+        Ok(output) => {
+            let err = String::from_utf8_lossy(&output.stderr);
+            emit_line(app, session_id, &format!("⚠ ditto 警告: {}", err.lines().next().unwrap_or("")));
+        }
+        Err(e) => {
+            emit_line(app, session_id, &format!("⚠ ditto 失败: {}", e));
+        }
+    }
+
+    let test_output = Command::new(&dest_bin).arg("--version").output();
+    match test_output {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let version = if version.is_empty() {
+                String::from_utf8_lossy(&output.stderr).trim().to_string()
+            } else { version };
+            emit_line(app, session_id, &format!("✓ 验证成功: {}", version));
+        }
+        _ => {
+            emit_line(app, session_id, "⚠ 验证失败，请检查安装日志");
+        }
+    }
+
+    emit_line(app, session_id, "✓ 内置 Python 3.12 配置完成");
+    Ok("内置 Python 安装完成".to_string())
+}
+
+#[cfg(windows)]
+async fn install_python_windows(
+    app: &AppHandle,
+    session_id: &str,
+    python_dir: &std::path::Path,
+) -> Result<String, String> {
+    emit_line(app, session_id, ">>> 正在下载 Python 3.12 embeddable...");
+    let url = "https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip";
+    let zip_path = python_dir.parent().unwrap().join("python-3.12.9-embed-amd64.zip");
+
+    let client = reqwest::Client::new();
+    let response = client.get(url).send().await
+        .map_err(|e| format!("下载失败: {}", e))?;
+    let bytes = response.bytes().await
+        .map_err(|e| format!("下载失败: {}", e))?;
+    std::fs::write(&zip_path, &bytes)
+        .map_err(|e| format!("保存文件失败: {}", e))?;
+
+    emit_line(app, session_id, ">>> 正在解压...");
+    let output = Command::new("tar")
+        .args(["-xf", zip_path.to_str().unwrap(), "-C", python_dir.to_str().unwrap()])
+        .output()
+        .map_err(|e| format!("解压失败: {}", e))?;
+    let _ = std::fs::remove_file(&zip_path);
+
+    if !output.status.success() {
+        return Err("解压失败".to_string());
+    }
+    emit_line(app, session_id, "✓ 内置 Python 3.12 安装完成");
+    Ok("内置 Python 安装完成".to_string())
+}
+
+#[tauri::command]
+pub async fn uninstall_bundled_python() -> Result<String, String> {
+    let python_dir = get_bundled_python_path();
+    if python_dir.exists() {
+        std::fs::remove_dir_all(&python_dir)
+            .map_err(|e| format!("删除失败: {}", e))?;
+    }
+    Ok("内置 Python 已卸载".to_string())
+}
+
+// --- Legacy compatibility ---
+
+fn detect_python() -> Option<PythonInfo> {
+    let bundled_path = get_bundled_python_path();
+    if bundled_path.exists() {
+        let resolved = bundled_path.canonicalize().unwrap_or(bundled_path.clone());
+        let path_str = resolved.to_string_lossy().to_string();
+        if let Some(info) = try_python_cmd(&path_str) {
+            return Some(PythonInfo { is_bundled: true, ..info });
+        }
+    }
+    let candidates = if cfg!(windows) {
+        vec!["py", "python", "python3", "python3.11", "python3.12"]
+    } else if cfg!(target_os = "macos") {
+        vec!["python3", "python", "/usr/bin/python3", "/opt/homebrew/bin/python3"]
+    } else {
+        vec!["python3", "python", "/usr/bin/python3"]
+    };
+    for cmd in &candidates {
+        if let Some(info) = try_python_cmd(cmd) {
+            return Some(PythonInfo { is_bundled: false, ..info });
+        }
+    }
+    None
+}
+
+#[tauri::command]
+pub async fn install_ocr_dependencies(
+    app: AppHandle,
+    session_id: String,
+) -> Result<String, String> {
+    let python_info = detect_python().ok_or("未找到 Python，请先安装 Python")?;
+    if python_info.has_paddleocr {
+        emit_line(&app, &session_id, "PaddleOCR 已安装，无需重复安装");
+        return Ok("PaddleOCR 已安装".to_string());
+    }
+    let python = &python_info.path;
+    let is_bundled = python_info.is_bundled;
+    let packages = ["paddlepaddle", "paddleocr"];
+    for pkg in &packages {
+        emit_line(&app, &session_id, &format!(">>> 检查 {} 是否已安装...", pkg));
+        if check_module(python, pkg.split('-').next().unwrap()).unwrap_or(false) {
+            emit_line(&app, &session_id, &format!("{} 已安装，跳过", pkg));
+            continue;
+        }
+        emit_line(&app, &session_id, &format!(">>> 正在安装 {}...", pkg));
+        let mut args = vec!["-m", "pip", "install", "--upgrade"];
+        if !is_bundled {
+            args.push("--break-system-packages");
+        }
+        args.push(pkg);
+        let mut child = TokioCommand::new(python)
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("pip 启动失败: {}", e))?;
+        spawn_stream_readers(&app, &session_id, &mut child);
+        let status = child.wait().await
+            .map_err(|e| format!("等待进程失败: {}", e))?;
+        if !status.success() {
+            emit_line(&app, &session_id, &format!("✗ 安装 {} 失败", pkg));
+            return Err(format!("安装 {} 失败", pkg));
+        }
+        emit_line(&app, &session_id, &format!("✓ {} 安装完成", pkg));
+    }
+    emit_line(&app, &session_id, ">>> 全部安装完成！");
+    Ok("安装完成".to_string())
 }
 
 // --- OCR Recognition ---
 
-/// 执行 OCR 识别
 #[tauri::command]
 pub async fn ocr_recognize(
     app_config: State<'_, AppConfig>,
     image_base64: String,
 ) -> Result<String, String> {
-    // Check if OCR is enabled
     {
         let config_guard = app_config.data.lock().map_err(|e| e.to_string())?;
         if config_guard.get("ocr_enabled").map(|v| v != "true").unwrap_or(false) {
             return Err("OCR 识别已关闭".to_string());
         }
     }
-
-    // Detect Python
-    let python_info = detect_python()
-        .ok_or("未找到 Python，请先安装 Python 3.11+ 并在设置中安装依赖")?;
-
-    if !python_info.has_paddleocr {
-        return Err("PaddleOCR 未安装，请在设置中点击「安装依赖」".to_string());
+    let python_path = get_active_python_path(&app_config)
+        .ok_or("未设置 Python，请前往设置页选择")?;
+    let info = try_python_cmd(&python_path)
+        .ok_or(format!("Python 不可用: {}", python_path))?;
+    if !info.has_paddleocr {
+        return Err("PaddleOCR 未安装，请在设置中安装依赖".to_string());
     }
-
-    // Remove data URI prefix
     let clean_base64 = if image_base64.contains(',') {
         image_base64.split(',').last().unwrap_or(&image_base64).to_string()
     } else {
         image_base64
     };
-
-    // Find ocr_service.py
     let script_dir = find_script_dir()
-        .ok_or("找不到 server/ocr_service.py，请确保项目结构正确")?;
-
-    call_paddle_ocr(&python_info.path, &script_dir, &clean_base64)
+        .ok_or("找不到 scripts/ocr_service.py，请确保项目结构正确")?;
+    call_paddle_ocr(&info.path, &script_dir, &clean_base64)
 }
 
-/// 调用 PaddleOCR
 fn call_paddle_ocr(python: &str, script_dir: &std::path::Path, base64_str: &str) -> Result<String, String> {
-    // Write base64 to temp file
     let tmp_dir = std::env::temp_dir();
     let b64_path = tmp_dir.join(format!("ocr_b64_{}.txt", uuid::Uuid::new_v4()));
     std::fs::write(&b64_path, base64_str)
         .map_err(|e| format!("写入临时文件失败: {}", e))?;
-
-    // Wrapper script
     let wrapper = format!(
         r#"
 import sys, os
@@ -278,17 +880,13 @@ print(result['text'])
         script_dir = script_dir.display(),
         b64_path = b64_path.display(),
     );
-
     let output = Command::new(python)
         .arg("-c")
         .arg(wrapper)
         .env("PYTHONIOENCODING", "utf-8")
         .output()
         .map_err(|e| format!("启动 Python 失败: {}", e))?;
-
-    // Cleanup
     let _ = std::fs::remove_file(&b64_path);
-
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if text.is_empty() {
@@ -303,32 +901,51 @@ print(result['text'])
     }
 }
 
+#[tauri::command]
+pub async fn set_ocr_enabled(
+    state: State<'_, Database>,
+    app_config: State<'_, AppConfig>,
+    enabled: bool,
+) -> Result<(), String> {
+    let val = if enabled { "true" } else { "false" };
+    {
+        let conn = state.get_conn();
+        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
+        conn_guard
+            .execute(
+                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+                ("ocr_enabled", val),
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    {
+        let mut config_guard = app_config.data.lock().map_err(|e| e.to_string())?;
+        config_guard.insert("ocr_enabled".to_string(), val.to_string());
+    }
+    Ok(())
+}
+
 // --- Helpers ---
 
-/// 查找 server/ocr_service.py 所在目录
 fn find_script_dir() -> Option<std::path::PathBuf> {
-    // 尝试多个相对路径
     let candidates = [
-        "server/ocr_service.py",
-        "../server/ocr_service.py",
-        "../../server/ocr_service.py",
-        // 打包后从 exe 目录查找
-        "resources/server/ocr_service.py",
+        "scripts/ocr_service.py",
+        "../scripts/ocr_service.py",
+        "../../scripts/ocr_service.py",
+        "resources/scripts/ocr_service.py",
     ];
-
     for path in &candidates {
         let p = std::path::Path::new(path);
         if p.exists() {
             return p.parent().map(|p| p.to_path_buf());
         }
     }
-
     None
 }
 
 fn debug_log(msg: &str) {
     use std::io::Write;
-    let path = std::path::PathBuf::from("D:\\Code\\accounting-app\\ocr_debug.log");
+    let path = std::env::temp_dir().join("ocr_debug.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(f, "{}", msg);
     }

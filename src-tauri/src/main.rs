@@ -67,9 +67,16 @@ fn main() {
             commands::sync::get_sync_logs,
             // OCR
             commands::ocr::check_ocr_status,
+            commands::ocr::select_python,
             commands::ocr::install_ocr_dependencies,
+            commands::ocr::install_paddleocr_for_python,
+            commands::ocr::uninstall_paddleocr_for_python,
+            commands::ocr::reinstall_paddleocr_for_python,
             commands::ocr::set_ocr_enabled,
             commands::ocr::ocr_recognize,
+            commands::ocr::install_bundled_python,
+            commands::ocr::uninstall_bundled_python,
+            commands::ocr::reinstall_bundled_python,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

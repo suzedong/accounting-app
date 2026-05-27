@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 项目正在从**旧架构**（纯前端 HTML/JS + Python server.py + NocoBase REST API）重构为**新架构**（Tauri 2 桌面应用 + Vue 3 + SQLite 本地数据库 + NocoBase 可选同步）。
 
-- **旧架构代码**仍存在于 `web/`、`server/`、`.env`、`vite.config.js` — 仍在重构中，暂不删除
+- **旧架构代码**已全部删除（web/、server/、scripts/、.env 均不再保留）
 - **新架构代码**在 `src/`（Vue 3 前端）和 `src-tauri/`（Rust 后端） — 持续开发中
 - **开发命令**：`npm run dev`（启动 Tauri，前端 Vite + 后端 Rust）
 - **旧架构文档**详见 `README.md`（面向旧架构的完整用户文档）
@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Phase 1: Tauri 骨架 + SQLite | ✅ 已完成 | 数据库（7 张表）、CRUD、前端基础 |
 | Phase 2: 业务逻辑迁移 | ✅ 已完成 | Rust commands 齐全（记录/差旅/统计），Vue 6 个页面全部可用 |
 | Phase 3: AI 聊天 + Agent | ✅ 已完成 | 百炼 API 直连、LLM dispatch、action handlers、ChatWidget、学习引擎、对话历史、OCR |
-| Phase 4: 同步层 + 清理 | ❌ 未开始 | push/pull/import 占位，server.py 待删除，文档待更新 |
+| Phase 4: 同步层 + 清理 | ✅ 进行中 | 旧架构代码已全部删除，push/pull/import 占位待实现 |
 
 ### 新架构目录
 
@@ -53,16 +53,23 @@ src/              # Vue 3 前端（TypeScript + Element Plus + Pinia）
 
 src-tauri/        # Rust 后端（Tauri 2 + SQLite）
 ├── src/
-│   ├── main.rs   # Tauri 入口，注册 33 个 commands
-│   ├── commands/ # 7 个模块（records/trips/stats/prompts/learning/chat/config/sync/ocr）
-│   │   └── ocr.rs        # OCR：Python 子进程调用 PaddleOCR（智能探测 + 自动安装依赖）
+│   ├── main.rs   # Tauri 入口，注册 commands
+│   ├── commands/ # 模块（records/trips/stats/prompts/learning/chat/config/sync/ocr）
+│   │   └── ocr.rs        # OCR：Python 子进程调用 PaddleOCR
 │   ├── db/       # SQLite 数据库（schema, CRUD, 聚合查询）
 │   └── models/   # 数据模型
-└── capabilities/ # Tauri 权限配置
+├── capabilities/ # Tauri 权限配置
+├── scripts/      # Python 脚本
+│   ├── python_manager.sh  # Python 发现 + PaddleOCR 依赖管理
+│   └── ocr_service.py     # PaddleOCR 识别服务
+└── prompts/      # AI 系统 Prompt
+    ├── dispatch.md
+    └── preferences.md
 
-web/              # 旧前端（HTML/JS，重构中保留，最终会删除）
-server/           # 旧后端（Python server.py，重构中保留，最终会删除）
-doc/              # 设计文档和开发计划
+docs/             # 设计文档
+│   ├── 01-project-overview.md     # 需求 + 架构 + UI
+│   ├── 02-development-roadmap.md  # 开发计划（含本地 LLM 方案）
+│   └── 03-active-design-docs.md   # 进行中的设计（Agent 重构 + OCR）
 ```
 
 ### 新开发命令
@@ -111,78 +118,34 @@ YYYY-MM-DD HH:MM:SS   (空格分隔，24 小时制)
 
 ## 项目概述（旧架构，保留作重构参考）
 
+> 以下为旧架构文档，**仅供参考**。相关代码已删除：`server/`、`scripts/`、`web/`、`.env`。
+
 基于 NocoBase 的纯前端记账应用，原生 HTML/CSS/JS 无框架。用户通过浏览器访问 HTML 页面，数据通过 NocoBase REST API 存取到 PostgreSQL。
 
-## 开发命令
+## 旧架构开发命令（已废弃）
 
 ```bash
-# 开发模式（Vite HMR + API 代理，端口 5174）
-npm run dev
-
-# 构建生产产物（输出到 dist/）
-npm run build
-
-# 启动本地服务器（端口 18080，提供静态文件 + API 代理 + AI 解析/分发代理）
-cd server && python3 server.py 18080
-
-# 浏览器访问
-# 开发模式: http://localhost:5174/（推荐，支持 HMR，自动重定向到 /pages/index.html）
-# 服务器模式: http://localhost:18080/（自动重定向到 /pages/index.html）
-# http://localhost:5174/pages/records.html      - 记录管理（增删改查 + 分页）
-# http://localhost:5174/pages/budget.html       - 预算管理
-# http://localhost:5174/pages/stats.html        - 统计分析（多维度图表）
-# http://localhost:5174/pages/trip_allowance.html - 差旅补助
+# 以下为旧架构命令，已不可用
+# cd server && python3 server.py 18080
+# npm run dev  # 旧版同时启动 Vite + server.py
 ```
 
-## 目录结构
+## 旧架构目录结构（已废弃，保留作参考）
+
+> 以下所有目录均已删除，不再存在于代码库中。
 
 ```
-.
-├── web/                    # 前端
-│   ├── pages/              # HTML 页面
-│   │   ├── index.html      # 首页（AI 对话记账）
-│   │   ├── records.html    # 记录管理
-│   │   ├── budget.html     # 预算管理
-│   │   ├── stats.html      # 统计分析
-│   │   └── trip_allowance.html  # 差旅补助
-│   ├── js/
-│   │   ├── globals.js      # ESM 桥接：导入所有模块并挂载到 window.*
-│   │   ├── modules/        # 自定义模块
-│   │   │   ├── config.js         # 配置：Collections 列表、月度预算
-│   │   │   ├── utils.js          # 工具函数 + 统计计算
-│   │   │   ├── nocobase-api.js   # NocoBase API 客户端
-│   │   │   ├── parse.js          # 规则解析器（降级方案）
-│   │   │   ├── ai-parser.js      # AI 解析器（降级方案）
-│   │   │   ├── learning-engine.js # 学习引擎
-│   │   │   ├── agent-core.js     # Agent 核心
-│   │   │   └── chat-widget.js    # AI 对话悬浮组件
-│   │   └── vendor/         # 第三方库
-│   │       └── (Vue Data UI via npm)
-│   └── assets/             # 静态资源
-│       ├── chat-widget.css       # 对话组件样式
-│       └── favicon.svg           # 网站图标
-├── server/                 # 后端
-│   ├── server.py           # Python HTTP 服务器（代理 + AI 端点 + Prompt 管理）
-│   ├── prompts/            # Prompt 文件
-│   │   ├── dispatch.md           # 意图识别 + 能力清单（Agent 自修改）
-│   │   ├── record.md             # 纯记账解析规则（降级方案）
-│   │   ├── preferences.md        # 用户个性化偏好（Agent 自修改）
-│   │   └── README.md             # Prompt 编写规范
-│   └── scripts/            # 数据迁移脚本
-│       ├── create_collections.py
-│       ├── migrate_to_nocobase.py
-│       └── migrate_nocobase_to_nocobase.py
-├── dist/                   # Vite 构建产物（生产部署用）
-├── dev.mjs                 # 开发环境进程管理器（同时启动 Vite + server.py）
-├── vite.config.js          # Vite 配置
-├── package.json
-├── .env                    # 敏感配置（已加入 .gitignore）
-└── CLAUDE.md
+web/              # 旧前端 HTML/JS（已删除）
+server/           # 旧 Python 代理 server.py（已删除）
+scripts/          # 旧迁移脚本 dev.mjs、import_from_nocobase.py 等（已删除）
+.env              # 旧 NocoBase/AI 凭证（已删除，配置存入 SQLite）
 ```
 
-## 架构概览
+## 旧架构概览（已废弃，保留作参考）
 
-### 开发架构（双端口，统一走 server.py）
+> 以下为旧架构的代理链路和架构说明，**已不再适用**。
+
+### 旧开发架构（双端口，统一走 server.py）
 
 ```
 浏览器 → Vite dev server (localhost:5174) ──→ server.py (localhost:18080) ──→ 云端 NocoBase
@@ -193,11 +156,7 @@ cd server && python3 server.py 18080
                                                     └─ Prompt/Preference 文件管理
 ```
 
-**Vite dev server（5174）**: HMR 热更新 + ESM 模块解析 + 静态文件 + `/` 重定向到 `/pages/index.html` + `/api/*` 代理到 server.py
-**server.py（18080）**: NocoBase API 代理 + AI 代理 + Prompt/Preference 管理
-**npm run dev**: 通过 `dev.mjs` 同时启动 Vite 和 server.py，Ctrl+C 一并关闭
-
-### 部署架构（单端口）
+### 旧部署架构（单端口）
 
 ```
 浏览器 → server.py (单端口) ──→ 云端 NocoBase
@@ -207,13 +166,6 @@ cd server && python3 server.py 18080
               ├─ /api/ai/parse  → 阿里云百炼
               └─ /api/ai/dispatch → 阿里云百炼
 ```
-
-本地 `server.py` 提供：
-1. 静态文件服务（HTML/CSS/JS 或 dist/ 构建产物）
-2. NocoBase API 代理：`/api/*` 转发
-3. AI 代理：`/api/ai/parse`（纯记账解析）、`/api/ai/dispatch`（意图识别+Skill路由）
-4. Prompt 管理：`PUT /api/ai/prompt/:name`（Agent 自修改解析规则）
-5. Preference 管理：`GET/PUT /api/ai/preference`（Agent 自修改用户偏好）
 
 ## Agent 架构（LLM 驱动 + Action 注册制）
 
@@ -267,16 +219,14 @@ LLM 通过 `/api/ai/dispatch` 返回统一结构：
 
 ### Prompt 系统
 
-SYSTEM_PROMPT 存储在 `server/prompts/` 目录下，每次请求动态读取：
+SYSTEM_PROMPT 存储在 `src-tauri/prompts/` 目录下（通过 SQLite `system_prompts` 表缓存）：
 
 | 文件 | 用途 |
 |---|---|
-| `server/prompts/dispatch.md` | 能力清单 + 意图识别规则（Agent 可通过 `update_prompt` 修改） |
-| `server/prompts/record.md` | 纯记账解析规则（降级方案） |
-| `server/prompts/preferences.md` | 用户个性化偏好（Agent 可通过 `save_preference` 修改） |
-| `server/prompts/README.md` | Prompt 编写规范 |
+| `src-tauri/prompts/dispatch.md` | 能力清单 + 意图识别规则（Agent 可通过 `update_prompt` 修改） |
+| `src-tauri/prompts/preferences.md` | 用户个性化偏好（Agent 可通过 `save_preference` 修改） |
 
-### 前端模块加载
+### 旧架构前端模块加载（已废弃）
 
 所有 JS 文件为 ESM 模块，通过 `globals.js` 桥接暴露到 `window.*`：
 
@@ -347,14 +297,9 @@ whenGlobalsReady(() => {
 
 ## 重要约定
 
-- **敏感配置**：NocoBase JWT Token 和 AI API Key 仅存放在 `.env` 文件中，由 `server.py` 统一注入，前端不持有凭证
-- JWT Token 有效期约 1 年，到期后更新 `.env` 即可
-- 所有 API 调用通过相对路径 `/api/*`，由 Vite proxy 转发到 server.py，再由 server.py 代理到 NocoBase 或阿里云百炼
-- `NocobaseAPI` 通过 `globals.js` 桥接挂载到 `window.NocobaseAPI`，通过 `NocobaseAPI.xxx()` 调用
+- 所有 API 调用通过 Tauri `invoke()` 调用 Rust commands，不再依赖 HTTP 代理
 - `AgentCore.dispatch()` 和 `AgentCore.execute()` 是 Agent 核心入口
 - `LearningEngine.init()` 在每个页面加载时调用
 - `ChatWidget.init()` 在页面加载时调用初始化 AI 对话悬浮窗
-- HTML 页面通过 `<script type="module" src="../js/globals.js">` 加载所有 ESM 模块（注意相对路径是 `../js/`）
-- 开发使用 `npm run dev`（同时启动 Vite + server.py），构建使用 `npm run build` 输出到 `dist/`
-- 前端目录：`web/pages/`（HTML）、`web/js/modules/`（模块）、`web/js/vendor/`（第三方库）、`web/assets/`（资源）
-- 后端目录：`server/server.py`（服务器）、`server/prompts/`（Prompt）、`server/scripts/`（迁移脚本）
+- 开发使用 `npm run dev`（Tauri 开发模式），构建使用 `npm run build` 输出到 `dist/`
+- AI 配置（API Key、模型等）通过 Settings 页 UI 存入 SQLite `app_config` 表，不再使用 `.env` 文件

@@ -1,6 +1,94 @@
-# 架构设计
+# 项目概览
 
-## 1. 总体架构
+## 1. 需求设计
+
+### 1.1 项目背景
+
+当前项目基于 NocoBase + server.py 代理的纯前端记账 Web 应用。存在以下核心问题：
+
+- **server.py 是最不稳定的环节**：需要公网 IP 和端口，可能是临时机器，配置不高，维护成本高
+- **NocoBase 虽已部署但并非必要条件**：用户可能在无网络环境、出差场景下使用
+- **数据可用性强依赖服务在线**：NocoBase 宕机或 server.py 断连 → 应用完全不可用
+- **多设备数据同步困难**：依赖云端 NocoBase，NAS 内网访问受限
+
+### 1.2 目标
+
+**将应用从"依赖云端服务的 C/S 架构"重构为"本地优先（Local-first）的桌面应用程序。**
+
+核心原则：
+- **数据永远可用**：所有数据存储在本地 SQLite，不依赖任何外部服务
+- **零自有服务依赖**：不需要 server.py、不需要公网 IP、不需要端口映射
+- **NocoBase 作为可选同步目标**：有连接时同步，无连接时完全本地运行
+- **AI 能力直连**：前端直连云端 AI API（百炼），无需代理层
+- **桌面原生体验**：系统通知、全局快捷键、文件关联
+
+### 1.3 功能需求
+
+#### 核心功能（现有，需完整迁移）
+
+| 功能 | 说明 | 当前实现 | 目标 |
+|---|---|---|---|
+| AI 对话记账 | 自然语言输入 → 意图识别 → 创建记录 | Agent Core + LLM dispatch | 桌面内集成，数据存本地 |
+| 规则解析 | 关键词匹配 + 正则提取（降级方案） | parse.js | 保留，本地运行 |
+| 记录管理 | 增删改查 + 分页 + 筛选 | records.html | 存 SQLite |
+| 预算管理 | 月度预算跟踪 + 超支预警 | budget.html | 存 SQLite |
+| 统计分析 | 多维度图表（分类、账户、趋势、对比） | stats.html + Chart.js | SQLite GROUP BY + ECharts |
+| 差旅补助 | 出差记录 + 补助发放 + 金额匹配 | trip_allowance.html | 存 SQLite |
+| OCR 识别 | 图片识别 → 自动记账 | PaddleOCR（Python 子进程调用） | Python subprocess |
+| 学习引擎 | 用户修正 → 个性化规则 | localStorage + NocoBase | 存 SQLite |
+| 对话历史 | AI 对话记录 | localStorage | 存 SQLite |
+
+#### 新增功能
+
+| 功能 | 说明 |
+|---|---|
+| 本地存储 | SQLite 替代 NocoBase 作为主数据源 |
+| 数据同步 | 本地 ↔ NocoBase 双向同步（可选） |
+| 系统通知 | 记账成功/失败系统级通知 |
+| 全局快捷键 | 一键呼出记账窗口 |
+| 配置管理 | API Key、NocoBase URL 等设置（本地配置文件） |
+| 数据导出 | 导出 CSV/Excel |
+| 数据导入 | 从现有 NocoBase 数据导入 |
+
+#### 功能保留不变
+
+| 功能 | 说明 |
+|---|---|
+| AI 意图识别 | 调用百炼 API，直连不调用代理 |
+| 偏好管理 | 从 server.py 的 preferences.md 改为 SQLite 存储 |
+| Prompt 管理 | dispatch.md / record.md 改为 SQLite 存储 |
+| 账户管理 | 从 NocoBase collections 改为硬编码预置 |
+| 分类/支付方式 | 不再需要独立表，records 中直接存自由文本 |
+
+### 1.4 非功能需求
+
+- **离线可用**：无网络时所有核心功能正常（记账、查询、统计、管理）
+- **启动时间**：冷启动 < 2 秒
+- **操作延迟**：本地操作 < 100ms（无网络等待）
+- SQLite 查询：万级记录量级下响应 < 200ms
+- 统计聚合：利用 SQL GROUP BY，不再全量拉数据到前端计算
+- OCR 识别：Python PaddleOCR 子进程单次 < 3 秒（含启动时间）
+- 本地 SQLite 为数据源（Source of Truth），NocoBase 为可选同步目标
+- 同步策略：last-write-wins（个人记账场景足够）
+- Tauri 应用包：约 5-10 MB（OCR 依赖外部 Python + PaddleOCR，不内置）
+- 内存占用：< 150 MB
+- 跨平台：macOS（Intel + Apple Silicon）、Windows 10+、Linux（可选）
+
+### 1.5 约束与限制
+
+| 约束 | 说明 |
+|---|---|
+| 数据模型兼容 | 与现有 NocoBase schema 对齐，方便数据导入/同步 |
+| 前端代码复用 | 现有 HTML/CSS/JS 代码应最大限度复用 |
+| 框架选择 | Vue 3 + TypeScript + Element Plus |
+| AI 成本 | 不使用百炼视觉模型（额外收费），OCR 用本地方案 |
+| 用户群体 | 个人用户，单用户场景，不需要多租户/权限管理 |
+
+---
+
+## 2. 架构设计
+
+### 2.1 总体架构
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -43,9 +131,9 @@
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## 2. 技术选型
+### 2.2 技术选型
 
-### 2.1 运行时框架
+#### 运行时框架
 
 **Tauri v2（Rust）**
 
@@ -55,18 +143,16 @@
 | Rust vs Node.js 后端 | 原生 SQLite 绑定（rusqlite/binding_sqlite），无需编译原生模块 |
 | WebView vs 自绘 | 复用现有 HTML/CSS/JS，改动最小 |
 
-### 2.2 数据层
+#### 数据层
 
 **SQLite**
 
 - 通过 `rusqlite` crate 操作
 - 与现有 NocoBase collections 完全对齐
-- 本地存储路径：
-  - 开发模式：`项目根目录/database/app_data.db`
-  - 发布模式：`$APP_DATA/app_data.db`
+- 本地存储路径：开发模式 `项目根目录/database/app_data.db`，发布模式 `$APP_DATA/app_data.db`
 - 配置文件存储在 SQLite `app_config` 表（AI 服务列表、月度预算等）
 
-### 2.3 AI 层
+#### AI 层
 
 **百炼 API 直连**
 
@@ -75,20 +161,18 @@
 - 不需要代理层，个人使用 API Key 暴露在前端可接受
 - 支持多服务管理（`ai_services` JSON 数组，active 标记当前使用）
 
-### 2.4 OCR 层
+#### OCR 层
 
 **PaddleOCR（Python 子进程）+ 智能 Python 探测 + 自动安装依赖**
 
-- Rust 端通过 `std::process::Command` 调用 `server/ocr_service.py` 子进程
+- Rust 端通过 `std::process::Command` 调用 `src-tauri/scripts/ocr_service.py` 子进程
 - 跨平台 Python 智能探测（Windows `py`/`python`/`python3`，macOS `python3`/Homebrew，Linux `python3`）
 - 首次使用时 Settings 页一键 `pip install paddlepaddle paddleocr`
 - 通过临时文件传递 base64 图片数据，避免命令行长度限制
 - 启动时自动检测 Python 和 paddleocr 安装状态
 - Settings 页提供 OCR 管理（状态展示 / 安装依赖 / 启用禁用开关）
-- 输入：图片 base64
-- 输出：识别文本
 
-### 2.5 本地 LLM 层
+#### 本地 LLM 层
 
 **Candle（Hugging Face 纯 Rust 推理框架）+ Qwen2 中文模型**
 
@@ -100,19 +184,12 @@
 
 - **推理引擎**：`candle-transformers` crate（Qwen2 架构原生支持）
 - **模型格式**：GGUF 量化（4-bit / 8-bit），通过 `hf-hub` 下载
-- **GPU 策略**：
-  - macOS：自动启用 Metal（`candle-core` 原生支持）
-  - Windows：检测 NVIDIA GPU，有则启用 CUDA，无则回退 CPU
-  - 启动时日志输出：`LLM device: Metal / CUDA / CPU`
+- **GPU 策略**：macOS 自动启用 Metal，Windows 检测 NVIDIA GPU（CUDA），无则回退 CPU
 - **模型存储**：与 OCR 模型同目录 `$APP_DATA/ai-jizhang/models/`
 - **下载策略**：HF 默认源 + 镜像源备选 + 断点续传 + 代理配置
 - **云端 / 本地切换**：Settings 页严格二选一，不自动回退
 
-## 3. 数据模型设计
-
-### 3.1 SQLite Schema
-
-与现有 NocoBase collections 对齐，新增同步相关字段：
+### 2.3 SQLite Schema
 
 ```sql
 -- 记账记录（对齐 records collection）
@@ -160,7 +237,7 @@ CREATE TABLE business_trip (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
--- 系统 Prompt（替代 server/prompts/*.md）
+-- 系统 Prompt（本地 SQLite 管理）
 CREATE TABLE system_prompts (
     name TEXT PRIMARY KEY,              -- dispatch / record / preferences
     content TEXT NOT NULL,
@@ -212,21 +289,9 @@ CREATE TABLE sync_log (
 );
 ```
 
-### 3.2 预置数据
+### 2.4 通信架构
 
-首次启动时初始化基础数据：
-
-```sql
--- 默认 Prompt
-INSERT INTO system_prompts (name, content) VALUES
-    ('dispatch', <从现有 dispatch.md 导入>),
-    ('record', <从现有 record.md 导入>),
-    ('preferences', <从现有 preferences.md 导入>);
-```
-
-## 4. 通信架构
-
-### 4.1 前端 ↔ 后端（Tauri IPC）
+#### 前端 ↔ 后端（Tauri IPC）
 
 ```
 前端 JS                    Rust 后端
@@ -243,12 +308,11 @@ INSERT INTO system_prompts (name, content) VALUES
   │                          │  sqlite insert + generate uuid
   │  { success, id }         │
   │<─────────────────────────┤
-  │                          │
 ```
 
 前端通过 `@tauri-apps/api/core.invoke()` 调用后端命令。
 
-### 4.2 后端 ↔ 外部服务
+#### 后端 ↔ 外部服务
 
 ```
 Rust 后端                  百炼 API              NocoBase
@@ -267,163 +331,19 @@ Rust 后端                  百炼 API              NocoBase
   │  ────────────────────────┼───────────────────>│
   │                          │    返回数据        │
   │  ────────────────────────┼───────────────────<│
-  │                          │                    │
 ```
 
 百炼 API 和 NocoBase API 均从 Rust 后端直连，使用 `reqwest` crate。
 
-## 5. 同步策略
+### 2.5 同步策略
 
-### 5.1 触发时机
+- **触发时机**：应用启动时检测连接自动同步、手动点击同步按钮
+- **推送（Push）**：本地未同步记录 → NocoBase，筛选 synced=0 的记录，批量 POST 到 NocoBase，成功后更新 synced=1, nocobase_id, nocobase_updated_at
+- **拉取（Pull）**：NocoBase → 本地，查询 nocobase_updated_at > 本地对应值的记录，按 uuid 匹配（已存在则比较时间戳，新覆盖旧；不存在则插入新记录）
+- **冲突处理**：last-write-wins，个人记账场景足够
+- **多设备同步特殊数据**：system_prompts 按 name 匹配比较 updated_at；learning_data 每条独立 uuid 不会冲突；复用 records 的同步逻辑
 
-- 应用启动时检测连接，自动同步
-- 手动点击同步按钮
-- 可选：定期后台同步
-
-### 5.2 推送（Push）
-
-```
-本地未同步记录 → NocoBase
-  - 筛选 synced=0 的记录
-  - 批量 POST 到 NocoBase
-  - 成功后更新 synced=1, nocobase_id, nocobase_updated_at
-```
-
-### 5.3 拉取（Pull）
-
-```
-NocoBase → 本地
-  - 查询 nocobase_updated_at > 本地对应值的记录
-  - 按 uuid 匹配：
-    - 已存在 → 比较时间戳，新的覆盖旧的
-    - 不存在 → 插入新记录
-  - 更新 nocobase_updated_at
-```
-
-### 5.4 冲突处理
-
-```
-if 本地 modified && NocoBase modified:
-    if 本地 updated_at > NocoBase updated_at:
-        推送本地到 NocoBase（覆盖）
-    else:
-        拉取 NocoBase 到本地（覆盖）
-```
-
-个人记账场景，last-write-wins 足够。
-
-### 5.5 多设备同步特殊数据
-
-Prompt、Preference、Learning Data 三类数据需要跨设备同步（与 records 不同，records 是用户写入，每台设备写不同数据；这三类是 Agent 写入，多台设备可能写同一个 key）：
-
-**system_prompts 表**
-- 每条 prompt 通过 `name`（dispatch / record / preferences）唯一标识
-- 同步时按 `name` 匹配，比较 `updated_at`，新覆盖旧
-- Agent 修改频率低，冲突概率小
-
-**learning_data 表**
-- 每条学习记录带独立 `uuid`，新增直接插入，不会冲突
-- 同一条 key 的多条记录在前端聚合时使用 `GROUP BY key`
-- 不同步不影响功能，仅影响"设备间学习经验共享"
-
-这三类数据复用 records 的同步逻辑（push/pull/冲突处理），无需额外机制。
-
-## 6. 项目文件结构
-
-### 6.1 前端（Vue 3 SPA）
-
-```
-accounting-app/
-├── index.html                    # SPA 入口
-├── src/                          # Vue 3 + TypeScript 前端
-│   ├── main.ts                   # Vue app 初始化、Pinia、Element Plus
-│   ├── App.vue                   # 根组件（AppNavbar + router-view + ChatWidget）
-│   ├── env.d.ts                  # TypeScript 环境声明
-│   ├── router/
-│   │   └── index.ts              # 6 个路由（/, /records, /budget, /stats, /trips, /settings）
-│   ├── stores/
-│   │   └── records.ts            # Pinia：记录列表、筛选、分页、CRUD
-│   ├── types/
-│   │   └── index.ts              # TypeScript 类型：Record, TripRecord, StatsSummary 等
-│   ├── api/
-│   │   └── tauri.ts              # invoke() 封装（records, trips, stats, config, OCR）
-│   ├── utils/
-│   │   ├── formatters.ts         # formatMoney, formatDatetime
-│   │   └── dateRange.ts          # 日期范围计算（month, last_month, week, year）
-│   ├── views/
-│   │   ├── Home.vue              # 首页仪表盘（统计卡片 + 分类分析 + 账户分析 + 预算执行）
-│   │   ├── Records.vue           # 记录管理（ElTable + 筛选 + 分页 + 编辑对话框）
-│   │   ├── Budget.vue            # 预算管理
-│   │   ├── Stats.vue             # 统计分析
-│   │   ├── TripAllowance.vue     # 差旅补助
-│   │   └── Settings.vue          # 设置页
-│   └── components/
-│       ├── layout/
-│       │   └── AppNavbar.vue     # 顶部导航栏（渐变色 + 路由链接）
-│       ├── chat/
-│       │   ├── ChatWidget.vue      # 悬浮对话面板（完整实现）
-│       │   ├── ChatMessage.vue     # 消息渲染（文本/卡片/列表）
-│       │   ├── ChatInput.vue       # 输入框 + 图片上传
-│       │   ├── ChatThinking.vue    # 思考中状态
-│       │   ├── ConfirmCard.vue     # 确认卡片
-│       │   ├── DebugPanel.vue      # 调试面板
-│       │   ├── FollowUpCard.vue    # 追问卡片
-│       │   ├── ImagePreview.vue    # 图片预览
-│       │   ├── RecordCard.vue      # 记录确认卡片
-│       │   └── RulesPanel.vue      # 规则面板
-│       └── stats/
-│           ├── CategoryBarChart.vue  # ECharts：分类柱状图
-│           ├── AccountPieChart.vue   # ECharts：账户环形图
-│           ├── MonthlyTrendChart.vue # ECharts：月度趋势
-│           └── ComparisonChart.vue   # ECharts：环比对比
-├── src-tauri/                    # Tauri 2 后端（Rust）
-│   ├── src/
-│   │   ├── main.rs               # 入口：初始化 Database + AppConfig，注册 33 个命令
-│   │   ├── db/
-│   │   │   ├── mod.rs            # 模块根，导出 Database, RecordInput 等
-│   │   │   ├── connection.rs     # SQLite 连接（Arc<Mutex<Connection>>，构造函数打开）
-│   │   │   ├── schema.rs         # 建表（7 张）+ 预置 dispatch/record Prompt
-│   │   │   ├── records.rs        # records CRUD（分页、筛选、排序）
-│   │   │   ├── trips.rs          # business_trip CRUD（自动计算补助）
-│   │   │   ├── prompts.rs        # system_prompts CRUD（dispatch/record/preferences 均在此表）
-│   │   │   ├── learning.rs       # learning_data CRUD（修正映射）
-│   │   │   ├── chat_history.rs   # chat_history CRUD
-│   │   │   ├── sync_log.rs       # sync_log 写入 + 查询
-│   │   │   └── app_config.rs     # app_config CRUD
-│   │   ├── commands/
-│   │   │   ├── mod.rs            # 模块声明
-│   │   │   ├── records.rs        # 记录 Tauri Commands（7 个）
-│   │   │   ├── trips.rs          # 差旅 Tauri Commands（4 个）
-│   │   │   ├── stats.rs          # 统计聚合（6 个命令）
-│   │   │   ├── prompts.rs        # Prompt/偏好（3 个命令）
-│   │   │   ├── learning.rs       # 学习数据（4 个命令）
-│   │   │   ├── chat.rs           # 对话历史（3 个命令）
-│   │   │   ├── config.rs         # 配置读写（8 个命令，含 AI 服务管理）
-│   │   │   ├── sync.rs           # 同步占位（5 个命令）
-│   │   │   └── ocr.rs            # OCR（Python 子进程调用 PaddleOCR）
-│   │   └── models/
-│   │       └── mod.rs            # 数据模型定义
-│   ├── capabilities/
-│   │   └── default.json          # Tauri 2 权限配置
-│   ├── icons/
-│   │   └── icon.png              # 应用图标
-│   ├── Cargo.toml                # Rust 依赖
-│   ├── tauri.conf.json           # Tauri 配置（窗口 1200×800、CSP）
-│   └── build.rs                  # Tauri 构建脚本
-├── doc/                          # 设计文档
-│   ├── 01-requirement-design.md
-│   ├── 02-architecture-design.md
-│   ├── 03-ui-design.md
-│   ├── 04-development-plan.md
-│   └── 05-refactoring-plan.md
-├── package.json
-├── tsconfig.json
-├── tsconfig.node.json
-├── vite.config.ts                # Vite + Vue 插件，端口 5174
-└── index.html
-```
-
-### 6.2 关键架构决策
+### 2.6 关键架构决策
 
 | 决策 | 说明 |
 |---|---|
@@ -436,3 +356,120 @@ accounting-app/
 | LLM 模型存储 | `$APP_DATA/ai-jizhang/models/`，GGUF 格式（4-bit 量化 ~0.9GB） |
 | GPU 策略 | macOS Metal / Windows CUDA（检测后自动启用）/ CPU 回退 |
 | AI 引擎切换 | 百炼 API ↔ 本地 LLM，严格二选一，不自动回退 |
+
+---
+
+## 3. 界面设计
+
+### 3.1 设计原则
+
+- **保留现有 UI 风格**：现有 HTML/CSS 已有完整的视觉设计，重构期间不改变视觉风格
+- **桌面优化**：固定窗口尺寸，支持窗口拖拽、最小化/最大化
+- **离线状态展示**：同步状态可视化
+- **减少层级**：桌面应用可承载更多功能在同一页面，减少页面跳转
+
+### 3.2 页面结构
+
+#### 页面清单（保持现有 5 页不变）
+
+| 页面 | 说明 | 改动 |
+|---|---|---|
+| 首页（index.html） | AI 对话 + 统计概览 | 最小改动，仅改数据获取方式 |
+| 记录（records.html） | 记录增删改查 + 分页 | 最小改动 |
+| 预算（budget.html） | 预算管理 | 最小改动 |
+| 统计（stats.html） | 多维度图表分析 | 最小改动 |
+| 差旅补助（trip_allowance.html） | 差旅管理 | 最小改动 |
+
+#### 新增页面
+
+| 页面 | 说明 |
+|---|---|
+| Settings | 设置页（API 服务管理、NocoBase 同步、预算、OCR 模型管理） |
+
+### 3.3 桌面端增强
+
+- **窗口行为**：固定最小尺寸 900×600，记住窗口位置和尺寸，关闭时最小化到托盘（可选）
+- **系统通知**：记账成功/失败时发送系统通知（`tauri-plugin-notification`）
+- **全局快捷键**：`Cmd/Ctrl + Shift + A` 快速记账（呼出窗口并聚焦输入框）
+
+### 3.4 新增 UI 元素
+
+#### 同步状态指示器
+
+```
+┌──────────────────────────────────────────────┐
+│ 首页 记录 预算 统计 差旅    [🔄 同步] ● 已同步 │
+└──────────────────────────────────────────────┘
+
+状态：● 已同步（绿色）/ ↻ 同步中（旋转）/ ○ 未同步（灰色）/ ⚠ 有冲突（黄色）
+```
+
+#### Skill 标签
+
+位于消息气泡上方（非气泡内部）：
+
+```
+┌─────────────────────────┐
+│ [create_record]  95%     │  ← skill tag（灰边框 pill，在气泡外）
+│                          │
+│ 已为您记录：              │
+│   餐饮 支出 ¥35          │  ← message bubble
+│   个人账户 2026-05-26    │
+│                          │
+│ [确认] [编辑] [取消]      │
+└─────────────────────────┘
+```
+
+样式：灰边框 `#e0e0e0`，无渐变，圆角 10px，`margin-left: 4px; margin-bottom: 4px`。
+
+#### 思考过程展示
+
+- 3 步流程：`intent`（意图识别）→ `execute`（执行入库）→ `done`（完成）
+- 通过 `thinkingStep` ref 动态绑定步骤状态
+- 折叠时步骤状态设为 `'done'`，气泡保持可见，透明度 0.7
+- 折叠后的思考过程作为历史记录保留在消息流中，不隐藏
+
+#### 图片粘贴（剪贴板）
+
+ChatInput 支持剪贴板图片粘贴（Cmd+V / Ctrl+V），自动读取为 File 对象，走与文件选择相同的图片加载流程。
+
+#### OCR 模型管理（Settings 页）
+
+3 个模型（det / rec / cls），显示大小和安装状态，下载按钮带 loading 状态 + 进度条，删除按钮需二次确认。
+
+#### 设置页面（多卡片布局）
+
+包含 AI 服务管理（单选列表、添加/编辑/删除、测试连接）、NocoBase 同步配置、预算设置、OCR 识别管理。
+
+### 3.5 现有页面改动说明
+
+- **首页**：数据获取从 `fetch('/api/records')` 改为 `invoke('get_records')`，对话历史从 localStorage 改为 SQLite，AI 调用从代理改为前端直连百炼 API
+- **记录管理**：所有 CRUD 从 NocoBase API 改为 SQLite，筛选和分页由 SQL 查询完成
+- **预算**：预算数据从 SQLite 读取，统计计算由 SQL GROUP BY 完成
+- **统计**：数据获取从 `pageSize=10000` 改为 SQL 聚合查询，ECharts 渲染（替换了原 Vue Data UI）
+- **差旅补助**：数据从 SQLite 读取，补助计算逻辑不变
+
+### 3.6 视觉风格
+
+保持现有配色方案：
+
+```css
+:root {
+    --primary: #667eea;
+    --primary-dark: #5568d3;
+    --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --success: #52C41A;
+    --warning: #FFC107;
+    --danger: #FF6B6B;
+    --danger-dark: #FF4D4F;
+    --bg: #f5f7fa;
+    --card-bg: white;
+    --text: #333;
+    --text-secondary: #666;
+    --text-muted: #999;
+}
+```
+
+桌面端新增同步状态颜色：`--sync-success: #68d391; --sync-warning: #f6ad55; --sync-error: #fc8181;`
+
+桌面应用不需要响应式适配，但保留现有 CSS 以兼容窗口缩放和多显示器场景。

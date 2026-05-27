@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AccountRecord, RecordInput, TripRecord, ApiResponse, StatsSummary, CategoryStat, AccountStat, MonthTrend, ComparisonResult, BudgetAnalysis, AppConfig, AiService } from '@/types';
+import type { AccountRecord, RecordInput, TripRecord, ApiResponse, StatsSummary, CategoryStat, AccountStat, MonthTrend, ComparisonResult, BudgetAnalysis, AppConfig, AllConfig, AiService } from '@/types';
 
 // Records
 export async function getRecords(params: {
@@ -106,7 +106,7 @@ export async function setConfig(key: string, value: string): Promise<void> {
   return invoke('set_config', { key, value });
 }
 
-export async function getAllConfig(): Promise<AppConfig> {
+export async function getAllConfig(): Promise<AllConfig> {
   return invoke('get_all_config');
 }
 
@@ -211,18 +211,48 @@ export async function testAiConnection(): Promise<{ success: boolean; message: s
 export async function checkOcrStatus(): Promise<{
   available: boolean;
   enabled: boolean;
-  python: { path: string; version: string; has_paddleocr: boolean } | null;
+  activePython: { path: string; version: string; isBundled: boolean; hasPaddleocr: boolean } | null;
+  systemPythons: Array<{ path: string; version: string; minorVersion: number; isCompatible: boolean; hasPaddleocr: boolean }>;
+  bundledPythonInstalled: boolean;
   message: string;
 }> {
   return invoke('check_ocr_status');
 }
 
-export async function installOcrDependencies(): Promise<string> {
-  return invoke('install_ocr_dependencies');
+export async function selectPython(path: string): Promise<void> {
+  return invoke('select_python', { path });
+}
+
+export async function installOcrDependencies(sessionId: string): Promise<string> {
+  return invoke('install_ocr_dependencies', { sessionId });
+}
+
+export async function installPaddleocrForPython(pythonPath: string, sessionId: string): Promise<string> {
+  return invoke('install_paddleocr_for_python', { pythonPath, sessionId });
+}
+
+export async function uninstallPaddleocrForPython(pythonPath: string): Promise<string> {
+  return invoke('uninstall_paddleocr_for_python', { pythonPath });
+}
+
+export async function reinstallPaddleocrForPython(pythonPath: string, sessionId: string): Promise<string> {
+  return invoke('reinstall_paddleocr_for_python', { pythonPath, sessionId });
 }
 
 export async function setOcrEnabled(enabled: boolean): Promise<void> {
   return invoke('set_ocr_enabled', { enabled });
+}
+
+export async function installBundledPython(sessionId: string): Promise<string> {
+  return invoke('install_bundled_python', { sessionId });
+}
+
+export async function uninstallBundledPython(): Promise<string> {
+  return invoke('uninstall_bundled_python');
+}
+
+export async function reinstallBundledPython(sessionId: string): Promise<string> {
+  return invoke('reinstall_bundled_python', { sessionId });
 }
 
 export async function ocrRecognize(imageBase64: string): Promise<string> {

@@ -145,9 +145,10 @@ export interface FollowUpResult {
 }
 
 export interface AppConfig {
-  ai_api_key: string;
-  ai_api_url: string;
-  ai_model: string;
+  budget_monthly: number;
+}
+
+export interface AllConfig {
   nocobase_url: string;
   nocobase_token: string;
   budget_monthly: number;

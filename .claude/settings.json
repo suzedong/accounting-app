@@ -29,16 +29,7 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(cargo check *)",
       "WebFetch(domain:crates.io)",
-      "WebFetch(domain:raw.giteeusercontent.com)",
-      "Bash(curl -L -o \"D:\\\\Code\\\\accounting-app\\\\src-tauri\\\\models\\\\ppocr_keys_v1.txt\" \"https://raw.githubusercontent.com/RapidAI/RapidOcrOnnx/main/models/ppocr_keys_v1.txt\")",
-      "Bash(curl -L -o \"D:\\\\Code\\\\accounting-app\\\\src-tauri\\\\models\\\\ppocr_keys_v1.txt\" \"https://gitee.com/RapidAI/RapidOcrOnnx/raw/master/models/ppocr_keys_v1.txt\")",
-      "Read(//c/Users/SZD/.cargo/**)",
-      "Bash(ls \"C:/Users/SZD/AppData/Local/ai-jizhang/models/ppocr_keys_v1.txt\" 2>&1 || echo \"NOT_FOUND\")",
-      "Read(//c/Users/SZD/AppData/Local/ai-jizhang/models/**)",
-      "Bash(cp \"D:/Code/accounting-app/src-tauri/models/ppocr_keys_v1.txt\" \"C:/Users/SZD/AppData/Local/ai-jizhang/models/\")"
-    ],
-    "additionalDirectories": [
-      "C:\\Users\\SZD\\AppData\\Local\\ai-jizhang\\models"
+      "WebFetch(domain:raw.giteeusercontent.com)"
     ]
   }
 }

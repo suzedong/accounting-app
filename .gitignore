@@ -20,8 +20,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Claude Code (project-level memory, keep global .claude/ at ~/.claude/)
-# .claude/
 
 # Env / Secrets
 .env
@@ -37,3 +35,6 @@ src-tauri/gen/
 
 # SQLite database (dev mode, generated in project root)
 app_data.db*
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json

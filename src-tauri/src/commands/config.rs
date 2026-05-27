@@ -34,9 +34,6 @@ impl AppConfig {
 
 #[derive(Serialize)]
 pub struct AllConfig {
-    pub ai_api_key: String,
-    pub ai_api_url: String,
-    pub ai_model: String,
     pub nocobase_url: String,
     pub nocobase_token: String,
     pub budget_monthly: f64,
@@ -57,10 +54,12 @@ pub async fn get_config(
     let conn = state.get_conn();
     let value = {
         let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        let mut stmt = conn_guard
-            .prepare("SELECT value FROM app_config WHERE key = ?")
-            .map_err(|e| e.to_string())?;
-        stmt.query_row([&key], |row| row.get::<_, String>(0))
+        conn_guard
+            .query_row(
+                "SELECT value FROM app_config WHERE key = ?",
+                [&key],
+                |row| row.get::<_, String>(0),
+            )
             .map_err(|e| format!("Config key '{}' not found: {}", key, e))
     }?;
     if let Ok(mut g) = app_config.data.lock() {
@@ -109,17 +108,11 @@ pub async fn get_all_config(
             })
             .map_err(|e| e.to_string())?
     };
-    {
-        let mut guard = app_config.data.lock().map_err(|e| e.to_string())?;
-        for (k, v) in rows {
-            guard.insert(k, v);
-        }
+    let mut guard = app_config.data.lock().map_err(|e| e.to_string())?;
+    for (k, v) in rows {
+        guard.insert(k, v);
     }
-    let guard = app_config.data.lock().map_err(|e| e.to_string())?;
     Ok(AllConfig {
-        ai_api_key: guard.get("ai_api_key").cloned().unwrap_or_default(),
-        ai_api_url: guard.get("ai_api_url").cloned().unwrap_or_else(|| "https://coding.dashscope.aliyuncs.com/v1".to_string()),
-        ai_model: guard.get("ai_model").cloned().unwrap_or_else(|| "qwen3.6-plus".to_string()),
         nocobase_url: guard.get("nocobase_url").cloned().unwrap_or_default(),
         nocobase_token: guard.get("nocobase_token").cloned().unwrap_or_default(),
         budget_monthly: guard.get("budget_monthly")

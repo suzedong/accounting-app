@@ -110,6 +110,17 @@ CREATE TABLE IF NOT EXISTS app_config (
         seed_prompts(conn)?;
     }
 
+    // Seed default app_config if empty
+    let config_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM app_config",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if config_count == 0 {
+        seed_default_config(conn)?;
+    }
+
     // Migration: drop deprecated columns from business_trip
     let _ = conn.execute("ALTER TABLE business_trip DROP COLUMN destination", []);
     let _ = conn.execute("ALTER TABLE business_trip DROP COLUMN employee_name", []);
@@ -166,23 +177,31 @@ CREATE TABLE IF NOT EXISTS app_config (
 }
 
 fn seed_prompts(conn: &Connection) -> Result<(), rusqlite::Error> {
-    // Read dispatch prompt from file if available, otherwise use embedded version
-    let dispatch_content = include_str!("../../prompts/dispatch.md");
-
-    let record_content = r#"备注生成规则：备注需包含关键交易信息，避免过于简单。默认格式为'商户名'。餐饮堂食格式为'【堂食】_餐厅名'，外卖格式为'平台 - 商家名 外卖'。话费格式为'运营商 + 话费'。支付方式已通过独立字段记录，备注中不要重复包含支付方式。"#;
-
     conn.execute(
         "INSERT INTO system_prompts (name, content) VALUES (?, ?)",
-        ["dispatch", dispatch_content],
+        ["dispatch", include_str!("../../prompts/dispatch.md")],
     )?;
     conn.execute(
         "INSERT INTO system_prompts (name, content) VALUES (?, ?)",
-        ["record", record_content],
+        ["record", include_str!("../../prompts/record.md")],
     )?;
     conn.execute(
         "INSERT INTO system_prompts (name, content) VALUES (?, ?)",
         ["preferences", include_str!("../../prompts/preferences.md")],
     )?;
 
+    Ok(())
+}
+
+fn seed_default_config(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)",
+        ["ocr_enabled", "true"],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)",
+        ["budget_monthly", "3500.0"],
+    )?;
+    // ai_services starts as empty array, user configures via Settings
     Ok(())
 }

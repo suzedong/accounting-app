@@ -1,13 +1,13 @@
 # 记账本应用
 
-> **⚠️ 重构进行中：新旧架构并存**
+> **⚠️ 重构进行中**
 >
 > 项目正在从**纯前端 + NocoBase** 重构为 **Tauri 2 桌面应用（Vue 3 + TypeScript + SQLite）**。
 >
 > - **新架构**：`npm run dev` → Tauri 桌面应用
-> - **旧架构**：`web/` + `server/` + `.env`（仍在代码库中，最终会删除）
-> - **进度**：Phase 1/2/3 已完成，Phase 4 同步层待实现
-> - **开发计划**详见 `doc/04-development-plan.md`
+> - **旧架构**：`web/`（HTML 前端，已删除）
+> - **进度**：Phase 1/2/3 已完成，Phase 4 同步层进行中
+> - **开发计划**详见 `docs/02-development-roadmap.md`
 
 > 以下文档为旧架构的完整参考（重构中保留）
 
