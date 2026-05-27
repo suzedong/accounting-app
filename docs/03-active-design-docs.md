@@ -355,6 +355,16 @@ pub struct OcrStatus {
 | pyenv | `~/.pyenv/versions/*/bin/python` | 遍历所有 pyenv 版本 |
 | 系统 | `/usr/bin/python3`, `/usr/bin/python` | macOS 系统自带（可能只有 3.9）|
 
+**Windows 扫描路径（按优先级）：**
+
+| 来源 | 扫描方式 | 说明 |
+|---|---|---|
+| PATH | `python`, `python3`, `py`（py launcher） | 通过 `Get-Command` 和 `py -0p` 发现 |
+| 注册表 HKLM | `HKLM:\SOFTWARE\Python\PythonCore\*\InstallPath` | 所有用户安装的 Python |
+| 注册表 HKCU | `HKCU:\SOFTWARE\Python\PythonCore\*\InstallPath` | 当前用户安装的 Python |
+| 常见路径 | `%LOCALAPPDATA%\Programs\Python\Python3*\` | Python.org 安装器默认路径 |
+| 常见路径 | `%PROGRAMFILES%\Python3*\` | 全局安装路径 |
+
 对每个找到的 `python3` 可执行文件：
 1. 运行 `--version` 获取版本字符串
 2. 解析 minor version（如 "Python 3.12.9" → 12）
@@ -472,7 +482,7 @@ const currentOperation = ref<string>('') // 当前操作标识
 1. 启动应用，设置页应列出所有系统 Python（3.11, 3.12, 3.14 等）
 2. 3.14 应标记为"不兼容"，不可选择
 3. 点击 3.12 的"使用此版本"，当前使用 Python 应更新
-4. 点击"安装内置 Python"，应安装到 `~/Library/Application Support/accounting-app/python/`
+4. 点击"安装内置 Python"，应安装到 `%LOCALAPPDATA%\accounting-app\python\`（Windows）或 `~/Library/Application Support/accounting-app/python/`（macOS）
 5. 安装完成后当前使用的 Python 应自动切换到内置版本
 6. 在任意 Python 上点击"安装依赖"，终端应实时显示 pip 输出
 7. 重启应用后，选择的 Python 应保持不变（持久化）

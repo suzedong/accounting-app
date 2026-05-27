@@ -69,7 +69,7 @@
 - [x] Action Handlers（11 个）：create_record / correct_record / update_record / query_records / render_stats / render_budget / ask_follow_up / reply_text / save_preference / update_prompt / clear_chat
 - [x] 聊天 UI：ChatWidget / ChatMessage / ChatInput / RecordCard / ChatThinking / ImagePreview / DebugPanel / RulesPanel
 - [x] Stores：chat.ts / learning.ts
-- [x] OCR：智能 Python 探测 + 自动安装依赖 + OCR 识别 + Settings 页管理
+- [x] OCR：智能 Python 探测 + 自动安装依赖 + OCR 识别 + Settings 页管理（`.ps1` 支持 Windows，`.sh` 支持 macOS/Linux）
 
 ---
 
@@ -97,7 +97,7 @@
 #### 4.3 清理
 
 - [x] 删除 `server/` 目录（server.py、prompts/、scripts/、python_manager.py 等）
-- [x] 迁移关键脚本到 `src-tauri/scripts/`（python_manager.sh、ocr_service.py）
+- [x] 迁移关键脚本到 `src-tauri/scripts/`（python_manager.sh、python_manager.ps1、ocr_service.py）
 - [x] 删除 `scripts/` 目录（dev.mjs、import_from_nocobase.py 等旧迁移脚本）
 - [x] 删除 `.env`（AI/NocoBase 配置已存入 SQLite）
 - [x] 删除 `vite.config.js.bak`

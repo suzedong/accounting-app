@@ -80,29 +80,53 @@ fn emit_line(app: &AppHandle, session_id: &str, text: &str) {
 // --- Shell script invocation ---
 
 fn get_script_path() -> std::path::PathBuf {
-    let candidates = [
-        "scripts/python_manager.sh",
-        "../scripts/python_manager.sh",
-        "../../scripts/python_manager.sh",
-        "resources/scripts/python_manager.sh",
-    ];
+    let candidates = if cfg!(windows) {
+        [
+            "scripts/python_manager.ps1",
+            "../scripts/python_manager.ps1",
+            "../../scripts/python_manager.ps1",
+            "resources/scripts/python_manager.ps1",
+        ]
+    } else {
+        [
+            "scripts/python_manager.sh",
+            "../scripts/python_manager.sh",
+            "../../scripts/python_manager.sh",
+            "resources/scripts/python_manager.sh",
+        ]
+    };
     for path in &candidates {
         let p = std::path::Path::new(path);
         if p.exists() {
             return p.to_path_buf();
         }
     }
-    std::path::PathBuf::from("scripts/python_manager.sh")
+    if cfg!(windows) {
+        std::path::PathBuf::from("scripts/python_manager.ps1")
+    } else {
+        std::path::PathBuf::from("scripts/python_manager.sh")
+    }
 }
 
 fn run_script(args: &[&str]) -> Result<String, String> {
     let script = get_script_path();
-    debug_log(&format!("[script] running: bash {} {:?}", script.display(), args));
-    let output = Command::new("bash")
-        .arg(&script)
-        .args(args)
+
+    let (interpreter, script_flag) = if cfg!(windows) {
+        ("powershell", "-File")
+    } else {
+        ("bash", "")
+    };
+
+    let mut cmd = Command::new(interpreter);
+    if !script_flag.is_empty() {
+        cmd.arg(script_flag);
+    }
+    cmd.arg(&script).args(args);
+
+    debug_log(&format!("[script] running: {} {} {:?}", interpreter, script.display(), args));
+    let output = cmd
         .output()
-        .map_err(|e| format!("启动 shell 脚本失败: {}", e))?;
+        .map_err(|e| format!("启动脚本失败: {}", e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !output.status.success() {
@@ -117,7 +141,11 @@ fn get_bundled_python_path() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("accounting-app")
         .join("python");
-    app_dir.join("bin").join("python3")
+    if cfg!(windows) {
+        app_dir.join("python.exe")
+    } else {
+        app_dir.join("bin").join("python3")
+    }
 }
 
 /// 判断 Python 是否兼容 PaddleOCR (3.8-3.12)
@@ -494,13 +522,25 @@ pub async fn install_paddleocr_for_python(
     emit_line(&app, &session_id, ">>> 正在安装 PaddleOCR 依赖...");
 
     let script = get_script_path();
-    let mut child = TokioCommand::new("bash")
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PIP_PROGRESS_BAR", "on")
+    let (interpreter, script_flag) = if cfg!(windows) {
+        ("powershell", "-File")
+    } else {
+        ("bash", "")
+    };
+
+    let mut child_cmd = TokioCommand::new(interpreter);
+    child_cmd.env("PYTHONUNBUFFERED", "1");
+    child_cmd.env("PIP_PROGRESS_BAR", "on");
+    if !script_flag.is_empty() {
+        child_cmd.arg(script_flag);
+    }
+    child_cmd
         .arg(&script)
         .args(["install", &python_path])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = child_cmd
         .spawn()
         .map_err(|e| format!("启动安装脚本失败: {}", e))?;
 
@@ -556,11 +596,23 @@ pub async fn uninstall_paddleocr_for_python(
     session_id: String,
 ) -> Result<String, String> {
     let script = get_script_path();
-    let mut child = TokioCommand::new("bash")
+    let (interpreter, script_flag) = if cfg!(windows) {
+        ("powershell", "-File")
+    } else {
+        ("bash", "")
+    };
+
+    let mut child_cmd = TokioCommand::new(interpreter);
+    if !script_flag.is_empty() {
+        child_cmd.arg(script_flag);
+    }
+    child_cmd
         .arg(&script)
         .args(["uninstall", &python_path])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = child_cmd
         .spawn()
         .map_err(|e| format!("启动卸载脚本失败: {}", e))?;
 
@@ -615,11 +667,23 @@ pub async fn install_bundled_python(
     emit_line(&app, &session_id, ">>> 正在安装内置 Python 3.12...");
 
     let script = get_script_path();
-    let mut child = TokioCommand::new("bash")
+    let (interpreter, script_flag) = if cfg!(windows) {
+        ("powershell", "-File")
+    } else {
+        ("bash", "")
+    };
+
+    let mut child_cmd = TokioCommand::new(interpreter);
+    if !script_flag.is_empty() {
+        child_cmd.arg(script_flag);
+    }
+    child_cmd
         .arg(&script)
         .args(["install_bundled", &session_id])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = child_cmd
         .spawn()
         .map_err(|e| format!("启动安装脚本失败: {}", e))?;
 
@@ -723,7 +787,8 @@ pub async fn install_ocr_dependencies(
         }
         emit_line(&app, &session_id, &format!(">>> 正在安装 {}...", pkg));
         let mut args = vec!["-m", "pip", "install", "--upgrade"];
-        if !is_bundled {
+        // Windows 不需要 --break-system-packages
+        if !cfg!(windows) && !is_bundled {
             args.push("--break-system-packages");
         }
         args.push(pkg);

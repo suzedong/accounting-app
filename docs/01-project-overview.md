@@ -4,7 +4,7 @@
 
 ### 1.1 项目背景
 
-当前项目基于 NocoBase + server.py 代理的纯前端记账 Web 应用。存在以下核心问题：
+原项目基于 NocoBase + server.py 代理的纯前端记账 Web 应用（旧架构已删除）。重构前存在以下核心问题：
 
 - **server.py 是最不稳定的环节**：需要公网 IP 和端口，可能是临时机器，配置不高，维护成本高
 - **NocoBase 虽已部署但并非必要条件**：用户可能在无网络环境、出差场景下使用
@@ -17,7 +17,7 @@
 
 核心原则：
 - **数据永远可用**：所有数据存储在本地 SQLite，不依赖任何外部服务
-- **零自有服务依赖**：不需要 server.py、不需要公网 IP、不需要端口映射
+- **零自有服务依赖**：不再需要 server.py（已删除）、不需要公网 IP、不需要端口映射
 - **NocoBase 作为可选同步目标**：有连接时同步，无连接时完全本地运行
 - **AI 能力直连**：前端直连云端 AI API（百炼），无需代理层
 - **桌面原生体验**：系统通知、全局快捷键、文件关联
@@ -55,8 +55,8 @@
 | 功能 | 说明 |
 |---|---|
 | AI 意图识别 | 调用百炼 API，直连不调用代理 |
-| 偏好管理 | 从 server.py 的 preferences.md 改为 SQLite 存储 |
-| Prompt 管理 | dispatch.md / record.md 改为 SQLite 存储 |
+| 偏好管理 | preferences.md 已迁移为 SQLite 存储 |
+| Prompt 管理 | dispatch.md / record.md 已迁移为 SQLite 存储 |
 | 账户管理 | 从 NocoBase collections 改为硬编码预置 |
 | 分类/支付方式 | 不再需要独立表，records 中直接存自由文本 |
 
@@ -166,7 +166,7 @@
 **PaddleOCR（Python 子进程）+ 智能 Python 探测 + 自动安装依赖**
 
 - Rust 端通过 `std::process::Command` 调用 `src-tauri/scripts/ocr_service.py` 子进程
-- 跨平台 Python 智能探测（Windows `py`/`python`/`python3`，macOS `python3`/Homebrew，Linux `python3`）
+- 跨平台 Python 智能探测（Windows `py`/`python` + 注册表，macOS `python3`/Homebrew，Linux `python3`），通过 `python_manager.ps1`（Windows）和 `python_manager.sh`（macOS/Linux）实现
 - 首次使用时 Settings 页一键 `pip install paddlepaddle paddleocr`
 - 通过临时文件传递 base64 图片数据，避免命令行长度限制
 - 启动时自动检测 Python 和 paddleocr 安装状态

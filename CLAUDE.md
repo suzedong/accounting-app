@@ -60,7 +60,8 @@ src-tauri/        # Rust 后端（Tauri 2 + SQLite）
 │   └── models/   # 数据模型
 ├── capabilities/ # Tauri 权限配置
 ├── scripts/      # Python 脚本
-│   ├── python_manager.sh  # Python 发现 + PaddleOCR 依赖管理
+│   ├── python_manager.sh  # Python 发现 + PaddleOCR 依赖管理（macOS/Linux）
+│   ├── python_manager.ps1 # Python 发现 + PaddleOCR 依赖管理（Windows）
 │   └── ocr_service.py     # PaddleOCR 识别服务
 └── prompts/      # AI 系统 Prompt
     ├── dispatch.md
