@@ -9,7 +9,7 @@
 | 数据层 | NocoBase REST API | SQLite + Tauri invoke | **大改** |
 | 后端服务 | server.py 代理 | Rust Tauri 后端 | **完全重写** |
 | AI 调用 | server.py 代理百炼 | 前端直连百炼 API | **中改** |
-| OCR | server.py + PaddleOCR | RapidOCR ONNX + 模型管理 | **已实现（ONNX 模型管理）** |
+| OCR | server.py + PaddleOCR | Rust 子进程调用 PaddleOCR（保留 server/ocr_service.py） | **已实现（Python 子进程）** |
 | Prompt | server.py 文件管理 | SQLite 存储 | **中改** |
 | Preference | preferences.md | SQLite 存储 | **中改** |
 | 学习引擎 | localStorage | SQLite | **中改** |
@@ -191,43 +191,45 @@ const response = await fetch(apiUrl, {
 
 ```
 前端图片 → invoke('ocr_recognize', { imageBase64 })
-         → Rust → RapidOCR ONNX 推理 → 文本
+         → Rust → 探测 Python → 调用 ocr_service.py → PaddleOCR → 文本
 ```
 
-**OCR 模型**：
-- 3 个 ONNX 模型（det / rec / cls），存储在 `$APP_DATA/ai-jizhang/models/`
-- Settings 页提供模型管理（下载 / 删除 / 状态查看）
-- 启动时自动搜索并初始化 OCR 引擎
-- 剪贴板图片粘贴（Cmd+V / Ctrl+V）已支持
+**OCR 方案**：
+- 使用 `server/ocr_service.py`（原有 PaddleOCR Python 脚本）
+- Rust 端智能探测 Python（跨平台：Windows `py`/`python`/`python3`，macOS `python3`，Linux `python3`）
+- 首次使用时自动 `pip install paddlepaddle paddleocr`
+- 通过临时文件传递 base64 图片数据（避免命令行长度限制）
 
-### 4.3 Rust 端实现（已实现）
+### 4.3 Rust 端实现
 
 ```rust
-// src-tauri/src/ocr/rapidocr.rs
-// 跨平台：RapidOCR ONNX 推理（ort crate）
-pub fn recognize(&self, image_path: &str) -> Result<String, String> {
-    // 加载 det / rec / cls 模型
-    // 文本检测 → 方向分类 → 文本识别 → 拼接结果
+// src-tauri/src/commands/ocr.rs
+// 跨平台：Python 子进程调用 PaddleOCR
+pub async fn ocr_recognize(image_base64: String) -> Result<String, String> {
+    // 探测 Python → 检查 paddleocr 已安装 → 调用 ocr_service.py
 }
 ```
 
 **Tauri Commands**：
-- `check_ocr_status()` — 检查 OCR 引擎状态
-- `get_ocr_models()` — 获取模型列表及下载状态
-- `download_ocr_model(model_id)` — 下载模型（HF 源 + 镜像 + 断点续传）
-- `delete_ocr_model(model_id)` — 删除已安装模型
+- `check_ocr_status()` — 检查 OCR 状态（Python 路径/版本/paddleocr 安装状态）
+- `install_ocr_dependencies()` — 自动安装 paddleocr 依赖
+- `set_ocr_enabled(enabled)` — 启用/禁用 OCR
 - `ocr_recognize(image_base64)` — 执行 OCR 识别
 
 ### 4.4 前端适配
 
-```javascript
-// chat-widget.js - handleImageFile()
-// 旧
+Settings 页提供 OCR 管理：
+- Python 路径、版本、PaddleOCR 安装状态展示
+- 安装依赖按钮（首次使用时自动 pip install）
+- 启用/禁用开关
+
+```typescript
+// 旧：server.py 代理
 fetch('/api/ai/ocr', {
     body: JSON.stringify({ base64: compressedUrl })
 })
 
-// 新
+// 新：Rust 子进程调用
 const { invoke } = await import('@tauri-apps/api/core');
 const result = await invoke('ocr_recognize', { imageBase64: compressedUrl });
 ```
@@ -327,18 +329,19 @@ server/prompts/dispatch.md          # → SQLite
 server/prompts/record.md            # → SQLite
 server/prompts/preferences.md       # → SQLite
 server/prompts/README.md            # → 文档合并
-server/ocr_service.py               # → RapidOCR
 server/scripts/*.py                 # 迁移脚本（保留归档）
 dev.mjs                             # 双进程管理（不再需要）
 vite.config.js 中的 proxy 配置      # 不再需要代理
 package.json 中的 dev:backend       # 不再需要启动 server.py
 ```
 
+> 注意：`server/ocr_service.py` **保留**，Rust 端通过子进程调用。
+
 ## 8. 风险与应对
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| ONNX 模型下载失败 | OCR 不可用 | HF 默认源 + 镜像备选 + 代理支持 + 断点续传 |
+| Python 或 PaddleOCR 安装失败 | OCR 不可用 | 跨平台智能探测 + 自动 pip install + 手动安装指引 |
 | Tauri WebView 版本不兼容 | 部分 API 不可用 | 测试主流平台 WebView 版本，必要时 polyfill |
 | SQLite 并发写入冲突 | 数据丢失 | 使用 WAL 模式，单连接写操作 |
 | 百炼 API 前端暴露 Key | 安全 | 个人使用可接受，加 Referer 白名单 |

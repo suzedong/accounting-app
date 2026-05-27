@@ -178,12 +178,12 @@
 
 #### 3.5 OCR — ✅ 已完成
 
-- [x] `src-tauri/src/ocr/rapidocr.rs` — OCR 引擎（macOS 快捷指令 + 跨平台占位）
-- [x] `commands/ocr.rs` — Tauri Commands（check_ocr_status, get_ocr_models, download_ocr_model, delete_ocr_model, ocr_recognize）
-- [x] `composables/useOCR.ts` — 前端 OCR 封装
-- [x] 聊天窗口图片上传对接 OCR（含剪贴板粘贴 Cmd+V / Ctrl+V）
-- [x] Settings 页 OCR 模型管理（下载 / 删除 / 进度条）
-- [x] 启动时自动检查 OCR 状态，无模型时引导用户前往设置页下载
+- [x] `commands/ocr.rs` — Tauri Commands（智能 Python 探测 + 自动安装依赖 + OCR 识别）
+- [x] `check_ocr_status()` — 探测 Python 路径/版本/paddleocr 安装状态
+- [x] `install_ocr_dependencies()` — 自动 pip install paddlepaddle paddleocr
+- [x] `ocr_recognize(image_base64)` — 调用 server/ocr_service.py 子进程
+- [x] Settings 页 OCR 管理（状态展示 / 安装依赖 / 启用禁用开关）
+- [x] 聊天窗口图片上传对接 OCR
 
 ---
 

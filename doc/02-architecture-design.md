@@ -22,10 +22,6 @@
 │                          │  │  ├─ SQLite DB        │      │   │
 │                          │  │  │  (app_data.db)    │      │   │
 │                          │  │  └───────────────────┘      │   │
-│                          │  │  ├─ ONNX 模型 (OCR)    │      │   │
-│                          │  │  └───────────────────┘      │   │
-│                          │  │  ├─ GGUF 模型 (LLM)    │      │   │
-│                          │  │  └───────────────────┘      │   │
 │                          │  └──────────────────────┘      │   │
 │                          │                              │   │
 │                          │  ┌──────────────────────┐      │   │
@@ -33,7 +29,8 @@
 │                          │  │  ├─ Candle (LLM)    │      │   │
 │                          │  │  │  Metal/CUDA/CPU   │      │   │
 │                          │  │  └───────────────────┘      │   │
-│                          │  │  ├─ RapidOCR (ONNX)   │      │   │
+│                          │  │  ├─ PaddleOCR (Python) │      │   │
+│                          │  │  │  subprocess 调用    │      │   │
 │                          │  │  └───────────────────┘      │   │
 │                          │  └──────────────────────┘      │   │
 │                          └──────────────────────────────┘   │
@@ -80,13 +77,14 @@
 
 ### 2.4 OCR 层
 
-**RapidOCR ONNX + macOS 快捷指令（Vision.framework）+ 模型管理**
+**PaddleOCR（Python 子进程）+ 智能 Python 探测 + 自动安装依赖**
 
-- macOS 端优先通过 `shortcuts` 命令调用系统自带 Vision.framework OCR
-- 跨平台支持 RapidOCR ONNX 模型（det / rec / cls 三个模型文件）
-- 模型存储在 `$APP_DATA/ai-jizhang/models/`，首次使用需在 Settings 页下载
-- 启动时自动搜索模型目录，找到则初始化 OCR 引擎
-- Settings 页提供模型管理（下载 / 删除 / 状态查看）
+- Rust 端通过 `std::process::Command` 调用 `server/ocr_service.py` 子进程
+- 跨平台 Python 智能探测（Windows `py`/`python`/`python3`，macOS `python3`/Homebrew，Linux `python3`）
+- 首次使用时 Settings 页一键 `pip install paddlepaddle paddleocr`
+- 通过临时文件传递 base64 图片数据，避免命令行长度限制
+- 启动时自动检测 Python 和 paddleocr 安装状态
+- Settings 页提供 OCR 管理（状态展示 / 安装依赖 / 启用禁用开关）
 - 输入：图片 base64
 - 输出：识别文本
 
@@ -380,7 +378,7 @@ accounting-app/
 │           └── ComparisonChart.vue   # ECharts：环比对比
 ├── src-tauri/                    # Tauri 2 后端（Rust）
 │   ├── src/
-│   │   ├── main.rs               # 入口：初始化 Database + AppConfig + OcrEngine，注册 38 个命令
+│   │   ├── main.rs               # 入口：初始化 Database + AppConfig，注册 33 个命令
 │   │   ├── db/
 │   │   │   ├── mod.rs            # 模块根，导出 Database, RecordInput 等
 │   │   │   ├── connection.rs     # SQLite 连接（Arc<Mutex<Connection>>，构造函数打开）
@@ -402,7 +400,7 @@ accounting-app/
 │   │   │   ├── chat.rs           # 对话历史（3 个命令）
 │   │   │   ├── config.rs         # 配置读写（8 个命令，含 AI 服务管理）
 │   │   │   ├── sync.rs           # 同步占位（5 个命令）
-│   │   │   └── ocr.rs            # OCR（macOS 快捷指令 + 占位）
+│   │   │   └── ocr.rs            # OCR（Python 子进程调用 PaddleOCR）
 │   │   └── models/
 │   │       └── mod.rs            # 数据模型定义
 │   ├── capabilities/
@@ -434,7 +432,7 @@ accounting-app/
 | SQLite WAL 模式 | `PRAGMA journal_mode=WAL`，提升并发写入性能 |
 | 字段类型 | `records.category` 和 `payment_method` 为自由文本，非枚举 |
 | 数据层 | SQLite 通过 `rusqlite` crate，7 张表 + 预置数据 |
-| OCR 模型存储 | `$APP_DATA/ai-jizhang/models/`，启动时自动搜索并初始化 |
-| LLM 模型存储 | 与 OCR 模型同目录，GGUF 格式（4-bit 量化 ~0.9GB） |
+| OCR | Python 子进程调用 PaddleOCR，跨平台智能探测 Python，自动安装依赖 |
+| LLM 模型存储 | `$APP_DATA/ai-jizhang/models/`，GGUF 格式（4-bit 量化 ~0.9GB） |
 | GPU 策略 | macOS Metal / Windows CUDA（检测后自动启用）/ CPU 回退 |
 | AI 引擎切换 | 百炼 API ↔ 本地 LLM，严格二选一，不自动回退 |

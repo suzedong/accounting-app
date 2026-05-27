@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |---|---|---|
 | Phase 1: Tauri 骨架 + SQLite | ✅ 已完成 | 数据库（7 张表）、CRUD、前端基础 |
 | Phase 2: 业务逻辑迁移 | ✅ 已完成 | Rust commands 齐全（记录/差旅/统计），Vue 6 个页面全部可用 |
-| Phase 3: AI 聊天 + Agent | ✅ 已完成 | 百炼 API 直连、LLM dispatch、action handlers、ChatWidget、学习引擎、对话历史 |
+| Phase 3: AI 聊天 + Agent | ✅ 已完成 | 百炼 API 直连、LLM dispatch、action handlers、ChatWidget、学习引擎、对话历史、OCR |
 | Phase 4: 同步层 + 清理 | ❌ 未开始 | push/pull/import 占位，server.py 待删除，文档待更新 |
 
 ### 新架构目录
@@ -53,8 +53,9 @@ src/              # Vue 3 前端（TypeScript + Element Plus + Pinia）
 
 src-tauri/        # Rust 后端（Tauri 2 + SQLite）
 ├── src/
-│   ├── main.rs   # Tauri 入口，注册 38 个 commands
-│   ├── commands/ # 8 个模块（records/trips/stats/prompts/learning/chat/config/sync/ocr）
+│   ├── main.rs   # Tauri 入口，注册 33 个 commands
+│   ├── commands/ # 7 个模块（records/trips/stats/prompts/learning/chat/config/sync/ocr）
+│   │   └── ocr.rs        # OCR：Python 子进程调用 PaddleOCR（智能探测 + 自动安装依赖）
 │   ├── db/       # SQLite 数据库（schema, CRUD, 聚合查询）
 │   └── models/   # 数据模型
 └── capabilities/ # Tauri 权限配置

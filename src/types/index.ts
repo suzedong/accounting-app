@@ -138,16 +138,6 @@ export interface AiService {
   active: boolean;
 }
 
-export interface OcrModel {
-  id: string;
-  name: string;
-  size_mb: number;
-  sha256: string;
-  file_name: string;
-  download_urls: string[];
-  downloaded: boolean;
-}
-
 export interface FollowUpResult {
   question: string;
   missingFields: string[];

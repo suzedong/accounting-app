@@ -93,52 +93,51 @@
       </el-form>
     </el-card>
 
-    <!-- OCR 模型管理 -->
+    <!-- OCR 识别 -->
     <el-card class="section">
-      <template #header>OCR 识别</template>
+      <template #header>
+        <div class="card-header">
+          <span>OCR 识别</span>
+          <el-switch
+            v-model="ocrEnabled"
+            @change="onToggleOcrEnabled"
+            :loading="savingOcrToggle"
+          />
+        </div>
+      </template>
       <div style="max-width: 700px">
+        <!-- Python 状态 -->
         <div class="ocr-status">
-          <el-tag :type="ocrAvailable ? 'success' : 'warning'" size="large">
-            {{ ocrAvailable ? '✅ 已就绪' : '⚠️ 未就绪' }}
+          <el-tag :type="ocrStatusTag" size="large">
+            {{ ocrStatusText }}
           </el-tag>
-          <span class="ocr-hint">{{ ocrAvailable ? 'OCR 识别功能可用' : '请安装模型后使用' }}</span>
+          <span class="ocr-hint">{{ ocrStatusHint }}</span>
         </div>
 
-        <el-table :data="ocrModels" size="small" border style="margin-top: 12px">
-          <el-table-column prop="name" label="模型" />
-          <el-table-column label="大小" width="80">
-            <template #default="{ row }">{{ row.size_mb }} MB</template>
-          </el-table-column>
-          <el-table-column label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag :type="row.downloaded ? 'success' : 'info'" size="small">
-                {{ row.downloaded ? '已安装' : '未安装' }}
+        <!-- Python 信息 -->
+        <div v-if="ocrPython" class="ocr-info">
+          <el-descriptions :column="2" size="small" border>
+            <el-descriptions-item label="Python 路径">{{ ocrPython.path }}</el-descriptions-item>
+            <el-descriptions-item label="版本">{{ ocrPython.version }}</el-descriptions-item>
+            <el-descriptions-item label="PaddleOCR">
+              <el-tag :type="ocrPython.has_paddleocr ? 'success' : 'warning'" size="small">
+                {{ ocrPython.has_paddleocr ? '已安装' : '未安装' }}
               </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="120">
-            <template #default="{ row }">
-              <el-button
-                v-if="!row.downloaded"
-                size="small"
-                type="primary"
-                :loading="downloadingModel === row.id"
-                @click="handleDownloadModel(row)"
-              >下载</el-button>
-              <el-button
-                v-else
-                size="small"
-                type="danger"
-                text
-                @click="handleDeleteModel(row)"
-              >删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
 
-        <div v-if="downloadProgress" class="download-progress">
-          <el-progress :percentage="downloadProgress" :stroke-width="8" />
-          <span class="progress-text">{{ downloadStatusText }}</span>
+        <!-- 安装依赖按钮 -->
+        <div style="margin-top: 16px">
+          <el-button
+            type="primary"
+            @click="handleInstallDependencies"
+            :loading="installingDeps"
+            :disabled="!ocrPython && !ocrAvailable"
+          >
+            {{ installingDeps ? '正在安装...' : '安装 PaddleOCR 依赖' }}
+          </el-button>
+          <span class="ocr-hint" style="margin-left: 8px">首次使用需要安装（约 200MB）</span>
         </div>
       </div>
     </el-card>
@@ -146,10 +145,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatus, getOcrModels, downloadOcrModel, deleteOcrModel } from '@/api/tauri';
-import type { AiService, OcrModel } from '@/types';
+import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatus, setOcrEnabled, installOcrDependencies } from '@/api/tauri';
+import type { AiService } from '@/types';
 
 const saving = ref(false);
 const testing = ref(false);
@@ -176,12 +175,33 @@ const syncForm = ref({
 
 const budgetMonthly = ref(3500);
 
-// OCR models
+// OCR status
+const ocrEnabled = ref(true);
 const ocrAvailable = ref(false);
-const ocrModels = ref<OcrModel[]>([]);
-const downloadingModel = ref<string | null>(null);
-const downloadProgress = ref(0);
-const downloadStatusText = ref('');
+const ocrPython = ref<{ path: string; version: string; has_paddleocr: boolean } | null>(null);
+const ocrMessage = ref('');
+const installingDeps = ref(false);
+const savingOcrToggle = ref(false);
+
+const ocrStatusTag = computed(() => {
+  if (!ocrEnabled.value) return 'info';
+  if (ocrAvailable.value) return 'success';
+  if (ocrPython.value && !ocrPython.value.has_paddleocr) return 'warning';
+  return 'danger';
+});
+
+const ocrStatusText = computed(() => {
+  if (!ocrEnabled.value) return '已禁用';
+  if (ocrAvailable.value) return 'PaddleOCR 已就绪';
+  if (ocrPython.value) return `Python 已找到，需要安装依赖`;
+  return '未找到 Python';
+});
+
+const ocrStatusHint = computed(() => {
+  if (ocrMessage.value) return ocrMessage.value;
+  if (ocrPython.value) return `版本: ${ocrPython.value.version}`;
+  return '请安装 Python 3.11+ 后使用';
+});
 
 onMounted(async () => {
   try {
@@ -226,8 +246,9 @@ onMounted(async () => {
   try {
     const status = await checkOcrStatus();
     ocrAvailable.value = status.available;
-    const models = await getOcrModels();
-    ocrModels.value = models;
+    ocrEnabled.value = status.enabled;
+    ocrPython.value = status.python || null;
+    ocrMessage.value = status.message || '';
   } catch {
     // OCR not available
   }
@@ -373,43 +394,43 @@ function testNocobaseConnection() {
   ElMessage.info('NocoBase 连接测试（Phase 4 实现）');
 }
 
-// OCR model handlers
-async function handleDownloadModel(model: OcrModel) {
-  downloadingModel.value = model.id;
-  downloadProgress.value = 0;
-  downloadStatusText.value = '正在下载...';
-
+// OCR handlers
+async function onToggleOcrEnabled(val: unknown) {
+  const enabled = val === true;
+  savingOcrToggle.value = true;
   try {
-    const result = await downloadOcrModel(model.id);
-    ElMessage.success(result);
-    // Refresh model list
-    const models = await getOcrModels();
-    ocrModels.value = models;
-    // Check status
+    await setOcrEnabled(enabled);
+    ocrEnabled.value = enabled;
+    ElMessage.success(enabled ? 'OCR 已启用' : 'OCR 已禁用');
+    // Refresh status
     const status = await checkOcrStatus();
     ocrAvailable.value = status.available;
+    ocrPython.value = status.python || null;
+    ocrMessage.value = status.message || '';
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    ElMessage.error(`下载失败: ${msg}`);
+    ElMessage.error(`切换失败: ${msg}`);
+    ocrEnabled.value = !enabled; // revert
   } finally {
-    downloadingModel.value = null;
-    downloadProgress.value = 0;
-    downloadStatusText.value = '';
+    savingOcrToggle.value = false;
   }
 }
 
-async function handleDeleteModel(model: OcrModel) {
-  await ElMessageBox.confirm(`确定删除「${model.name}」？`, '确认删除', { type: 'warning' });
+async function handleInstallDependencies() {
+  installingDeps.value = true;
   try {
-    const result = await deleteOcrModel(model.id);
+    const result = await installOcrDependencies();
     ElMessage.success(result);
-    const models = await getOcrModels();
-    ocrModels.value = models;
+    // Refresh status
     const status = await checkOcrStatus();
     ocrAvailable.value = status.available;
+    ocrPython.value = status.python || null;
+    ocrMessage.value = status.message || '';
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    ElMessage.error(`删除失败: ${msg}`);
+    ElMessage.error(`安装失败: ${msg}`);
+  } finally {
+    installingDeps.value = false;
   }
 }
 </script>
@@ -475,6 +496,16 @@ async function handleDeleteModel(model: OcrModel) {
 .ocr-hint {
   color: #666;
   font-size: 0.9em;
+}
+
+.ocr-info {
+  margin-top: 16px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .download-progress {

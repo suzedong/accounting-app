@@ -74,7 +74,7 @@ export const useChatStore = defineStore('chat', () => {
     imageBase64?: string,
     imageFullSrc?: string,
   ): Promise<void> {
-    if (!text.trim() || sending.value) return;
+    if ((!text.trim() && !imageBase64) || sending.value) return;
     sending.value = true;
 
     // 添加用户消息

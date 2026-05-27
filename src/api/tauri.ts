@@ -208,33 +208,23 @@ export async function testAiConnection(): Promise<{ success: boolean; message: s
 }
 
 // OCR
-export async function checkOcrStatus(): Promise<{ available: boolean }> {
+export async function checkOcrStatus(): Promise<{
+  available: boolean;
+  enabled: boolean;
+  python: { path: string; version: string; has_paddleocr: boolean } | null;
+  message: string;
+}> {
   return invoke('check_ocr_status');
 }
 
-export interface OcrModel {
-  id: string;
-  name: string;
-  size_mb: number;
-  sha256: string;
-  file_name: string;
-  download_urls: string[];
-  downloaded: boolean;
+export async function installOcrDependencies(): Promise<string> {
+  return invoke('install_ocr_dependencies');
 }
 
-export async function getOcrModels(): Promise<OcrModel[]> {
-  return invoke('get_ocr_models');
-}
-
-export async function downloadOcrModel(modelId: string): Promise<string> {
-  return invoke('download_ocr_model', { modelId });
-}
-
-export async function deleteOcrModel(modelId: string): Promise<string> {
-  return invoke('delete_ocr_model', { modelId });
+export async function setOcrEnabled(enabled: boolean): Promise<void> {
+  return invoke('set_ocr_enabled', { enabled });
 }
 
 export async function ocrRecognize(imageBase64: string): Promise<string> {
   return invoke('ocr_recognize', { imageBase64 });
 }
-

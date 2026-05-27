@@ -32,7 +32,7 @@
 | 预算管理 | 月度预算跟踪 + 超支预警 | budget.html | 存 SQLite |
 | 统计分析 | 多维度图表（分类、账户、趋势、对比） | stats.html + Chart.js | SQLite GROUP BY + ECharts |
 | 差旅补助 | 出差记录 + 补助发放 + 金额匹配 | trip_allowance.html | 存 SQLite |
-| OCR 识别 | 图片识别 → 自动记账 | PaddleOCR via server.py | 内置 RapidOCR（ONNX） |
+| OCR 识别 | 图片识别 → 自动记账 | PaddleOCR（Rust 子进程调用） | Python subprocess |
 | 学习引擎 | 用户修正 → 个性化规则 | localStorage + NocoBase | 存 SQLite |
 | 对话历史 | AI 对话记录 | localStorage | 存 SQLite |
 
@@ -70,7 +70,7 @@
 
 - SQLite 查询：万级记录量级下响应 < 200ms
 - 统计聚合：利用 SQL GROUP BY，不再全量拉数据到前端计算
-- OCR 识别：本地 RapidOCR 单次 < 2 秒
+- OCR 识别：Python PaddleOCR 子进程单次 < 3 秒（含启动时间）
 
 ### 4.3 数据一致性
 
@@ -81,7 +81,7 @@
 
 ### 4.4 包体积
 
-- Tauri 应用包：约 5-10 MB（含 RapidOCR ONNX 模型 ~10MB）
+- Tauri 应用包：约 5-10 MB（OCR 依赖外部 Python + PaddleOCR，不内置）
 - 内存占用：< 150 MB
 
 ### 4.5 跨平台
