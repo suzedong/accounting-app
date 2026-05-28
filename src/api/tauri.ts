@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '@/utils/invoke-logger';
 import type { AccountRecord, RecordInput, TripRecord, ApiResponse, StatsSummary, CategoryStat, AccountStat, MonthTrend, ComparisonResult, BudgetAnalysis, AllConfig, AiService } from '@/types';
 
 // Records
@@ -208,6 +208,22 @@ export async function testAiConnection(): Promise<{ success: boolean; message: s
 }
 
 // OCR
+export async function checkOcrStatusFast(): Promise<{
+  available: boolean;
+  enabled: boolean;
+  activePython: { path: string; version: string; isBundled: boolean; hasPaddleocr: boolean } | null;
+  systemPythons: Array<{ path: string; version: string; minorVersion: number; isCompatible: boolean; hasPaddleocr: boolean; source: string }>;
+  bundledPythonInstalled: boolean;
+  message: string;
+}> {
+  return invoke('check_ocr_status_fast');
+}
+
+export async function startOcrDiscover(): Promise<void> {
+  return invoke('start_ocr_discover');
+}
+
+// Legacy: synchronous check (system_pythons will be empty, use fast+discover instead)
 export async function checkOcrStatus(): Promise<{
   available: boolean;
   enabled: boolean;

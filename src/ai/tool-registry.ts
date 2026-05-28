@@ -12,9 +12,9 @@ import type { RecordInput, TripRecord } from '@/types';
 
 const CreateRecordSchema = z.object({
   datetime: z.string().optional(),
-  type: z.enum(['收入', '支出']),
+  type: z.enum(['收入', '支出']).transform(s => s.trim()),
   category: z.string().optional(),
-  amount: z.number().positive(),
+  amount: z.coerce.number().positive(),
   account: z.string().optional(),
   note: z.string().optional(),
   payment: z.string().optional(),
@@ -23,15 +23,15 @@ const CreateRecordSchema = z.object({
 const CorrectRecordSchema = z.object({
   fields: z.object({
     datetime: z.string().optional(),
-    type: z.enum(['收入', '支出']).optional(),
+    type: z.enum(['收入', '支出']).transform(s => s.trim()).optional(),
     category: z.string().optional(),
-    amount: z.number().positive().optional(),
+    amount: z.coerce.number().positive().optional(),
     account: z.string().optional(),
     note: z.string().optional(),
     payment_method: z.string().optional(),
   }),
   context: z.object({
-    amount: z.number().optional(),
+    amount: z.coerce.number().optional(),
     note: z.string().optional(),
     datetime: z.string().optional(),
   }).optional(),
@@ -41,9 +41,9 @@ const UpdateRecordSchema = z.object({
   recordId: z.number(),
   fields: z.object({
     datetime: z.string().optional(),
-    type: z.enum(['收入', '支出']).optional(),
+    type: z.enum(['收入', '支出']).transform(s => s.trim()).optional(),
     category: z.string().optional(),
-    amount: z.number().positive().optional(),
+    amount: z.coerce.number().positive().optional(),
     account: z.string().optional(),
     note: z.string().optional(),
     payment_method: z.string().optional(),
@@ -105,13 +105,13 @@ const ConfirmTripRecordSchema = z.object({
 });
 
 const RecordTripPaymentSchema = z.object({
-  amount: z.number().positive(),
+  amount: z.coerce.number().positive(),
   datetime: z.string().optional(),
 });
 
 const ConfirmTripPaymentSchema = z.object({
   tripId: z.number(),
-  amount: z.number().positive(),
+  amount: z.coerce.number().positive(),
   matchType: z.enum(['trip_allowance', 'transport_allowance', 'full', 'manual']).optional(),
   datetime: z.string().optional(),
 });
@@ -261,7 +261,7 @@ class ToolRegistry {
   }
 
   private _zodTypeToJsonSchema(schema: unknown): Record<string, unknown> {
-    const def = (schema as { _def?: { type?: string; innerType?: unknown; element?: unknown; entries?: Record<string, string> } })?._def;
+    const def = (schema as { _def?: { type?: string; innerType?: unknown; element?: unknown; entries?: Record<string, string>; in?: unknown; out?: unknown } })?._def;
     if (!def) return {};
 
     switch (def.type) {
@@ -274,9 +274,11 @@ class ToolRegistry {
         return { type: 'string', enum: Object.values(entries) };
       }
       case 'optional': case 'nullable': return this._zodTypeToJsonSchema(def.innerType);
+      case 'pipe': return this._zodTypeToJsonSchema(def.in); // Zod v4 transform/pipe
       case 'object': return this._zodToJsonSchema(schema);
       case 'record': return { type: 'object' };
       case 'default': return this._zodTypeToJsonSchema(def.innerType);
+      case 'coerce': return this._zodTypeToJsonSchema(def.innerType || def.type);
       default: return {};
     }
   }

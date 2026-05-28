@@ -18,6 +18,9 @@
         <div class="chat-panel-header">
           <span class="drawer-title">AI 对话</span>
           <div class="drawer-actions">
+            <el-button size="small" text @click="openDevConsole" title="开发者控制台">
+              <el-icon><Monitor /></el-icon>
+            </el-button>
             <el-button size="small" text @click="openSettingsDialog" title="设置">
               <el-icon><Setting /></el-icon>
             </el-button>
@@ -47,7 +50,7 @@
                 </div>
               </div>
 
-              <!-- Messages with StepList -->
+              <!-- Messages -->
               <template v-for="msg in messages" :key="msg.id">
                 <!-- User message -->
                 <div v-if="msg.role === 'user'" class="message user">
@@ -60,16 +63,27 @@
                 <!-- AI message -->
                 <div v-else class="message ai">
                   <div class="message-bubble ai-bubble">
-                    <!-- Thinking / loading -->
-                    <div v-if="msg.loading" class="loading-indicator">
-                      <span class="spinner">⟳</span> 正在思考...
+                    <!-- 思考中（loading 状态） -->
+                    <div v-if="msg.loading" class="thinking-indicator">
+                      <span class="spinner">⟳</span>
+                      <span>{{ currentStepLabel(msg.steps) }}...</span>
                     </div>
 
-                    <!-- StepList (推理链) -->
-                    <StepList v-if="msg.steps && msg.steps.length > 0" :steps="msg.steps" />
+                    <!-- 思考过程（有 steps 时显示，可折叠） -->
+                    <div v-else-if="msg.steps?.length" class="thinking-section">
+                      <div class="thinking-header" @click="toggleThinking(msg.id)">
+                        <el-icon class="thinking-chevron" :class="{ rotated: thinkingExpanded[msg.id] }">
+                          <ArrowDown />
+                        </el-icon>
+                        <span class="thinking-label">{{ formatThinkingLabel(msg.steps) }}</span>
+                      </div>
+                      <div v-show="thinkingExpanded[msg.id]" class="thinking-body">
+                        <StepList :steps="msg.steps" />
+                      </div>
+                    </div>
 
-                    <!-- AI response text -->
-                    <p v-if="msg.content && !msg.loading" class="ai-text">{{ msg.content }}</p>
+                    <!-- 最终回复文本 -->
+                    <p v-if="msg.content" class="ai-text">{{ msg.content }}</p>
 
                     <!-- Confirmation card -->
                     <ConfirmCard
@@ -126,9 +140,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue';
+import { ref, onMounted, nextTick, watch, reactive } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { ChatDotRound, Close, Delete, Setting } from '@element-plus/icons-vue';
+import { ChatDotRound, Close, Delete, Setting, Monitor, ArrowDown } from '@element-plus/icons-vue';
 import { storeToRefs } from 'pinia';
 import ChatInput from './ChatInput.vue';
 import ConfirmCard from './ConfirmCard.vue';
@@ -137,10 +151,30 @@ import StepList from './StepList.vue';
 import SettingsPanel from './SettingsPanel.vue';
 import { useChatStore } from '@/stores/chat';
 import { getSystemPrompt, getLearningCorrections, updateSystemPrompt, deleteCorrection, clearCorrections, clearChatHistory } from '@/api/tauri';
+import type { Step } from '@/types/chat';
 
 const chat = useChatStore();
 const { messages, isOpen, sending, ocrLoading } = storeToRefs(chat);
 const messagesRef = ref<HTMLElement | null>(null);
+
+// 思考过程折叠状态
+const thinkingExpanded = reactive<Record<number, boolean>>({});
+
+function toggleThinking(msgId: number) {
+  thinkingExpanded[msgId] = !thinkingExpanded[msgId];
+}
+
+function formatThinkingLabel(steps: Step[]): string {
+  const completed = steps.filter(s => s.status === 'success');
+  if (completed.length === 0) return '思考过程';
+  // 显示所有步骤标题，用 · 分隔
+  return steps.map(s => s.title).join(' · ');
+}
+
+function currentStepLabel(steps: Step[]): string {
+  const running = steps.find(s => s.status === 'running');
+  return running ? running.title : '处理中';
+}
 
 // 兜底：isOpen 被外部设为 false 时恢复滚动
 watch(isOpen, (val) => {
@@ -180,7 +214,7 @@ async function onSend(text: string, imageBase64?: string, imageFullSrc?: string)
   // If in field editing mode
   if (chat.editingField) {
     chat.applyFieldEdit(text);
-    messages.push({
+    messages.value.push({
       id: chat.genId(),
       role: 'ai',
       content: '已更新字段',
@@ -216,6 +250,10 @@ function handleCardAction(msg: typeof messages.value[0], action: 'confirm' | 'ed
 
 function handleFollowUpSelect(_msg: typeof messages.value[0], field: string) {
   chat.startEditField(field);
+}
+
+function openDevConsole() {
+  window.dispatchEvent(new CustomEvent('dev-console-toggle'));
 }
 
 async function openSettingsDialog() {
@@ -493,21 +531,69 @@ async function handleClearHistory() {
   margin: 4px 0 0;
 }
 
-.loading-indicator {
+/* Thinking indicator (loading state) */
+.thinking-indicator {
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: #999;
+  gap: 8px;
+  color: #909399;
   font-size: 13px;
+  padding: 4px 0;
 }
 
 .spinner {
   animation: spin 1s linear infinite;
+  display: inline-block;
 }
 
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* Thinking section (collapsed/expandable) */
+.thinking-section {
+  background: #ededed;
+  border-radius: 8px;
+  margin: 4px 0;
+  overflow: hidden;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: #8c8c8c;
+  transition: background 0.15s;
+}
+
+.thinking-header:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.thinking-chevron {
+  font-size: 12px;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.thinking-chevron.rotated {
+  transform: rotate(180deg);
+}
+
+.thinking-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinking-body {
+  padding: 0 4px 8px;
 }
 
 .settings-dialog :deep(.el-dialog__body) {

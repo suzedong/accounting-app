@@ -93,40 +93,46 @@ function sourceLabel(source: 'extracted' | 'inferred' | 'default'): string {
 
 <style scoped>
 .step-list {
-  margin: 8px 0;
+  margin: 0;
 }
 
 .step-item {
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  margin-bottom: 6px;
-  overflow: hidden;
+  border: none;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 0;
+  margin-bottom: 0;
+  overflow: visible;
   transition: border-color 0.2s;
+  background: transparent;
+}
+
+.step-item:last-child {
+  border-bottom: none;
 }
 
 .step-item.step-running {
-  border-color: #93c5fd;
-  background: #eff6ff;
+  border-color: transparent;
+  background: rgba(59, 130, 246, 0.05);
 }
 
 .step-item.step-success {
-  border-color: #d1fae5;
-  background: #f0fdf4;
+  border-color: transparent;
+  background: transparent;
 }
 
 .step-item.step-error {
-  border-color: #fecaca;
-  background: #fef2f2;
+  border-color: transparent;
+  background: rgba(239, 68, 68, 0.05);
 }
 
 .step-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 5px 6px;
   cursor: pointer;
   user-select: none;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .step-header:hover {
@@ -189,7 +195,7 @@ function sourceLabel(source: 'extracted' | 'inferred' | 'default'): string {
 }
 
 .step-detail {
-  padding: 4px 10px 8px 28px;
+  padding: 2px 6px 6px 24px;
   font-size: 12px;
   color: #4b5563;
 }

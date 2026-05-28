@@ -16,6 +16,13 @@ export interface LLMLogEntry {
   steps: string[];
 }
 
+export interface ProcessResult {
+  steps: Step[];
+  toolResult: ToolResult | null;
+  finalReply: string;
+  action?: string;
+}
+
 export class AgentEngine {
   private conversationHistory: LLMMessage[] = [];
   private maxRounds = 10;
@@ -51,17 +58,14 @@ export class AgentEngine {
   }
 
   /**
-   * 处理用户消息，返回推理链 + 工具结果 + 最终回复
+   * 处理用户消息，逐步返回推理链 + 工具结果 + 最终回复
+   * onStep 回调在每步完成时立即触发，用于 UI 逐步渲染
    */
   async processMessage(
     text: string,
     imageBase64?: string,
-  ): Promise<{
-    steps: Step[];
-    toolResult: ToolResult | null;
-    finalReply: string;
-    action?: string;
-  }> {
+    onStep?: (step: Step) => void | Promise<void>,
+  ): Promise<ProcessResult> {
     const steps: Step[] = [];
 
     // Step 0: OCR
@@ -74,11 +78,11 @@ export class AgentEngine {
         collapsed: false,
       };
       steps.push(ocrStep);
+      await onStep?.({ ...ocrStep });
 
+      const ocrStartTime = Date.now();
       try {
-        const startTime = Date.now();
         const rawText = await ocrRecognize(imageBase64);
-        // Strip OCR debug lines (lines starting with [OCR] or [OCR 识别结果])
         const cleanText = rawText.split('\n')
           .filter(line => !line.startsWith('[OCR]') && line !== '[OCR 识别结果]')
           .map(line => line.trim())
@@ -87,7 +91,7 @@ export class AgentEngine {
         ocrStep.status = 'success';
         ocrStep.detail!.ocr = {
           status: 'success',
-          latency: Date.now() - startTime,
+          latency: Date.now() - ocrStartTime,
           recognizedText: cleanText,
         };
         text = text ? `${text} ${cleanText}` : cleanText;
@@ -95,12 +99,13 @@ export class AgentEngine {
         ocrStep.status = 'error';
         ocrStep.detail!.ocr = {
           status: 'error',
-          latency: 0,
+          latency: Date.now() - ocrStartTime,
           recognizedText: '',
           error: e instanceof Error ? e.message : 'OCR 识别失败',
         };
         throw new Error('OCR 识别失败：' + (e instanceof Error ? e.message : String(e)));
       }
+      await onStep?.({ ...ocrStep });
     }
 
     // 构建完整 system message
@@ -119,11 +124,10 @@ export class AgentEngine {
       collapsed: false,
     };
     steps.push(intentStep);
+    await onStep?.({ ...intentStep });
 
-    // 调用 LLM（Function Calling）
     const llmResponse = await this._callLLMWithTools(systemMessage, text, recentMessages);
 
-    // 解析 Function Calling 响应
     const parsed = this.parseFunctionCallResponse(llmResponse.content, llmResponse.toolCalls);
     if (!parsed) {
       intentStep.status = 'error';
@@ -139,8 +143,8 @@ export class AgentEngine {
     intentStep.detail!.action = parsed.action;
     intentStep.detail!.confidence = parsed.confidence;
 
-    // 提取字段用于展示
-    const fields = (parsed.params?.fields as Record<string, unknown>) || {};
+    // 提取字段用于展示（LLM 参数本身就是字段集合，不是嵌套在 params.fields 下）
+    const fields: Record<string, unknown> = parsed.params || {};
     if (Object.keys(fields).length > 0) {
       const fieldLabels: Record<string, string> = {
         amount: '金额', type: '类型', category: '分类',
@@ -150,13 +154,15 @@ export class AgentEngine {
         days: '出差天数', notes: '备注',
       };
       intentStep.detail!.fields = Object.entries(fields)
-        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .filter(([k]) => !k.endsWith('_source')) // 跳过 source 元数据键
+        .filter(([, v]) => v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'undefined')
         .map(([k, v]) => ({
           label: fieldLabels[k] || k,
-          value: String(v),
-          source: 'extracted' as const,
+          value: typeof v === 'object' ? JSON.stringify(v) : String(v),
+          source: (fields[`${k}_source`] as 'extracted' | 'inferred' | 'default') || 'extracted',
         }));
     }
+    await onStep?.({ ...intentStep });
 
     // 如果是 ask_follow_up，直接返回
     if (parsed.action === 'ask_follow_up') {
@@ -187,6 +193,26 @@ export class AgentEngine {
       collapsed: false,
     };
     steps.push(executeStep);
+    await onStep?.({ ...executeStep });
+
+    // 预处理参数：LLM 可能返回 amount 为字符串，或 type 带空格
+    if (parsed.params) {
+      if (typeof parsed.params.amount === 'string') {
+        const num = parseFloat(parsed.params.amount);
+        if (!isNaN(num)) parsed.params.amount = num;
+        else delete parsed.params.amount;
+      } else if (typeof parsed.params.amount !== 'number' || isNaN(parsed.params.amount as number)) {
+        delete parsed.params.amount;
+      }
+      if (typeof parsed.params.type === 'string') {
+        const trimmed = parsed.params.type.trim();
+        if (trimmed === '收入' || trimmed === '支出') {
+          parsed.params.type = trimmed;
+        } else {
+          delete parsed.params.type;
+        }
+      }
+    }
 
     const toolResult = await toolRegistry.execute(parsed.action, parsed.params);
 
@@ -200,8 +226,10 @@ export class AgentEngine {
       }
     } else {
       executeStep.status = 'error';
+      executeStep.title = '执行操作 (失败)';
       executeStep.detail!.error = toolResult.error || '操作失败';
     }
+    await onStep?.({ ...executeStep });
 
     // 更新 conversation history
     this.conversationHistory.push({
@@ -211,8 +239,7 @@ export class AgentEngine {
         : (toolResult.error || '操作失败'),
     });
 
-    // Step 3: 最终回复
-    const finalReply = toolResult.success
+    let finalReply = toolResult.success
       ? (toolResult.message || '操作完成')
       : (toolResult.error || '操作失败');
 

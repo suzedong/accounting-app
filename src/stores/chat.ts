@@ -88,7 +88,7 @@ export const useChatStore = defineStore('chat', () => {
     await scrollToBottom(messagesRef);
     await persistMessage(userMsg);
 
-    // 添加 AI loading 消息
+    // 添加 AI 消息（loading 状态，等待回调填充步骤）
     const aiMsg: ChatMessage = {
       id: genId(),
       role: 'ai',
@@ -96,23 +96,29 @@ export const useChatStore = defineStore('chat', () => {
       loading: true,
       steps: [],
     };
-    messages.value.push(aiMsg);
-    await scrollToBottom(messagesRef);
 
     try {
       // 初始化 AgentEngine
       await agentEngine.loadContext();
 
-      // 处理消息
-      const result = await agentEngine.processMessage(text, imageBase64);
+      messages.value.push(aiMsg);
+      await scrollToBottom(messagesRef);
 
-      // 更新 AI 消息
+      // 处理消息（回调中实时更新 steps，loading 结束后显示）
+      const result = await agentEngine.processMessage(text, imageBase64, (step) => {
+        const existingStep = aiMsg.steps!.find(s => s.id === step.id);
+        if (existingStep) {
+          Object.assign(existingStep, step);
+        } else {
+          aiMsg.steps!.push(step);
+        }
+      });
+
+      // 处理完成，解除 loading，设置最终内容
       aiMsg.loading = false;
-      aiMsg.steps = result.steps;
       aiMsg.content = result.finalReply;
       aiMsg.render = result.toolResult?.render || 'text';
       aiMsg.data = result.toolResult?.data as Record<string, unknown>;
-      aiMsg.status = 'success';
 
       // 处理确认卡片（create_record 等）
       if (result.action && ['create_record', 'create_trip_record', 'record_trip_payment'].includes(result.action) && result.toolResult?.render === 'card') {
@@ -136,6 +142,7 @@ export const useChatStore = defineStore('chat', () => {
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : (typeof e === 'string' ? e : '未知错误');
       console.error('[ChatStore] Error processing message:', errorMsg, e);
+      // 更新现有 AI 气泡为错误信息
       aiMsg.loading = false;
       aiMsg.content = errorMsg;
       aiMsg.render = 'text';

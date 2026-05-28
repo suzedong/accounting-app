@@ -163,6 +163,12 @@ CREATE TABLE IF NOT EXISTS app_config (
         )?;
     }
 
+    // Sync dispatch prompt from file (always update to pick up new rules like _source annotations)
+    conn.execute(
+        "INSERT INTO system_prompts (name, content, updated_at) VALUES ('dispatch', ?, datetime('now')) ON CONFLICT(name) DO UPDATE SET content = excluded.content, updated_at = datetime('now')",
+        [include_str!("../../prompts/dispatch.md")],
+    )?;
+
     // Cleanup: drop deprecated user_preferences table (KV model abandoned, preferences are now markdown docs)
     let _ = conn.execute("DROP TABLE IF EXISTS user_preferences", []);
 

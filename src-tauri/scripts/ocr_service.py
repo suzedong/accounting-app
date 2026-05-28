@@ -16,6 +16,12 @@ from importlib.metadata import PackageNotFoundError, version
 import numpy as np
 from PIL import Image
 
+import sys
+
+def _log(msg):
+    """打印日志到 stderr，避免与 OCR 识别结果（stdout）混在一起"""
+    print(f'[OCR] {msg}', file=sys.stderr)
+
 @contextmanager
 def _suppress_paddle_output():
     """抑制 PaddleX/PaddleOCR 的冗长日志（模型下载提示、颜色编码等）"""
@@ -223,28 +229,28 @@ def _get_latest_version(package_name):
             data = json.loads(resp.read().decode('utf-8'))
             return data['info']['version']
     except Exception as e:
-        print(f'[OCR] 获取 {package_name} 最新版本失败: {e}')
+        _log(f'获取 {package_name} 最新版本失败: {e}')
         return None
 
 
 def _pip_install(package_name):
     """pip install 指定包（最新版）"""
-    print(f'[OCR] 正在安装 {package_name} (最新版)...')
+    _log(f'正在安装 {package_name} (最新版)...')
     result = subprocess.run(
         [sys.executable, '-m', 'pip', 'install', '-q', '--upgrade', package_name],
         capture_output=True, text=True, timeout=600
     )
     if result.returncode == 0:
-        print(f'[OCR] {package_name} 安装成功')
+        _log(f'{package_name} 安装成功')
         return True
     else:
-        print(f'[OCR] {package_name} 安装失败: {result.stderr[-500:]}')
+        _log(f'{package_name} 安装失败: {result.stderr[-500:]}')
         return False
 
 
 def _pip_uninstall(package_name):
     """pip uninstall 指定包"""
-    print(f'[OCR] 正在卸载 {package_name}...')
+    _log(f'正在卸载 {package_name}...')
     subprocess.run(
         [sys.executable, '-m', 'pip', 'uninstall', '-y', '-q', package_name],
         capture_output=True, text=True, timeout=60
@@ -271,7 +277,7 @@ def _switch_package(target):
     """切换到目标配置"""
     current = _get_installed_package(target.paddle_pkg)
     if current:
-        print(f'[OCR] {target.paddle_pkg} 已安装 (v{current[1]})，跳过安装')
+        _log(f'{target.paddle_pkg} 已安装 (v{current[1]})，跳过安装')
     else:
         # 卸载不匹配的 paddle 包
         for pkg in ['paddlepaddle', 'paddlepaddle-gpu']:
@@ -282,7 +288,7 @@ def _switch_package(target):
     # 确保 paddleocr 已安装
     ocr_installed = _get_installed_package(target.ocr_pkg)
     if ocr_installed:
-        print(f'[OCR] {target.ocr_pkg} 已安装 (v{ocr_installed[1]})')
+        _log(f'{target.ocr_pkg} 已安装 (v{ocr_installed[1]})')
     else:
         _pip_install(target.ocr_pkg)
 
@@ -292,16 +298,16 @@ def _switch_package(target):
             pkg_name = dep.split('[')[0]
             existing = _get_installed_package(pkg_name)
             if existing:
-                print(f'[OCR] 正在升级 {dep}...')
+                _log(f'正在升级 {dep}...')
             else:
-                print(f'[OCR] 正在安装 {dep}...')
+                _log(f'正在安装 {dep}...')
             _pip_install(dep)
     elif target.extra_deps:
         for dep in target.extra_deps:
             pkg_name = dep.split('[')[0]
             existing = _get_installed_package(pkg_name)
             if existing:
-                print(f'[OCR] {dep} 已安装 (v{existing[1]})')
+                _log(f'{dep} 已安装 (v{existing[1]})')
 
     return True
 
@@ -320,42 +326,42 @@ def _select_and_setup():
 
     if mode == 'cpu':
         target = TargetConfig('强制 CPU', 'paddlepaddle', 'paddleocr', 'cpu', use_vl=False)
-        print(f'[OCR] 强制 CPU 模式')
+        _log('强制 CPU 模式')
         return target, True
 
     if mode == 'gpu':
         target = _detect_hardware()
-        print(f'[OCR] 强制 GPU 模式: {target.label}')
+        _log(f'强制 GPU 模式: {target.label}')
         return target, _switch_package(target)
 
     # auto 模式
     target = _detect_hardware()
-    print(f'[OCR] 检测到硬件: {target.label}')
+    _log(f'检测到硬件: {target.label}')
 
     if target.device == 'gpu':
         # 检查 GPU 版是否已装
         gpu_pkg = _get_installed_package(target.paddle_pkg)
         if gpu_pkg:
-            print(f'[OCR] {target.paddle_pkg} 已安装 (v{gpu_pkg[1]})')
+            _log(f'{target.paddle_pkg} 已安装 (v{gpu_pkg[1]})')
             paddle_info = _get_paddle_info()
             if paddle_info and paddle_info.get('gpu_count', 0) > 0:
-                print(f'[OCR] GPU 加速已启用，GPU 数量: {paddle_info["gpu_count"]}')
+                _log(f'GPU 加速已启用，GPU 数量: {paddle_info["gpu_count"]}')
                 return target, True
             else:
-                print(f'[OCR] GPU 版已安装但 GPU 不可用，尝试切换...')
+                _log('GPU 版已安装但 GPU 不可用，尝试切换...')
                 return target, _switch_package(target)
         else:
-            print(f'[OCR] 当前未安装 GPU 版 PaddlePaddle，正在安装...')
+            _log('当前未安装 GPU 版 PaddlePaddle，正在安装...')
             return target, _switch_package(target)
     else:
         # CPU 设备（含 Apple Silicon）
         cpu_pkg = _get_installed_package(target.paddle_pkg)
         if cpu_pkg:
-            print(f'[OCR] {target.paddle_pkg} 已安装 (v{cpu_pkg[1]})')
+            _log(f'{target.paddle_pkg} 已安装 (v{cpu_pkg[1]})')
         else:
-            print(f'[OCR] 未安装 {target.paddle_pkg}，正在安装...')
+            _log(f'未安装 {target.paddle_pkg}，正在安装...')
             _switch_package(target)
-        print(f'[OCR] 使用 CPU 推理')
+        _log('使用 CPU 推理')
         return target, True
 
 
@@ -374,23 +380,23 @@ def get_engine():
 
     if target.use_vl:
         try:
-            print(f'[OCR] 正在加载 PaddleOCR-VL 模型...')
+            _log('正在加载 PaddleOCR-VL 模型...')
             with _suppress_paddle_output():
                 from paddleocr import PaddleOCRVL
                 _engine = PaddleOCRVL()
-            print(f'[OCR] PaddleOCR-VL 模型加载完成')
+            _log('PaddleOCR-VL 模型加载完成')
             return _engine
         except Exception as e:
-            print(f'[OCR] PaddleOCR-VL 加载失败 ({e})，回退到标准 PaddleOCR')
+            _log(f'PaddleOCR-VL 加载失败 ({e})，回退到标准 PaddleOCR')
             target.use_vl = False
 
-    print(f'[OCR] 正在加载 PaddleOCR 模型...')
+    _log('正在加载 PaddleOCR 模型...')
     # GPU 模式下使用 device='gpu'，否则 'cpu'
     device = 'gpu' if target.device == 'gpu' else 'cpu'
     with _suppress_paddle_output():
         from paddleocr import PaddleOCR
         _engine = PaddleOCR(use_angle_cls=True, lang='ch', device=device)
-    print(f'[OCR] PaddleOCR 模型加载完成')
+    _log('PaddleOCR 模型加载完成')
 
     return _engine
 
@@ -444,7 +450,7 @@ def recognize_image(base64_str):
                         lines.append(text)
 
     full_text = '\n'.join(lines)
-    print(f'[OCR] 识别完成，共 {len(lines)} 行，文本长度: {len(full_text)}')
+    _log(f'识别完成，共 {len(lines)} 行，文本长度: {len(full_text)}')
 
     return {
         'text': full_text,

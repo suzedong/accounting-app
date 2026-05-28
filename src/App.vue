@@ -29,8 +29,13 @@ function handleKeyDown(e: KeyboardEvent) {
   }
 }
 
+function handleDevConsoleToggle() {
+  devConsoleRef.value?.toggle();
+}
+
 onMounted(async () => {
   document.addEventListener('keydown', handleKeyDown);
+  window.addEventListener('dev-console-toggle', handleDevConsoleToggle);
 
   // Check OCR status on startup — prompt only if enabled but not ready
   try {
@@ -56,6 +61,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeyDown);
+  window.removeEventListener('dev-console-toggle', handleDevConsoleToggle);
 });
 </script>
 

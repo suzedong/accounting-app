@@ -135,7 +135,13 @@
 
         <!-- 系统 Python 列表 -->
         <div class="system-python-section">
-          <div class="section-title">Python 列表</div>
+          <div class="section-title">
+            Python 列表
+            <span v-if="discoverLoading" class="discover-loading">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              <span class="discover-loading-text">正在扫描系统 Python…</span>
+            </span>
+          </div>
           <el-table :data="systemPythons" size="small" border stripe class="python-table">
             <el-table-column label="版本" width="160">
               <template #default="{ row }">
@@ -252,8 +258,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { Loading } from '@element-plus/icons-vue';
 import { listen } from '@tauri-apps/api/event';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatus, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython } from '@/api/tauri';
+import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython } from '@/api/tauri';
 import type { AiService, AllConfig } from '@/types';
 
 // Types for OCR
@@ -308,6 +315,7 @@ const ocrMessage = ref('');
 const activePython = ref<ActivePython | null>(null);
 const systemPythons = ref<SystemPython[]>([]);
 const bundledPythonInstalled = ref(false);
+const discoverLoading = ref(false); // True while background discover is running
 
 // Shared terminal state for all operations
 const showTerminal = ref(false);
@@ -328,16 +336,24 @@ watch(() => terminalLines.value.length, () => {
   });
 }, { flush: 'post' });
 
-// Event listener for OCR install logs
-let unlisten: (() => void) | null = null;
+// Event listeners
+let unlistenInstallLog: (() => void) | null = null;
+let unlistenDiscoverResult: (() => void) | null = null;
 
 async function setupEventListeners() {
-  unlisten = await listen('ocr_install_log', (event: unknown) => {
+  unlistenInstallLog = await listen('ocr_install_log', (event: unknown) => {
     const payload = event as { payload: { sessionId: string; text: string } };
     // Route to shared terminal if session matches current operation
     if (payload.payload.sessionId === operationSessionId.value) {
       terminalLines.value.push(payload.payload.text);
     }
+  });
+
+  // Listen for background discover result
+  unlistenDiscoverResult = await listen('ocr_discover_result', (event: unknown) => {
+    const payload = event as { payload: { systemPythons: SystemPython[] } };
+    systemPythons.value = payload.payload.systemPythons;
+    discoverLoading.value = false;
   });
 }
 
@@ -362,46 +378,59 @@ const ocrStatusHint = computed(() => {
 });
 
 onMounted(async () => {
-  try {
-    // Load services
-    const svcs = await getAiServices();
-    services.value = svcs.length > 0 ? svcs : [];
+  // Render skeleton first, then load data asynchronously
+  await nextTick();
+
+  // Parallel: AI services + other config + OCR fast status (independent, no dependencies)
+  const [svcsResult, configResult, ocrResult] = await Promise.allSettled([
+    getAiServices(),
+    getAllConfig(),
+    checkOcrStatusFast(),
+  ]);
+
+  // Process AI services
+  if (svcsResult.status === 'fulfilled') {
+    services.value = svcsResult.value.length > 0 ? svcsResult.value : [];
     activeId.value = services.value.find(s => s.active)?.id || services.value[0]?.id || '';
-    // Pre-fill form with active service
     const activeSvc = services.value.find(s => s.active);
     if (activeSvc) {
       editingId.value = activeSvc.id;
       editForm.value = { name: activeSvc.name, api_url: activeSvc.api_url, api_key: activeSvc.api_key, model: activeSvc.model };
     }
-
-    // Load other config
-    const config = await getAllConfig();
-    syncForm.value.nocobase_url = config.nocobase_url || '';
-    syncForm.value.nocobase_token = config.nocobase_token || '';
-    budgetMonthly.value = config.budget_monthly;
-  } catch {
-    // 配置为空时使用默认值
   }
 
-  // Load OCR status
-  try {
-    const status = await checkOcrStatus();
+  // Process config
+  if (configResult.status === 'fulfilled') {
+    syncForm.value.nocobase_url = configResult.value.nocobase_url || '';
+    syncForm.value.nocobase_token = configResult.value.nocobase_token || '';
+    budgetMonthly.value = configResult.value.budget_monthly;
+  }
+
+  // Process OCR
+  if (ocrResult.status === 'fulfilled') {
+    const status = ocrResult.value;
     ocrAvailable.value = status.available;
     ocrEnabled.value = status.enabled;
     activePython.value = status.activePython || null;
-    systemPythons.value = status.systemPythons || ([] as SystemPython[]);
     ocrMessage.value = status.message || '';
     bundledPythonInstalled.value = status.bundledPythonInstalled;
-  } catch {
-    // OCR not available
   }
 
-  // Setup event listeners for OCR install logs
+  // Start background discover (scans system Python, returns via event)
+  try {
+    discoverLoading.value = true;
+    await startOcrDiscover();
+  } catch {
+    discoverLoading.value = false;
+  }
+
+  // Setup event listeners for OCR install logs and discover result
   await setupEventListeners();
 });
 
 onUnmounted(() => {
-  unlisten?.();
+  unlistenInstallLog?.();
+  unlistenDiscoverResult?.();
 });
 
 async function activateAndSelect(svc: AiService) {
@@ -561,12 +590,16 @@ async function onToggleOcrEnabled(val: unknown) {
 
 async function refreshOcrStatus() {
   try {
-    const status = await checkOcrStatus();
+    // Fast path: active Python info
+    const status = await checkOcrStatusFast();
     ocrAvailable.value = status.available;
     activePython.value = status.activePython || null;
-    systemPythons.value = status.systemPythons || ([] as SystemPython[]);
+    systemPythons.value = []; // Will be refilled by discover event
     ocrMessage.value = status.message || '';
     bundledPythonInstalled.value = status.bundledPythonInstalled;
+    // Start background discover to refresh system Python list
+    discoverLoading.value = true;
+    await startOcrDiscover();
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     ElMessage.error(`刷新 OCR 状态失败: ${msg}`);
@@ -875,6 +908,22 @@ function versionDisplay(version: string): string {
   color: #333;
   font-size: 0.95em;
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discover-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 400;
+  font-size: 0.85em;
+  color: #999;
+}
+
+.discover-loading .el-icon {
+  font-size: 14px;
 }
 
 .card-header {

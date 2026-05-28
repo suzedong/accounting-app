@@ -354,10 +354,12 @@ fn try_set_active_python(app: &AppHandle, session_id: &str) -> Result<(), String
     Ok(())
 }
 
-// --- Status ---
+// --- Status: Fast (no script) + Background Discover ---
 
+/// Fast status: reads SQLite config + probes active Python only.
+/// Does NOT run the discover script — returns immediately.
 #[tauri::command]
-pub fn check_ocr_status(app_config: State<'_, AppConfig>) -> Result<OcrStatus, String> {
+pub fn check_ocr_status_fast(app_config: State<'_, AppConfig>) -> Result<OcrStatus, String> {
     let enabled = {
         let config_guard = app_config.data.lock().map_err(|e| e.to_string())?;
         config_guard.get("ocr_enabled")
@@ -366,14 +368,13 @@ pub fn check_ocr_status(app_config: State<'_, AppConfig>) -> Result<OcrStatus, S
     };
 
     let bundled_installed = get_bundled_python_path().exists();
-    let system_pythons = discover_all_pythons(bundled_installed);
 
     if !enabled {
         return Ok(OcrStatus {
             available: false,
             enabled: false,
             active_python: None,
-            system_pythons,
+            system_pythons: Vec::new(),
             bundled_python_installed: bundled_installed,
             message: "OCR 已禁用".to_string(),
         });
@@ -401,7 +402,7 @@ pub fn check_ocr_status(app_config: State<'_, AppConfig>) -> Result<OcrStatus, S
         None => None,
     };
 
-    let (active_info, message) = if let Some(info) = active_info {
+    let (active_info, message) = if let Some(info) = &active_info {
         let msg = if info.has_paddleocr {
             if info.is_bundled {
                 "内置 Python + PaddleOCR 已就绪".to_string()
@@ -413,29 +414,9 @@ pub fn check_ocr_status(app_config: State<'_, AppConfig>) -> Result<OcrStatus, S
         } else {
             format!("Python 已安装 ({}), 需要安装 paddleocr 依赖", info.version)
         };
-        (Some(info), msg)
+        (Some(info.clone()), msg)
     } else {
-        let fallback = system_pythons.iter()
-            .find(|p| p.is_compatible && p.has_paddleocr)
-            .or_else(|| system_pythons.iter().find(|p| p.is_compatible));
-
-        if let Some(python) = fallback {
-            let info = PythonInfo {
-                path: python.path.clone(),
-                version: python.version.clone(),
-                minor_version: python.minor_version,
-                has_paddleocr: python.has_paddleocr,
-                is_bundled: false,
-            };
-            let msg = if python.has_paddleocr {
-                "PaddleOCR 已就绪".to_string()
-            } else {
-                format!("Python 已安装 ({}), 需要安装 paddleocr 依赖", python.version)
-            };
-            (Some(info), msg)
-        } else {
-            (None, "未找到兼容的 Python (需要 3.8-3.12)".to_string())
-        }
+        (None, "未设置 Python，正在扫描系统 Python...".to_string())
     };
 
     let available = active_info.as_ref().map(|i| i.has_paddleocr).unwrap_or(false);
@@ -445,10 +426,42 @@ pub fn check_ocr_status(app_config: State<'_, AppConfig>) -> Result<OcrStatus, S
         available,
         enabled: true,
         active_python,
-        system_pythons,
+        system_pythons: Vec::new(), // Will be populated by background discover
         bundled_python_installed: bundled_installed,
         message,
     })
+}
+
+/// Event payload for background discover result.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverResult {
+    pub system_pythons: Vec<SystemPython>,
+}
+
+/// Start background discover — emits `ocr_discover_result` event when done.
+/// Returns immediately so the UI is not blocked.
+/// Uses std::thread because this is called from a sync command (no Tokio context).
+#[tauri::command]
+pub fn start_ocr_discover(app: AppHandle) {
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        let bundled_installed = get_bundled_python_path().exists();
+        let pythons = discover_all_pythons(bundled_installed);
+        let _ = app_clone.emit("ocr_discover_result", DiscoverResult {
+            system_pythons: pythons,
+        });
+    });
+}
+
+/// Legacy: synchronous check_ocr_status (kept for compatibility).
+/// New callers should use check_ocr_status_fast + start_ocr_discover.
+#[tauri::command]
+pub fn check_ocr_status(app_config: State<'_, AppConfig>) -> Result<OcrStatus, String> {
+    let fast = check_ocr_status_fast(app_config)?;
+    // If caller needs system_pythons, they should call start_ocr_discover separately.
+    // For legacy compatibility, we return fast result (system_pythons empty).
+    Ok(fast)
 }
 
 // --- Python Selection ---
@@ -913,7 +926,7 @@ print(result['text'])
         if text.is_empty() {
             Ok("未识别到文字".to_string())
         } else {
-            Ok(format!("[OCR 识别结果]\n{}", text))
+            Ok(text)
         }
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();

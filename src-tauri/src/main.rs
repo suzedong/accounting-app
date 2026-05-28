@@ -3,6 +3,7 @@
 mod db;
 mod commands;
 mod models;
+mod logger;
 
 fn main() {
     // Initialize database (opens connection in constructor)
@@ -13,6 +14,21 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            // Emit startup log
+            use tauri::Emitter;
+            let handle = app.handle().clone();
+            let _ = handle.emit("app_log", logger::AppLogEntry {
+                id: 0,
+                level: logger::AppLogLevel::Info,
+                module: "app".to_string(),
+                message: "应用启动".to_string(),
+                timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                latency_ms: None,
+            });
+
+            Ok(())
+        })
         .manage(database)
         .manage(app_config)
         .invoke_handler(tauri::generate_handler![
@@ -67,6 +83,8 @@ fn main() {
             commands::sync::get_sync_logs,
             // OCR
             commands::ocr::check_ocr_status,
+            commands::ocr::check_ocr_status_fast,
+            commands::ocr::start_ocr_discover,
             commands::ocr::select_python,
             commands::ocr::install_ocr_dependencies,
             commands::ocr::install_paddleocr_for_python,
