@@ -77,14 +77,20 @@ export class AgentEngine {
 
       try {
         const startTime = Date.now();
-        const ocrText = await ocrRecognize(imageBase64);
+        const rawText = await ocrRecognize(imageBase64);
+        // Strip OCR debug lines (lines starting with [OCR] or [OCR 识别结果])
+        const cleanText = rawText.split('\n')
+          .filter(line => !line.startsWith('[OCR]') && line !== '[OCR 识别结果]')
+          .map(line => line.trim())
+          .filter(line => line.length > 0)
+          .join('\n');
         ocrStep.status = 'success';
         ocrStep.detail!.ocr = {
           status: 'success',
           latency: Date.now() - startTime,
-          recognizedText: ocrText.trim(),
+          recognizedText: cleanText,
         };
-        text = text ? `${text} ${ocrText.trim()}` : ocrText.trim();
+        text = text ? `${text} ${cleanText}` : cleanText;
       } catch (e) {
         ocrStep.status = 'error';
         ocrStep.detail!.ocr = {
@@ -115,7 +121,7 @@ export class AgentEngine {
     steps.push(intentStep);
 
     // 调用 LLM（Function Calling）
-    const llmResponse = await this.callLLMWithTools(systemMessage, text, recentMessages);
+    const llmResponse = await this._callLLMWithTools(systemMessage, text, recentMessages);
 
     // 解析 Function Calling 响应
     const parsed = this.parseFunctionCallResponse(llmResponse.content, llmResponse.toolCalls);
@@ -219,10 +225,10 @@ export class AgentEngine {
   }
 
   /**
-   * 使用 Function Calling 调用 LLM
+   * 使用 Function Calling 调用 LLM（内部实现）
    * 将 toolRegistry 中的工具定义传给 LLM，LLM 直接返回 tool_calls
    */
-  private async callLLMWithTools(
+  private async _callLLMWithTools(
     systemMessage: string,
     userMessage: string,
     _recentMessages: LLMMessage[],
@@ -245,46 +251,62 @@ export class AgentEngine {
     const toolsJson = JSON.stringify(tools);
 
     const startTime = Date.now();
-    const apiResult = await callLLMWithTools(systemWithHistory, userMessage, toolsJson);
-    const latency = Date.now() - startTime;
+    try {
+      const apiResult = await callLLMWithTools(systemWithHistory, userMessage, toolsJson);
+      const latency = Date.now() - startTime;
 
-    // 解析 tool_calls
-    let parsedToolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null = null;
-    if (apiResult.toolCalls) {
-      parsedToolCalls = apiResult.toolCalls.map(tc => {
-        const raw = tc as Record<string, unknown>;
-        const fn = raw.function as Record<string, unknown> | undefined;
-        const name = (fn?.name as string) || (raw.name as string) || '';
-        let args: Record<string, unknown> = {};
-        const argsRaw = fn?.arguments ?? raw.arguments;
-        if (typeof argsRaw === 'string') {
-          try { args = JSON.parse(argsRaw); } catch { args = {}; }
-        } else if (argsRaw && typeof argsRaw === 'object') {
-          args = argsRaw as Record<string, unknown>;
-        }
-        return { id: tc.id, name, arguments: args };
+      // 解析 tool_calls
+      let parsedToolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null = null;
+      if (apiResult.toolCalls) {
+        parsedToolCalls = apiResult.toolCalls.map(tc => {
+          const raw = tc as Record<string, unknown>;
+          const fn = raw.function as Record<string, unknown> | undefined;
+          const name = (fn?.name as string) || (raw.name as string) || '';
+          let args: Record<string, unknown> = {};
+          const argsRaw = fn?.arguments ?? raw.arguments;
+          if (typeof argsRaw === 'string') {
+            try { args = JSON.parse(argsRaw); } catch { args = {}; }
+          } else if (argsRaw && typeof argsRaw === 'object') {
+            args = argsRaw as Record<string, unknown>;
+          }
+          return { id: tc.id, name, arguments: args };
+        });
+      }
+
+      const responseText = parsedToolCalls
+        ? `[tool_calls: ${parsedToolCalls.map(tc => tc.name).join(', ')}]\n${JSON.stringify(parsedToolCalls.map(tc => tc.arguments), null, 2)}`
+        : apiResult.content;
+
+      // 记录 LLM 日志
+      this.llmLogs.push({
+        id: this.nextLogId++,
+        timestamp: new Date().toLocaleTimeString(),
+        systemMessage: systemWithHistory,
+        userMessage,
+        response: responseText,
+        latency,
+        steps: [],
       });
+
+      return {
+        content: apiResult.content,
+        toolCalls: parsedToolCalls,
+      };
+    } catch (e) {
+      // 即使调用失败也记录日志，方便在开发者控制台看到错误
+      const latency = Date.now() - startTime;
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      this.llmLogs.push({
+        id: this.nextLogId++,
+        timestamp: new Date().toLocaleTimeString(),
+        systemMessage: systemWithHistory,
+        userMessage,
+        response: `[错误] ${errorMsg}`,
+        latency,
+        steps: [],
+      });
+      throw e;
     }
-
-    const responseText = parsedToolCalls
-      ? `[tool_calls: ${parsedToolCalls.map(tc => tc.name).join(', ')}]\n${JSON.stringify(parsedToolCalls.map(tc => tc.arguments), null, 2)}`
-      : apiResult.content;
-
-    // 记录 LLM 日志
-    this.llmLogs.push({
-      id: this.nextLogId++,
-      timestamp: new Date().toLocaleTimeString(),
-      systemMessage: systemWithHistory,
-      userMessage,
-      response: responseText,
-      latency,
-      steps: [],
-    });
-
-    return {
-      content: apiResult.content,
-      toolCalls: parsedToolCalls,
-    };
   }
 
   /** 解析 Function Calling 响应（tool_calls 或纯文本回复） */

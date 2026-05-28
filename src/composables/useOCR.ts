@@ -26,16 +26,21 @@ export function useOCR() {
   }
 
   /**
-   * 识别图片中的文字
+   * 识别图片中的文字（自动过滤 OCR 调试信息）
    */
   async function recognize(imageBase64: string): Promise<string> {
     loading.value = true;
     error.value = null;
 
     try {
-      const text = await ocrRecognize(imageBase64);
-      lastResult.value = text;
-      return text;
+      const rawText = await ocrRecognize(imageBase64);
+      const cleanText = rawText.split('\n')
+        .filter(line => !line.startsWith('[OCR]') && line !== '[OCR 识别结果]')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .join('\n');
+      lastResult.value = cleanText;
+      return cleanText;
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : String(e);
       throw e;

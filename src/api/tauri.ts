@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AccountRecord, RecordInput, TripRecord, ApiResponse, StatsSummary, CategoryStat, AccountStat, MonthTrend, ComparisonResult, BudgetAnalysis, AppConfig, AllConfig, AiService } from '@/types';
+import type { AccountRecord, RecordInput, TripRecord, ApiResponse, StatsSummary, CategoryStat, AccountStat, MonthTrend, ComparisonResult, BudgetAnalysis, AllConfig, AiService } from '@/types';
 
 // Records
 export async function getRecords(params: {

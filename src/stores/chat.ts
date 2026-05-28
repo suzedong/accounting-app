@@ -337,6 +337,8 @@ export const useChatStore = defineStore('chat', () => {
     try {
       await clearChatHistory();
       clearMessages();
+      agentEngine.clearHistory();
+      agentEngine.clearLLMLogs();
     } catch {
       // Ignore
     }

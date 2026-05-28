@@ -137,7 +137,7 @@
         <div class="system-python-section">
           <div class="section-title">Python 列表</div>
           <el-table :data="systemPythons" size="small" border stripe class="python-table">
-            <el-table-column label="版本" width="120">
+            <el-table-column label="版本" width="160">
               <template #default="{ row }">
                 <span>{{ versionDisplay(row.version) }}</span>
                 <el-tag v-if="activePython && activePython.path === row.path" type="primary" size="small" class="current-tag">当前</el-tag>
@@ -152,7 +152,7 @@
                 <span class="python-table-path" :title="row.path">{{ formatPythonPath(row.path) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="PaddleOCR" width="130">
+            <el-table-column label="PaddleOCR" width="100">
               <template #default="{ row }">
                 <el-tag v-if="row.isCompatible && row.hasPaddleocr" type="success" size="small">已安装</el-tag>
                 <el-tag v-else-if="row.isCompatible" type="info" size="small">未安装</el-tag>
