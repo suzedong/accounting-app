@@ -65,10 +65,11 @@
 
 ### 已完成任务
 
-- [x] 百炼 API 直连：useDashScope.ts / dispatch.ts / useParse.ts
-- [x] Action Handlers（11 个）：create_record / correct_record / update_record / query_records / render_stats / render_budget / ask_follow_up / reply_text / save_preference / update_prompt / clear_chat
-- [x] 聊天 UI：ChatWidget / ChatMessage / ChatInput / RecordCard / ChatThinking / ImagePreview / DebugPanel / RulesPanel
-- [x] Stores：chat.ts / learning.ts
+- [x] 百炼 API 直连：Rust `call_llm` / `call_llm_with_tools` + 前端 AgentEngine
+- [x] 工具注册：ToolRegistry（Zod schema → JSON Schema）+ 20+ 工具（记账 CRUD / 差旅补助 / 统计 / 预算 / 追问 / 偏好 / Prompt 管理）
+- [x] 聊天 UI：ChatWidget / ChatMessage / ChatInput / RecordCard / ConfirmCard / FollowUpCard / StepList / DevConsole / SettingsPanel / ImagePreview
+- [x] AI 引擎层：agent-engine.ts（三阶段流水线：OCR → LLM 意图识别 → 工具执行）
+- [x] Stores：chat.ts（Options API 风格，管理消息/确认/编辑/追问/学习）
 - [x] OCR：智能 Python 探测 + 自动安装依赖 + OCR 识别 + Settings 页管理（`.ps1` 支持 Windows，`.sh` 支持 macOS/Linux）
 
 ---
