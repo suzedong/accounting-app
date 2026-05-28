@@ -140,6 +140,7 @@
             <el-table-column label="版本" width="120">
               <template #default="{ row }">
                 <span>{{ versionDisplay(row.version) }}</span>
+                <el-tag v-if="activePython && activePython.path === row.path" type="primary" size="small" class="current-tag">当前</el-tag>
                 <el-tag v-if="!row.isCompatible" type="danger" size="small" class="source-tag">不兼容</el-tag>
                 <el-tag v-else-if="row.source === 'macos'" type="warning" size="small" class="source-tag">只读</el-tag>
                 <el-tag v-else-if="row.source === 'uv'" type="info" size="small" class="source-tag">uv</el-tag>
@@ -158,7 +159,7 @@
                 <el-tag v-else type="info" size="small">—</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="160">
+            <el-table-column label="操作" width="160" align="left">
               <template #default="{ row }">
                 <div class="action-buttons">
                   <template v-if="row.isCompatible && row.source !== 'macos'">
@@ -166,19 +167,17 @@
                       v-if="activePython && activePython.path !== row.path"
                       size="small"
                       type="primary"
-                      text
                       @click="handleSelectPython(row.path)"
                     >使用</el-button>
-                    <el-tag v-else-if="activePython" type="primary" size="small">当前</el-tag>
-                    <el-button size="small" text @click="handleInstallDepsForPython(row.path)">安装</el-button>
+                    <el-button v-else-if="activePython" size="small" disabled>当前</el-button>
+                    <el-button size="small" @click="handleInstallDepsForPython(row.path)">安装</el-button>
                     <el-button
                       v-if="row.hasPaddleocr"
                       size="small"
-                      text
                       @click="handleUninstallDepsForPython(row.path)"
                     >卸载</el-button>
                   </template>
-                  <span v-else-if="row.isCompatible && row.source === 'macos'" class="no-action"> 只读</span>
+                  <span v-else-if="row.isCompatible && row.source === 'macos'" class="no-action">只读</span>
                   <span v-else class="no-action">—</span>
                 </div>
               </template>
@@ -186,8 +185,8 @@
           </el-table>
         </div>
 
-        <!-- 内置 Python 3.12 -->
-        <div class="bundled-python-section">
+        <!-- 内置 Python 3.12 (仅 macOS 支持) -->
+        <div v-if="!isWindows" class="bundled-python-section">
           <div class="bundled-header">
             <span class="bundled-title">内置 Python 3.12</span>
             <el-tag
@@ -217,6 +216,15 @@
               <el-button type="warning" size="small" @click="handleReinstallBundledPython">重装内置 Python</el-button>
             </template>
           </div>
+        </div>
+        <div v-else class="bundled-python-section">
+          <div class="bundled-header">
+            <span class="bundled-title">内置 Python 3.12</span>
+            <el-tag type="info" size="small">不支持</el-tag>
+          </div>
+          <p class="bundled-desc">
+            Windows 平台不支持自动安装内置 Python，请从 <a href="https://www.python.org/downloads/" target="_blank">python.org</a> 下载或通过 Microsoft Store 安装。
+          </p>
         </div>
 
         <!-- 共享终端面板 -->
@@ -289,6 +297,9 @@ const syncForm = ref({
 });
 
 const budgetMonthly = ref(3500);
+
+// Platform detection
+const isWindows = navigator.platform.includes('Win');
 
 // OCR state
 const ocrEnabled = ref(true);
@@ -827,6 +838,10 @@ function versionDisplay(version: string): string {
   white-space: normal;
 }
 
+.current-tag {
+  margin-left: 4px;
+}
+
 .compat-tag, .source-tag {
   margin-left: 4px;
 }
@@ -839,9 +854,14 @@ function versionDisplay(version: string): string {
 .action-buttons {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  justify-content: flex-start;
+  gap: 2px;
   width: 100%;
+}
+
+.action-buttons :deep(.el-button) {
+  padding: 4px 8px;
+  margin: 0;
 }
 
 /* Override Element Plus cell padding for action column */

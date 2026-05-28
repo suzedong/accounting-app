@@ -29,7 +29,10 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(cargo check *)",
       "WebFetch(domain:crates.io)",
-      "WebFetch(domain:raw.giteeusercontent.com)"
+      "WebFetch(domain:raw.giteeusercontent.com)",
+      "Bash(powershell -ExecutionPolicy Bypass -File ./python_manager.ps1 discover)",
+      "Bash(powershell -Command '[System.Environment]::Version')",
+      "Bash(pwsh --version)"
     ]
   }
 }

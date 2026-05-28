@@ -108,11 +108,23 @@ fn get_script_path() -> std::path::PathBuf {
     }
 }
 
+/// Windows 下选择 PowerShell 解释器：优先 pwsh (PS7)，回退 powershell (PS5)
+fn get_powershell_interpreter() -> &'static str {
+    if cfg!(windows) {
+        // Try pwsh (PowerShell 7) first — handles UTF-8/Chinese correctly
+        let test = Command::new("pwsh").arg("-Command").arg("$true").output();
+        if test.map(|o| o.status.success()).unwrap_or(false) {
+            return "pwsh";
+        }
+    }
+    "powershell"
+}
+
 fn run_script(args: &[&str]) -> Result<String, String> {
     let script = get_script_path();
 
     let (interpreter, script_flag) = if cfg!(windows) {
-        ("powershell", "-File")
+        (get_powershell_interpreter(), "-File")
     } else {
         ("bash", "")
     };
@@ -523,7 +535,7 @@ pub async fn install_paddleocr_for_python(
 
     let script = get_script_path();
     let (interpreter, script_flag) = if cfg!(windows) {
-        ("powershell", "-File")
+        (get_powershell_interpreter(), "-File")
     } else {
         ("bash", "")
     };
@@ -597,7 +609,7 @@ pub async fn uninstall_paddleocr_for_python(
 ) -> Result<String, String> {
     let script = get_script_path();
     let (interpreter, script_flag) = if cfg!(windows) {
-        ("powershell", "-File")
+        (get_powershell_interpreter(), "-File")
     } else {
         ("bash", "")
     };
@@ -668,7 +680,7 @@ pub async fn install_bundled_python(
 
     let script = get_script_path();
     let (interpreter, script_flag) = if cfg!(windows) {
-        ("powershell", "-File")
+        (get_powershell_interpreter(), "-File")
     } else {
         ("bash", "")
     };
