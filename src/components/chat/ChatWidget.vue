@@ -90,8 +90,8 @@
                       v-if="msg.status === 'pending' && msg.data"
                       :fields="msg.data"
                       @confirm="handleCardAction(msg, 'confirm')"
-                      @edit="handleCardAction(msg, 'edit')"
                       @cancel="handleCardAction(msg, 'cancel')"
+                      @save="handleCardSave(msg, $event)"
                     />
 
                     <!-- Follow-up card -->
@@ -239,13 +239,20 @@ function sendQuick(text: string) {
   chat.sendMessage(text, messagesRef.value);
 }
 
-function handleCardAction(msg: typeof messages.value[0], action: 'confirm' | 'edit' | 'cancel') {
+function handleCardAction(msg: typeof messages.value[0], action: 'confirm' | 'cancel') {
   if (action === 'confirm') {
     chat.confirmRecord(msg);
   } else if (action === 'cancel') {
     chat.cancelRecord(msg);
   }
-  // edit: handled by ConfirmCard's edit event
+}
+
+async function handleCardSave(msg: typeof messages.value[0], editedFields: Record<string, unknown>) {
+  // Merge edited fields into the message data and confirm
+  msg.data = { ...msg.data, ...editedFields };
+  // Update pendingRecord to match
+  chat.pendingRecord = { ...editedFields };
+  await chat.confirmRecord(msg);
 }
 
 function handleFollowUpSelect(_msg: typeof messages.value[0], field: string) {

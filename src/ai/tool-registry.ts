@@ -14,7 +14,8 @@ const CreateRecordSchema = z.object({
   datetime: z.string().optional(),
   type: z.enum(['收入', '支出']).transform(s => s.trim()),
   category: z.string().optional(),
-  amount: z.coerce.number().positive(),
+  // OCR 可能提取负数（如 -8.00），自动取绝对值
+  amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0'),
   account: z.string().optional(),
   note: z.string().optional(),
   payment: z.string().optional(),
@@ -25,7 +26,7 @@ const CorrectRecordSchema = z.object({
     datetime: z.string().optional(),
     type: z.enum(['收入', '支出']).transform(s => s.trim()).optional(),
     category: z.string().optional(),
-    amount: z.coerce.number().positive().optional(),
+    amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0').optional(),
     account: z.string().optional(),
     note: z.string().optional(),
     payment_method: z.string().optional(),
@@ -43,7 +44,7 @@ const UpdateRecordSchema = z.object({
     datetime: z.string().optional(),
     type: z.enum(['收入', '支出']).transform(s => s.trim()).optional(),
     category: z.string().optional(),
-    amount: z.coerce.number().positive().optional(),
+    amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0').optional(),
     account: z.string().optional(),
     note: z.string().optional(),
     payment_method: z.string().optional(),
@@ -105,13 +106,13 @@ const ConfirmTripRecordSchema = z.object({
 });
 
 const RecordTripPaymentSchema = z.object({
-  amount: z.coerce.number().positive(),
+  amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0'),
   datetime: z.string().optional(),
 });
 
 const ConfirmTripPaymentSchema = z.object({
   tripId: z.number(),
-  amount: z.coerce.number().positive(),
+  amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0'),
   matchType: z.enum(['trip_allowance', 'transport_allowance', 'full', 'manual']).optional(),
   datetime: z.string().optional(),
 });

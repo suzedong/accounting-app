@@ -1,4 +1,4 @@
-import { callLLMWithTools, getSystemPrompt, getLearningCorrections, ocrRecognize } from '@/api/tauri';
+import { callLLMWithTools, getSystemPrompt, getLearningCorrections } from '@/api/tauri';
 import { toolRegistry, type ToolResult } from './tool-registry';
 import type { LLMMessage, Step } from '@/types/chat';
 
@@ -63,50 +63,10 @@ export class AgentEngine {
    */
   async processMessage(
     text: string,
-    imageBase64?: string,
+    _imageBase64?: string,
     onStep?: (step: Step) => void | Promise<void>,
   ): Promise<ProcessResult> {
     const steps: Step[] = [];
-
-    // Step 0: OCR
-    if (imageBase64) {
-      const ocrStep: Step = {
-        id: 'ocr',
-        title: 'OCR 识别',
-        status: 'running',
-        detail: {},
-        collapsed: false,
-      };
-      steps.push(ocrStep);
-      await onStep?.({ ...ocrStep });
-
-      const ocrStartTime = Date.now();
-      try {
-        const rawText = await ocrRecognize(imageBase64);
-        const cleanText = rawText.split('\n')
-          .filter(line => !line.startsWith('[OCR]') && line !== '[OCR 识别结果]')
-          .map(line => line.trim())
-          .filter(line => line.length > 0)
-          .join('\n');
-        ocrStep.status = 'success';
-        ocrStep.detail!.ocr = {
-          status: 'success',
-          latency: Date.now() - ocrStartTime,
-          recognizedText: cleanText,
-        };
-        text = text ? `${text} ${cleanText}` : cleanText;
-      } catch (e) {
-        ocrStep.status = 'error';
-        ocrStep.detail!.ocr = {
-          status: 'error',
-          latency: Date.now() - ocrStartTime,
-          recognizedText: '',
-          error: e instanceof Error ? e.message : 'OCR 识别失败',
-        };
-        throw new Error('OCR 识别失败：' + (e instanceof Error ? e.message : String(e)));
-      }
-      await onStep?.({ ...ocrStep });
-    }
 
     // 构建完整 system message
     const systemMessage = this.buildSystemMessage();
@@ -145,6 +105,8 @@ export class AgentEngine {
 
     // 提取字段用于展示（LLM 参数本身就是字段集合，不是嵌套在 params.fields 下）
     const fields: Record<string, unknown> = parsed.params || {};
+    console.log('[AgentEngine] 字段来源调试, params keys:', Object.keys(fields));
+    console.log('[AgentEngine] payment 值:', fields.payment, 'payment_source:', fields.payment_source);
     if (Object.keys(fields).length > 0) {
       const fieldLabels: Record<string, string> = {
         amount: '金额', type: '类型', category: '分类',
@@ -155,12 +117,19 @@ export class AgentEngine {
       };
       intentStep.detail!.fields = Object.entries(fields)
         .filter(([k]) => !k.endsWith('_source')) // 跳过 source 元数据键
-        .filter(([, v]) => v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'undefined')
-        .map(([k, v]) => ({
-          label: fieldLabels[k] || k,
-          value: typeof v === 'object' ? JSON.stringify(v) : String(v),
-          source: (fields[`${k}_source`] as 'extracted' | 'inferred' | 'default') || 'extracted',
-        }));
+        .map(([k, v]) => {
+          const filtered = v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'undefined';
+          console.log(`[AgentEngine] 字段 ${k}=${JSON.stringify(v)} -> filtered=${filtered}`);
+          if (!filtered) return null;
+          const source = this.getFieldSource(k, v, fields);
+          console.log(`[AgentEngine] 字段 ${k}=${v} -> source=${source}`);
+          return {
+            label: fieldLabels[k] || k,
+            value: typeof v === 'object' ? JSON.stringify(v) : String(v),
+            source,
+          };
+        })
+        .filter(Boolean) as Array<{ label: string; value: string; source: 'extracted' | 'inferred' | 'default' }>;
     }
     await onStep?.({ ...intentStep });
 
@@ -305,6 +274,7 @@ export class AgentEngine {
         : apiResult.content;
 
       // 记录 LLM 日志
+      console.log('[AgentEngine] 记录 LLM 日志, 当前条数:', this.llmLogs.length);
       this.llmLogs.push({
         id: this.nextLogId++,
         timestamp: new Date().toLocaleTimeString(),
@@ -323,6 +293,7 @@ export class AgentEngine {
       // 即使调用失败也记录日志，方便在开发者控制台看到错误
       const latency = Date.now() - startTime;
       const errorMsg = e instanceof Error ? e.message : String(e);
+      console.log('[AgentEngine] LLM 调用失败，记录错误日志:', errorMsg);
       this.llmLogs.push({
         id: this.nextLogId++,
         timestamp: new Date().toLocaleTimeString(),
@@ -420,6 +391,24 @@ export class AgentEngine {
   /** 获取 LLM 日志（开发者调试用） */
   getLLMLogs(): LLMLogEntry[] {
     return [...this.llmLogs];
+  }
+
+  /** 判断字段来源：extracted=从文本提取，inferred=系统推断，default=系统默认值 */
+  private getFieldSource(key: string, _value: unknown, allFields: Record<string, unknown>): 'extracted' | 'inferred' | 'default' {
+    // 优先使用 LLM 返回的 _source 标注
+    const llmSource = allFields[`${key}_source`] as string | undefined;
+    if (llmSource === 'extracted' || llmSource === 'inferred' || llmSource === 'default') {
+      return llmSource;
+    }
+    // 兜底判断
+    // 账户：系统默认值
+    if (key === 'account') return 'default';
+    // 类型/分类/时间：系统推断
+    if (key === 'type' || key === 'category' || key === 'datetime') return 'inferred';
+    // 支付方式：如果 LLM 返回了，通常是推断的
+    if (key === 'payment' || key === 'payment_method') return 'inferred';
+    // 其余：从文本/OCR 中提取
+    return 'extracted';
   }
 
   /** 清空 LLM 日志 */

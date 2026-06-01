@@ -40,18 +40,82 @@
 
 ### 1.3 数据流
 
+#### 输入预处理（ChatWidget.vue → onSend）
+
+**F5. ChatInput @send** 输出文本和图片两条并行通道：
+
 ```
-用户消息 → ChatStore.sendMessage(text)
-  → AgentEngine.processMessage(text, conversationHistory, tools)
-    ├─ 1. OCR 处理（如果有图片）→ 记录 OCR 步骤
-    ├─ 2. 构建 conversationHistory（最近 10 轮）
-    ├─ 3. 调用 LLM（Function Calling）→ toolCall 或 text
-    ├─ 4. 执行工具 → ToolResult（纯数据）
-    │     └─ LLM 拿到结果，生成自然语言回复
-    ├─ 5. 组装 StepList（推理链）
-    └─ 6. 组装 ActionResult（UI 渲染）
-  → ChatStore 更新 messages[] + conversationHistory[]
-  → ChatWidget 渲染 UI
+──────────────────────────────────────────────┐
+│ F5. ChatInput @send（文本 + 可选图片）          │
+──────────────────────────────────────────────┤
+│  文本通道（F5-a）     │  图片通道（F5-b）         │
+│  用户文字直接传递      │  有图片时触发：          │
+│                     │  ├─ F5-b1 OCR 可用性检测 │
+│                     │  ├─ F5-b2 OCR 识别       │
+│                     │  ─ F5-b3 合并文本        │
+│                     │    (OCR 文字 + 用户文字)  │
+└───────┬──────────────┴───────────────────────┘
+        │                      │
+        ▼                      ▼
+┌──────────────────────────────────────────────┐
+│ F6. onSend() 统一路由（含完整文本）             │
+├──────────────────────────────────────────────┤
+│  分支A: editingField（F7）                    │
+│    applyFieldEdit 直接更新 pendingRecord       │
+│    AI 回复『已更新字段』，不进 LLM              │
+│                                               │
+│  分支B: awaitingFollowUp（F8）                │
+│    answerFollowUp 合并缺失字段                  │
+│    重新调用 sendMessage（走 LLM）              │
+│                                               │
+│  分支C: 正常流程（F9）                         │
+│    chat.sendMessage() → AgentEngine           │
+──────────────────────────────────────────────┘
+```
+
+**onSend() 路由逻辑**（ChatWidget.vue）：
+
+```typescript
+async function onSend(text: string, imageBase64?: string) {
+  // 分支A: 编辑字段模式
+  if (chat.editingField) {
+    chat.applyFieldEdit(text);
+    messages.value.push({ role: 'ai', content: '已更新字段' });
+    return;
+  }
+
+  // 分支B: 追问补全模式
+  if (chat.awaitingFollowUp) {
+    await chat.answerFollowUp(text, messagesRef.value);
+    return;
+  }
+
+  // 分支C: 正常流程
+  await chat.sendMessage(text, messagesRef.value, imageBase64);
+}
+```
+
+#### 核心流程（ChatStore → AgentEngine → ToolRegistry）
+
+```
+用户消息 → ChatStore.sendMessage(text, imageBase64)
+  → F10: 创建 userMsg 推入 messages[] → 持久化 SQLite
+  → F11: 创建 aiMsg (loading=true, steps=[])
+  → B4: AgentEngine.processMessage(text, imageBase64, onStep 回调)
+    ├─ 加载上下文（dispatch prompt + preferences + learning data）
+    ├─ 构建 SystemMessage（拼接 prompt + 偏好 + 学习纠正上下文）
+    ├─ OCR 处理（仅当有图片，ocr_recognize → 文本拼接到 text）
+    ├─ 调用 LLM（Function Calling）→ toolCall 或 text
+    ├─ 执行工具 → ToolResult（纯数据）
+    └─ 返回 { steps[], toolResult, finalReply, action }
+  → onStep 回调实时更新 aiMsg.steps → UI 逐步显示推理链
+  → aiMsg.loading = false, content = finalReply
+  → 根据 action 类型设置 aiMsg.status/render/data:
+    ├─ create_record/create_trip_record → status='pending', 显示 ConfirmCard
+    ├─ ask_follow_up → render='followUp', awaitingFollowUp=true, 显示 FollowUpCard
+    └─ reply_text → 纯文本回复
+  → F12: UI 渲染（loading→spinner / steps→推理链 / content→文本 / pending→ConfirmCard）
+  → 持久化到 SQLite
 ```
 
 ### 1.4 消息历史
@@ -150,7 +214,9 @@ class ToolRegistry {
 
 #### AgentEngine（逻辑层）
 
-核心流程：处理 OCR → 构建对话历史（最近 10 轮）→ 调用 LLM → 执行工具 → 反馈结果给 LLM → 生成最终回复 → 组装推理链。
+核心流程：加载上下文 → 构建 SystemMessage → 调用 LLM（Function Calling）→ 执行工具 → 反馈结果给 LLM → 生成最终回复 → 组装推理链。
+
+> **注意**：OCR 已移至前端输入预处理阶段（F5-b 图片通道），AgentEngine 收到的 text 参数已是合并后的完整文本。OCR 步骤仍在推理链中显示（B14 StepList），但实际识别发生在前端。
 
 推理链步骤结构：
 

@@ -45,8 +45,10 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { ElMessage } from 'element-plus';
 import { Picture, Promotion } from '@element-plus/icons-vue';
 import ImagePreview from './ImagePreview.vue';
+import { checkOcrStatusFast, ocrRecognize } from '@/api/tauri';
 
 const emit = defineEmits<{
   send: [text: string, imageBase64?: string, imageFullSrc?: string];
@@ -100,9 +102,39 @@ function removeImage() {
   imageBase64.value = null;
 }
 
-function handleSend() {
+async function handleSend() {
   if (!text.value.trim() && !imageBase64.value) return;
-  emit('send', text.value.trim(), imageBase64.value ?? undefined, imageSrc.value ?? undefined);
+
+  const hasImage = !!imageBase64.value;
+  const mergedText = text.value.trim();
+
+  if (hasImage) {
+    // OCR 预处理：检查可用性
+    const status = await checkOcrStatusFast();
+    if (!status.available) {
+      ElMessage.error('OCR 识别未就绪，请前往设置页安装 PaddleOCR');
+      return;
+    }
+
+    // 调用 OCR
+    ocrLoading.value = true;
+    try {
+      const ocrText = await ocrRecognize(imageBase64.value!);
+      // 合并文本：用户文字 + OCR 识别文字
+      const finalText = mergedText
+        ? `${mergedText} ${ocrText}`
+        : ocrText;
+      emit('send', finalText, imageBase64.value!, imageSrc.value!);
+    } catch (e) {
+      ElMessage.error('OCR 识别失败：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      ocrLoading.value = false;
+    }
+  } else {
+    // 无图片，直接发送
+    emit('send', mergedText);
+  }
+
   text.value = '';
   removeImage();
 }
