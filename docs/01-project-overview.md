@@ -28,8 +28,7 @@
 
 | 功能 | 说明 | 当前实现 | 目标 |
 |---|---|---|---|
-| AI 对话记账 | 自然语言输入 → 意图识别 → 创建记录 | Agent Core + LLM dispatch | 桌面内集成，数据存本地 |
-| 规则解析 | 关键词匹配 + 正则提取（降级方案） | parse.js | 保留，本地运行 |
+| AI 对话记账 | 自然语言输入 → 意图识别 → 创建记录 | AgentEngine + LLM Function Calling | 桌面内集成，数据存本地 |
 | 记录管理 | 增删改查 + 分页 + 筛选 | records.html | 存 SQLite |
 | 预算管理 | 月度预算跟踪 + 超支预警 | budget.html | 存 SQLite |
 | 统计分析 | 多维度图表（分类、账户、趋势、对比） | stats.html + Chart.js | SQLite GROUP BY + ECharts |
@@ -156,10 +155,11 @@
 
 **百炼 API 直连**
 
-- Rust 后端 `reqwest` 直接调用百炼 API
+- 前端 `AgentEngine` 通过 Tauri IPC 调用 `call_llm_with_tools`，Rust 后端使用 `reqwest` 转发到百炼 API
 - API Key 存储在 SQLite `app_config` 表
 - 不需要代理层，个人使用 API Key 暴露在前端可接受
 - 支持多服务管理（`ai_services` JSON 数组，active 标记当前使用）
+- LLM 使用 Function Calling 模式，返回 tool_calls 而非自由 JSON
 
 #### OCR 层
 
@@ -370,21 +370,22 @@ Rust 后端                  百炼 API              NocoBase
 
 ### 3.2 页面结构
 
-#### 页面清单（保持现有 5 页不变）
+#### 页面清单（Vue SPA 路由）
 
-| 页面 | 说明 | 改动 |
+| 页面 | 路由 | 说明 |
 |---|---|---|
-| 首页（index.html） | AI 对话 + 统计概览 | 最小改动，仅改数据获取方式 |
-| 记录（records.html） | 记录增删改查 + 分页 | 最小改动 |
-| 预算（budget.html） | 预算管理 | 最小改动 |
-| 统计（stats.html） | 多维度图表分析 | 最小改动 |
-| 差旅补助（trip_allowance.html） | 差旅管理 | 最小改动 |
+| 首页 | `/` | AI 对话 + 快速概览 |
+| 记录 | `/records` | 记录增删改查 + 分页 + 筛选 |
+| 预算 | `/budget` | 月度预算跟踪 + 超支预警 |
+| 统计 | `/stats` | 多维度图表分析（分类、账户、趋势、对比） |
+| 差旅补助 | `/trips` | 差旅管理 + 补助发放 |
+| 设置 | `/settings` | AI 服务、NocoBase 同步、预算、OCR、Prompt 管理 |
 
 #### 新增页面
 
-| 页面 | 说明 |
-|---|---|
-| Settings | 设置页（API 服务管理、NocoBase 同步、预算、OCR 模型管理） |
+| 页面 | 说明 | 状态 |
+|---|---|---|
+| Settings | 设置页（AI 服务管理、NocoBase 同步、预算、OCR 管理、Prompt/偏好编辑、学习数据、系统诊断） | ✅ 已实现 |
 
 ### 3.3 桌面端增强
 
@@ -406,7 +407,7 @@ Rust 后端                  百炼 API              NocoBase
 
 #### Skill 标签
 
-位于消息气泡上方（非气泡内部）：
+位于消息气泡上方：
 
 ```
 ┌─────────────────────────┐
@@ -422,32 +423,32 @@ Rust 后端                  百炼 API              NocoBase
 
 样式：灰边框 `#e0e0e0`，无渐变，圆角 10px，`margin-left: 4px; margin-bottom: 4px`。
 
-#### 思考过程展示
+#### 推理链展示（StepList）
 
-- 3 步流程：`intent`（意图识别）→ `execute`（执行入库）→ `done`（完成）
-- 通过 `thinkingStep` ref 动态绑定步骤状态
-- 折叠时步骤状态设为 `'done'`，气泡保持可见，透明度 0.7
-- 折叠后的思考过程作为历史记录保留在消息流中，不隐藏
+- 逐步展示 AI 处理过程：OCR 识别（含延迟/错误）→ 意图识别（含置信度）→ 字段提取（标注来源）→ 执行结果
+- 支持折叠/展开，折叠后步骤保留作为历史记录
+- 每个步骤标注字段来源：`extracted`（用户输入提取）/ `inferred`（AI 推断）/ `default`（系统默认）
 
 #### 图片粘贴（剪贴板）
 
 ChatInput 支持剪贴板图片粘贴（Cmd+V / Ctrl+V），自动读取为 File 对象，走与文件选择相同的图片加载流程。
 
-#### OCR 模型管理（Settings 页）
+#### OCR 管理（Settings 页）
 
-3 个模型（det / rec / cls），显示大小和安装状态，下载按钮带 loading 状态 + 进度条，删除按钮需二次确认。
+列出系统中所有 Python 版本及兼容性，选择活跃 Python，安装/卸载 PaddleOCR 依赖，内置 Python 生命周期管理，安装日志实时显示。
 
-#### 设置页面（多卡片布局）
+#### 设置页面（SettingsPanel + Settings.vue）
 
-包含 AI 服务管理（单选列表、添加/编辑/删除、测试连接）、NocoBase 同步配置、预算设置、OCR 识别管理。
+包含 AI 服务管理（单选列表、添加/编辑/删除、测试连接）、NocoBase 同步配置、预算设置、OCR 管理、Dispatch Prompt 编辑器、用户偏好编辑器、学习数据表格（可删除条目）、系统诊断（检查数据库/AI 服务/OCR 状态）。
 
 ### 3.5 现有页面改动说明
 
-- **首页**：数据获取从 `fetch('/api/records')` 改为 `invoke('get_records')`，对话历史从 localStorage 改为 SQLite，AI 调用从代理改为前端直连百炼 API
+- **首页**：数据获取从 `fetch('/api/records')` 改为 Tauri `invoke()`，对话历史从 localStorage 改为 SQLite，AI 调用通过 AgentEngine 调用 LLM Function Calling
 - **记录管理**：所有 CRUD 从 NocoBase API 改为 SQLite，筛选和分页由 SQL 查询完成
 - **预算**：预算数据从 SQLite 读取，统计计算由 SQL GROUP BY 完成
-- **统计**：数据获取从 `pageSize=10000` 改为 SQL 聚合查询，ECharts 渲染（替换了原 Vue Data UI）
+- **统计**：数据获取从 `pageSize=10000` 改为 SQL 聚合查询，ECharts 渲染
 - **差旅补助**：数据从 SQLite 读取，补助计算逻辑不变
+- **设置**：全新页面，包含 AI 服务管理、NocoBase 同步配置、预算设置、OCR 管理、Prompt/偏好编辑、学习数据表格、系统诊断
 
 ### 3.6 视觉风格
 
