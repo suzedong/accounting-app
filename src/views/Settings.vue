@@ -93,6 +93,19 @@
       </el-form>
     </el-card>
 
+    <!-- Prompt 管理 -->
+    <el-card class="section">
+      <template #header>Prompt 管理</template>
+      <div style="max-width: 700px">
+        <p class="prompt-hint">修改 dispatch.md 文件后，点击"从文件刷新"将更新同步到数据库。刷新后需重新加载 AI 对话上下文才能生效。</p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+          <el-button size="small" @click="handleRefreshPrompt('dispatch')">刷新 dispatch.md</el-button>
+          <el-button size="small" @click="handleRefreshPrompt('record')">刷新 record.md</el-button>
+          <el-button size="small" @click="handleRefreshPrompt('preferences')">刷新 preferences.md</el-button>
+        </div>
+      </div>
+    </el-card>
+
     <!-- OCR 识别 -->
     <el-card class="section">
       <template #header>
@@ -260,7 +273,8 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Loading } from '@element-plus/icons-vue';
 import { listen } from '@tauri-apps/api/event';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython } from '@/api/tauri';
+import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile } from '@/api/tauri';
+import { agentEngine } from '@/ai/agent-engine';
 import type { AiService, AllConfig } from '@/types';
 
 // Types for OCR
@@ -573,6 +587,19 @@ function testNocobaseConnection() {
   ElMessage.info('NocoBase 连接测试（Phase 4 实现）');
 }
 
+// Prompt handlers
+async function handleRefreshPrompt(name: string) {
+  try {
+    const result = await refreshPromptFromFile(name);
+    ElMessage.success(result);
+    // Reset agentEngine context so it reloads the updated prompt on next message
+    agentEngine.resetContext();
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ElMessage.error(`刷新失败: ${msg}`);
+  }
+}
+
 // OCR handlers
 async function onToggleOcrEnabled(val: unknown) {
   const enabled = val === true;
@@ -797,6 +824,12 @@ function versionDisplay(version: string): string {
   margin-left: 12px;
   color: #999;
   font-size: 0.9em;
+}
+
+.prompt-hint {
+  color: #666;
+  font-size: 0.9em;
+  margin-bottom: 8px;
 }
 
 .ocr-status {

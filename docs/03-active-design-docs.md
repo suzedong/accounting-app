@@ -152,7 +152,7 @@ interface LLMMessage {
 | 上下文窗口 | 固定 10 轮对话窗口 |
 | 思考过程展示 | 始终可见，折叠后透明度 0.7 作为历史痕迹保留 |
 | 消息持久化 | 保持现有 `chat_history` 表，steps[] 存 data 字段 JSON |
-| Prompt 管理 | Settings 页面分 Tab 独立编辑（Dispatch / Preferences） |
+| Prompt 管理 | Settings 页面独立卡片，分 dispatch / record / preferences 三个刷新按钮，运行时从 .md 文件读取覆盖数据库 |
 | 类型安全 | zod 方案：一个定义同时生成 JSON Schema + TypeScript 类型 + 运行时校验 |
 | 流式输出 | 先不加，后续再加 |
 | 学习引擎 | LLM 检测纠正意图，Agent 自动对比原始字段和修正字段存入 learning_data |
@@ -260,6 +260,22 @@ interface RequestEntry {
 ```
 
 功能：列表（时间/模型/耗时/状态）、详情（完整请求/响应 JSON）、过滤（按状态/耗时）、导出（JSON）、双击消息定位到对应请求。
+
+#### Prompt 管理（Settings 页面）
+
+```
+Prompt 管理
+─────────────────────────────────────────────────
+修改 dispatch.md 文件后，点击"从文件刷新"将更新同步到数据库。
+刷新后需重新加载 AI 对话上下文才能生效。
+
+[ 刷新 dispatch.md ]  [ 刷新 record.md ]  [ 刷新 preferences.md ]
+```
+
+**实现**：
+- `refresh_prompt_from_file` Tauri 命令：运行时读取 `prompts/{name}.md` 文件，覆盖 SQLite `system_prompts` 表
+- 刷新后自动调用 `agentEngine.resetContext()`，下次消息触发重新加载
+- 不依赖 `include_str!` 编译时嵌入，支持开发时即时生效
 
 #### 系统诊断（Settings 页面）
 
@@ -452,8 +468,11 @@ pub struct OcrStatus {
 | 命令 | 参数 | 说明 |
 |---|---|---|
 | `install_paddleocr_for_python` | `python_path, session_id` | 在指定 Python 上安装 paddlepaddle + paddleocr |
-| `uninstall_paddleocr_for_python` | `python_path` | 从指定 Python 卸载 paddleocr |
+| `uninstall_paddleocr_for_python` | `python_path, session_id` | 从指定 Python 卸载 paddleocr |
 | `reinstall_paddleocr_for_python` | `python_path, session_id` | 先卸载再安装 |
+| `install_bundled_python(session_id)` | `session_id` | 安装 Python 3.12 到应用数据目录（shell 脚本：ditto + codesign） |
+| `uninstall_bundled_python` | 无 | 删除内置 Python 目录（shell 脚本） |
+| `reinstall_bundled_python(session_id)` | `session_id` | 先卸载再安装 |
 
 对于系统 Python（macOS Homebrew），pip install 时不加 `--break-system-packages`（因为用户主动选择，确认风险）。对于内置 Python，正常 pip install（自己的环境，无需任何特殊标志）。
 

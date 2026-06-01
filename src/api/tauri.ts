@@ -119,6 +119,11 @@ export async function updateSystemPrompt(name: string, content: string): Promise
   return invoke('update_system_prompt', { name, content });
 }
 
+/** 从文件刷新 prompt 到数据库（运行时读取，非编译时嵌入） */
+export async function refreshPromptFromFile(name: string): Promise<string> {
+  return invoke('refresh_prompt_from_file', { name });
+}
+
 // Preferences: update a single key within preferences.md document
 export async function updatePreference(key: string, value: string): Promise<void> {
   return invoke('update_preference', { key, value });

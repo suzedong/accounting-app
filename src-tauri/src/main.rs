@@ -56,6 +56,7 @@ fn main() {
             commands::prompts::get_system_prompt,
             commands::prompts::update_system_prompt,
             commands::prompts::update_preference,
+            commands::prompts::refresh_prompt_from_file,
             // Learning
             commands::learning::get_learning_corrections,
             commands::learning::save_correction,
