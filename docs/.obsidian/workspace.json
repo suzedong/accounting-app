@@ -15,9 +15,9 @@
               "state": {
                 "file": "AI Chat 流程图.canvas",
                 "viewState": {
-                  "x": 1070.2342530922938,
-                  "y": 494.65406279733827,
-                  "zoom": -1.1900689894520453
+                  "x": 291.7491871480872,
+                  "y": 291.09366912918296,
+                  "zoom": -0.7220032543503454
                 }
               },
               "icon": "lucide-layout-dashboard",
@@ -189,6 +189,10 @@
   },
   "active": "f9908b669dbf88fc",
   "lastOpenFiles": [
+    "superpowers/plans",
+    "superpowers/specs/2026-06-02-agent-correction-flow-design.md",
+    "superpowers/specs",
+    "superpowers",
     "03-active-design-docs.md",
     "AI Chat 流程图.canvas",
     "AI Chat 对话显示流程.canvas",

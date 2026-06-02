@@ -23,6 +23,8 @@ export interface ProcessResult {
   action?: string;
 }
 
+const MAX_LLM_LOGS = 200;
+
 export class AgentEngine {
   private conversationHistory: LLMMessage[] = [];
   private maxRounds = 10;
@@ -31,6 +33,7 @@ export class AgentEngine {
   private learningText = '';
   private contextLoaded = false;
   private llmLogs: LLMLogEntry[] = [];
+  private llmLogListeners = new Set<(entry: LLMLogEntry) => void>();
   private nextLogId = 1;
 
   /** 加载 system prompt + preferences + learning data */
@@ -98,6 +101,7 @@ export class AgentEngine {
         finalReply: '抱歉，我没有理解你的意思。请换个说法。',
       };
     }
+    this.removeOrphanSourceFields(parsed.params);
 
     intentStep.status = 'success';
     intentStep.detail!.action = parsed.action;
@@ -275,7 +279,7 @@ export class AgentEngine {
 
       // 记录 LLM 日志
       console.log('[AgentEngine] 记录 LLM 日志, 当前条数:', this.llmLogs.length);
-      this.llmLogs.push({
+      this.pushLLMLog({
         id: this.nextLogId++,
         timestamp: new Date().toLocaleTimeString(),
         systemMessage: systemWithHistory,
@@ -294,7 +298,7 @@ export class AgentEngine {
       const latency = Date.now() - startTime;
       const errorMsg = e instanceof Error ? e.message : String(e);
       console.log('[AgentEngine] LLM 调用失败，记录错误日志:', errorMsg);
-      this.llmLogs.push({
+      this.pushLLMLog({
         id: this.nextLogId++,
         timestamp: new Date().toLocaleTimeString(),
         systemMessage: systemWithHistory,
@@ -353,6 +357,7 @@ export class AgentEngine {
   /** 构建完整的 system message */
   private buildSystemMessage(): string {
     let system = this.systemPrompt;
+    system += `\n\n${this.buildCurrentTimeContext()}`;
     if (this.preferenceText) {
       system += `\n\n## 用户偏好\n${this.preferenceText}`;
     }
@@ -360,6 +365,34 @@ export class AgentEngine {
       system += `\n\n${this.learningText}`;
     }
     return system;
+  }
+
+  private buildCurrentTimeContext(): string {
+    const now = new Date();
+    const datetime = this.formatDateTime(now);
+    const date = datetime.slice(0, 10);
+    return [
+      '## 当前时间',
+      `当前日期：${date}`,
+      `当前时间：${datetime}`,
+      '当用户提到“今天、昨天、前天、明天、本周、本月、中午、晚上、早上”等相对时间时，必须以当前时间为基准换算。',
+      '时间字段统一输出为 YYYY-MM-DD HH:mm:ss。',
+    ].join('\n');
+  }
+
+  private formatDateTime(date: Date): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+
+  private removeOrphanSourceFields(params: Record<string, unknown>) {
+    for (const key of Object.keys(params)) {
+      if (!key.endsWith('_source')) continue;
+      const fieldName = key.slice(0, -'_source'.length);
+      if (!(fieldName in params)) {
+        delete params[key];
+      }
+    }
   }
 
   /** 构建学习数据上下文 */
@@ -391,6 +424,22 @@ export class AgentEngine {
   /** 获取 LLM 日志（开发者调试用） */
   getLLMLogs(): LLMLogEntry[] {
     return [...this.llmLogs];
+  }
+
+  /** 监听新的 LLM 日志 */
+  addLLMListener(fn: (entry: LLMLogEntry) => void) {
+    this.llmLogListeners.add(fn);
+    return () => this.llmLogListeners.delete(fn);
+  }
+
+  private pushLLMLog(entry: LLMLogEntry) {
+    this.llmLogs.push(entry);
+    if (this.llmLogs.length > MAX_LLM_LOGS) {
+      this.llmLogs.splice(0, this.llmLogs.length - MAX_LLM_LOGS);
+    }
+    for (const fn of this.llmLogListeners) {
+      try { fn(entry); } catch { /* ignore */ }
+    }
   }
 
   /** 判断字段来源：extracted=从文本提取，inferred=系统推断，default=系统默认值 */

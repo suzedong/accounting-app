@@ -240,26 +240,42 @@ interface StepDetail {
 
 #### 开发者控制台
 
-快捷键 `Ctrl+`` 打开/关闭，显示最近 N 次 LLM 调用的完整请求/响应。
+快捷键 `Ctrl+`` 打开/关闭，用于排查前端 IPC、LLM 请求和 Rust 后端日志。
+
+| Tab | 数据来源 | 说明 |
+|---|---|---|
+| IPC 调用 | `src/utils/invoke-logger.ts` 封装的 Tauri `invoke()` | 自动记录 command、参数、返回值/错误和耗时 |
+| LLM 请求 | `AgentEngine` 内部 `LLMLogEntry` | 成功/失败都记录 system message、用户消息、响应/错误和耗时；通过 listener 实时推送到 DevConsole |
+| Rust 端 | Rust `logger.rs` 发出的 `app_log` 事件 | 关键后端诊断日志，例如 LLM API 请求成功/失败、AI 连接测试结果 |
 
 ```typescript
-interface RequestEntry {
+interface LLMLogEntry {
   id: number;
   timestamp: string;
-  model: string;
-  systemPrompt: string;
-  messages: LLMMessage[];
-  tools: Tool[];
-  finishReason: string;
-  toolCalls?: ToolCall[];
-  content?: string;
-  usage: { promptTokens: number; completionTokens: number };
+  systemMessage: string;
+  userMessage: string;
+  response: string;  // 失败时以 [错误] 开头
   latency: number;
-  error?: string;
+  steps: string[];
 }
 ```
 
-功能：列表（时间/模型/耗时/状态）、详情（完整请求/响应 JSON）、过滤（按状态/耗时）、导出（JSON）、双击消息定位到对应请求。
+**日志收集规则**：
+- IPC 日志由前端 invoke 拦截器维护内存环形列表，DevConsole 打开时读取快照。
+- LLM 日志由 `AgentEngine.addLLMListener()` 实时推送；调用失败时也写入日志，便于查看 API Key、URL、JSON 解析等错误。
+- Rust 日志由前端组件挂载后持续监听 `app_log`，不再依赖 DevConsole 是否打开或当前是否激活 Rust tab，避免运行时事件丢失。
+- Rust 日志不得输出 API Key 等敏感信息；错误响应只展示必要摘要。
+
+功能：列表（时间/耗时/状态）、详情（完整请求/响应或错误）、复制当前 Tab、清空当前 Tab。
+
+#### 已确认的 Agent 解析修正
+
+> 2026-06-02 确认，用于修复 DevConsole 暴露出的识别问题。
+
+1. **相对时间基准**：`AgentEngine.buildSystemMessage()` 每次动态注入当前日期时间。用户提到“今天、昨天、前天、明天、本周、本月、中午、晚上、早上”等相对时间时，LLM 必须基于当前时间换算。
+2. **孤儿 `_source` 字段**：Prompt 明确要求“未返回字段时不要返回对应 `xxx_source`”；前端在解析 tool call 后清理没有对应字段的 `_source`，日志保留原始 LLM 响应用于调试。
+3. **支付方式规则去重**：`dispatch.md` 和 SQLite `system_prompts.dispatch` 保持一致，支付方式规则只保留一组清晰约束，避免 token 浪费和规则噪声。
+4. **确认卡状态文案**：确认卡明确显示“尚未保存”，并提示“点击确认后才会写入账本”，避免误解为 AI 生成卡片后已经入库。
 
 #### Prompt 管理（Settings 页面）
 

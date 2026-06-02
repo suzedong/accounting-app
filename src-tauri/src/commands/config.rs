@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::State;
+use std::time::Instant;
+use tauri::{AppHandle, State};
 use serde::Serialize;
 
 use crate::db::Database;
 use crate::models::AiService;
+use crate::app_log;
 
 // Simple in-memory config cache (backed by SQLite)
 pub struct AppConfig {
@@ -237,27 +239,37 @@ fn build_endpoint(api_url: &str) -> String {
 
 #[tauri::command]
 pub async fn call_llm(
+    app: AppHandle,
     app_config: State<'_, AppConfig>,
     system_message: String,
     user_message: String,
 ) -> Result<String, String> {
-    call_llm_with_tools(app_config, system_message, Some(user_message), None, false).await
+    call_llm_with_tools(app, app_config, system_message, Some(user_message), None, false).await
 }
 
 #[tauri::command]
 pub async fn call_llm_with_tools(
+    app: AppHandle,
     app_config: State<'_, AppConfig>,
     system_message: String,
     user_message: Option<String>,
     tools_json: Option<String>,
     include_tool_calls: bool,
 ) -> Result<String, String> {
+    let started_at = Instant::now();
     let svc = {
         let guard = app_config.data.lock().map_err(|e| e.to_string())?;
-        resolve_active_service(&guard).map_err(|e| e)?
+        match resolve_active_service(&guard) {
+            Ok(svc) => svc,
+            Err(e) => {
+                app_log!(&app, Warn, "llm", &format!("AI 服务未就绪: {}", e));
+                return Err(e);
+            }
+        }
     };
 
     if svc.api_key.is_empty() {
+        app_log!(&app, Warn, "llm", &format!("AI 服务 {} 未配置 API Key", svc.model));
         return Err("未配置 API Key".to_string());
     }
 
@@ -280,41 +292,66 @@ pub async fn call_llm_with_tools(
     });
 
     // Add tools if provided
+    let mut has_tools = false;
     if let Some(tools_str) = &tools_json {
-        let tools: Vec<serde_json::Value> = serde_json::from_str(tools_str)
-            .map_err(|e| format!("解析 tools 失败: {}", e))?;
+        let tools: Vec<serde_json::Value> = match serde_json::from_str(tools_str) {
+            Ok(tools) => tools,
+            Err(e) => {
+                app_log!(&app, Error, "llm", &format!("解析 tools 失败: {}", e));
+                return Err(format!("解析 tools 失败: {}", e));
+            }
+        };
         if !tools.is_empty() {
+            has_tools = true;
             body["tools"] = serde_json::json!(tools);
             body["tool_choice"] = serde_json::json!("auto");
         }
     }
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .post(&endpoint)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", svc.api_key))
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("请求失败: {}", e))?;
+    {
+        Ok(response) => response,
+        Err(e) => {
+            app_log!(&app, Error, "llm", &format!("请求失败: model={}, url={}, error={}", svc.model, endpoint, e));
+            return Err(format!("请求失败: {}", e));
+        }
+    };
 
     let status = response.status();
 
-    let body_text = response
-        .text()
-        .await
-        .map_err(|e| format!("读取响应失败: {}", e))?;
+    let body_text = match response.text().await {
+        Ok(text) => text,
+        Err(e) => {
+            app_log!(&app, Error, "llm", &format!("读取响应失败: model={}, error={}", svc.model, e));
+            return Err(format!("读取响应失败: {}", e));
+        }
+    };
 
     if !status.is_success() {
-        eprintln!("[LLM] Request failed: status={}, model={}, url={}", status, svc.model, endpoint);
-        eprintln!("[LLM] Request body size: {} bytes", serde_json::to_string(&body).unwrap_or_default().len());
-        eprintln!("[LLM] Response: {}", body_text.chars().take(500).collect::<String>());
+        let response_preview = body_text.chars().take(500).collect::<String>();
+        app_log!(
+            &app,
+            Error,
+            "llm",
+            &format!("API 返回错误: status={}, model={}, url={}, response={}", status, svc.model, endpoint, response_preview)
+        );
         return Err(format!("API 返回错误 ({}): {}", status, body_text));
     }
 
-    let json: serde_json::Value = serde_json::from_str(&body_text)
-        .map_err(|e| format!("解析响应失败: {}", e))?;
+    let json: serde_json::Value = match serde_json::from_str(&body_text) {
+        Ok(json) => json,
+        Err(e) => {
+            app_log!(&app, Error, "llm", &format!("解析响应失败: model={}, error={}", svc.model, e));
+            return Err(format!("解析响应失败: {}", e));
+        }
+    };
 
     let choice = &json["choices"][0];
     let message = &choice["message"];
@@ -331,6 +368,13 @@ pub async fn call_llm_with_tools(
     };
 
     let content = message["content"].as_str().unwrap_or("");
+    app_log!(
+        &app,
+        Info,
+        "llm",
+        &format!("LLM 请求成功: model={}, tools={}", svc.model, has_tools),
+        started_at.elapsed().as_millis() as u64
+    );
 
     // Return structured response if tool_calls are requested
     if include_tool_calls {
@@ -345,8 +389,10 @@ pub async fn call_llm_with_tools(
 
 #[tauri::command]
 pub async fn test_ai_connection(
+    app: AppHandle,
     app_config: State<'_, AppConfig>,
 ) -> Result<serde_json::Value, String> {
+    let started_at = Instant::now();
     let (api_key, api_url, model) = {
         let guard = app_config.data.lock().map_err(|e| e.to_string())?;
         let svc = resolve_active_service(&guard)?;
@@ -356,7 +402,7 @@ pub async fn test_ai_connection(
     let endpoint = build_endpoint(&api_url);
 
     let client = reqwest::Client::new();
-    let response = client
+    let response = match client
         .post(&endpoint)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
@@ -367,13 +413,33 @@ pub async fn test_ai_connection(
         }))
         .send()
         .await
-        .map_err(|e| format!("请求失败: {}", e))?;
+    {
+        Ok(response) => response,
+        Err(e) => {
+            app_log!(&app, Error, "llm", &format!("测试连接失败: model={}, url={}, error={}", model, endpoint, e));
+            return Err(format!("请求失败: {}", e));
+        }
+    };
 
     if response.status().is_success() {
+        app_log!(
+            &app,
+            Info,
+            "llm",
+            &format!("测试连接成功: model={}", model),
+            started_at.elapsed().as_millis() as u64
+        );
         Ok(serde_json::json!({ "success": true, "message": "连接成功" }))
     } else {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
+        let body_preview = body.chars().take(500).collect::<String>();
+        app_log!(
+            &app,
+            Error,
+            "llm",
+            &format!("测试连接失败: model={}, status={}, response={}", model, status, body_preview)
+        );
         Err(format!("API 返回错误 ({}): {}", status, body))
     }
 }

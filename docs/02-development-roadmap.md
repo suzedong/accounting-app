@@ -95,7 +95,17 @@
 - [ ] `tauri-plugin-notification` — 系统通知
 - [ ] Settings 页同步操作入口
 
-#### 4.3 清理
+#### 4.3 AI Agent 后续增强
+
+> 以下任务来自 2026-06-02 Agent 修正流程设计，本期先不实现，后续逐项确认后再开发。
+
+- [ ] 候选记录选择卡：修正意图匹配到多条可能记录时，让用户选择目标记录
+- [ ] 全部修正强制确认模式：提供可选安全策略，所有 `correct_record` / `update_record` 都确认后再落库
+- [ ] 跨会话恢复“上一条”：从最近会话或数据库恢复上一条上下文，并设计过期/误匹配保护
+- [ ] 删除记录的风险分级确认：对自然语言删除记录增加低/高风险判断和确认流程
+- [ ] 差旅补助修正流程重构：将差旅记录修改纳入统一的风险分级修正框架
+
+#### 4.4 清理
 
 - [x] 删除 `server/` 目录（server.py、prompts/、scripts/、python_manager.py 等）
 - [x] 迁移关键脚本到 `src-tauri/scripts/`（python_manager.sh、python_manager.ps1、ocr_service.py）
@@ -105,7 +115,7 @@
 - [ ] 精简 `vite.config.js`
 - [x] 更新 `CLAUDE.md` 文档
 
-#### 4.4 构建测试
+#### 4.5 构建测试
 
 - [ ] `npm run tauri build` 生成 macOS .dmg
 - [ ] `npm run tauri build` 生成 Windows .exe/nsis

@@ -1,6 +1,8 @@
 <template>
   <div class="confirm-card" :class="{ editing: isEditing }">
-    <div class="card-header">{{ title || '请确认' }}</div>
+    <div class="card-header">
+      {{ title || '请确认（尚未保存）' }}
+    </div>
     <div class="card-body">
       <!-- Regular record fields -->
       <template v-if="!isTripRecord">
@@ -88,6 +90,7 @@
         </div>
       </template>
     </div>
+    <div v-if="!readonly" class="save-hint">点击“确认”后才会写入账本</div>
     <div v-if="!readonly" class="card-actions">
       <template v-if="isEditing">
         <el-button size="small" type="primary" @click="$emit('save', editFields)">
@@ -122,7 +125,7 @@ const props = defineProps<{
   readonly?: boolean;
 }>();
 
-const emit = defineEmits<{
+defineEmits<{
   confirm: [];
   edit: [];
   cancel: [];
@@ -198,12 +201,18 @@ function formatDateTime(val: unknown): string {
   font-weight: 600;
 }
 
-.card-actions {
-  display: flex;
-  gap: 6px;
+.save-hint {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid #f0f0f0;
+  color: #909399;
+  font-size: 12px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .text-success { color: #52c41a; }

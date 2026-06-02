@@ -71,14 +71,15 @@
         <div v-if="activeTab === 'llm'" class="tab-content">
           <div v-if="llmLogs.length === 0" class="empty-state">
             暂无 LLM 调用记录
-            <div class="empty-hint">请先发送一条消息，然后再打开此面板查看日志</div>
+            <div class="empty-hint">发送 AI 消息后会实时显示 LLM 请求</div>
           </div>
           <div v-for="log in llmLogs.slice().reverse()" :key="log.id" class="log-entry">
             <div class="log-header" @click="log.expanded = !log.expanded">
               <span class="log-id">#{{ log.id }}</span>
               <span class="log-time">{{ log.timestamp }}</span>
               <span class="log-latency" :class="latencyClass(log.latency)">{{ log.latency }}ms</span>
-              <span class="log-user-text">{{ truncate(log.userMessage, 60) }}</span>
+              <span class="log-user-text" :class="{ error: isLLMError(log) }">{{ truncate(log.userMessage, 60) }}</span>
+              <el-tag v-if="isLLMError(log)" type="danger" size="small" class="error-tag">失败</el-tag>
               <span class="log-chevron" :class="{ rotated: log.expanded }">▾</span>
             </div>
             <div v-show="log.expanded" class="log-detail">
@@ -98,10 +99,10 @@
               </div>
               <div class="log-section">
                 <div class="log-section-header">
-                  <span>AI 响应</span>
+                  <span>{{ isLLMError(log) ? '错误' : 'AI 响应' }}</span>
                   <el-button size="small" text @click.stop="copyText(log.response)">复制</el-button>
                 </div>
-                <pre class="log-code">{{ log.response }}</pre>
+                <pre class="log-code" :class="{ 'error-text': isLLMError(log) }">{{ log.response }}</pre>
               </div>
             </div>
           </div>
@@ -134,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
+import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import { Close } from '@element-plus/icons-vue';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -175,6 +176,7 @@ let ipcUnsub: (() => void) | null = null;
 // ============================================================
 
 const llmLogs = ref<(LLMLogEntry & { expanded?: boolean })[]>([]);
+let llmUnsub: (() => void) | null = null;
 
 // ============================================================
 // Rust logs (from app_log events)
@@ -281,6 +283,10 @@ function latencyClass(latency: number): string {
   return 'latency-slow';
 }
 
+function isLLMError(log: LLMLogEntry): boolean {
+  return log.response.startsWith('[错误]');
+}
+
 function rustLogLevelType(level: string): 'success' | 'warning' | 'danger' | 'info' {
   if (level === 'error') return 'danger';
   if (level === 'warn') return 'warning';
@@ -305,17 +311,21 @@ onMounted(async () => {
     }
   });
 
-  // Listen for Rust app_log events
+  // Listen for new LLM log entries in real-time
+  llmUnsub = agentEngine.addLLMListener((entry) => {
+    llmLogs.value.push({ ...entry, expanded: false });
+  });
+
+  // Listen for Rust app_log events. Always collect after mount to avoid losing logs.
   rustUnlisten = await listen('app_log', (event: unknown) => {
     const payload = event as { payload: RustLogEntry };
-    if (show.value && activeTab.value === 'rust') {
-      rustLogs.value.push({ ...payload.payload, expanded: false });
-    }
+    rustLogs.value.push({ ...payload.payload, expanded: false });
   });
 });
 
 onUnmounted(() => {
   ipcUnsub?.();
+  llmUnsub?.();
   rustUnlisten?.();
 });
 
@@ -515,6 +525,10 @@ defineExpose({ toggle });
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.log-user-text.error {
+  color: #f44747;
 }
 
 .log-module {
