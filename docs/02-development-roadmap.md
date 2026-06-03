@@ -67,9 +67,9 @@
 
 - [x] 百炼 API 直连：Rust `call_llm` / `call_llm_with_tools` + 前端 AgentEngine
 - [x] 工具注册：ToolRegistry（Zod schema → JSON Schema）+ 20+ 工具（记账 CRUD / 差旅补助 / 统计 / 预算 / 追问 / 偏好 / Prompt 管理）
-- [x] 聊天 UI：ChatWidget / ChatMessage / ChatInput / RecordCard / ConfirmCard / FollowUpCard / StepList / DevConsole / SettingsPanel / ImagePreview
-- [x] AI 引擎层：agent-engine.ts（三阶段流水线：OCR → LLM 意图识别 → 工具执行）
-- [x] Stores：chat.ts（Options API 风格，管理消息/确认/编辑/追问/学习）
+- [x] 聊天 UI：ChatWidget / ChatMessage / ChatInput / RecordCard / ConfirmCard / CorrectionConfirmCard / FollowUpCard / StepList / DevConsole / SettingsPanel / ImagePreview
+- [x] AI 引擎层：agent-engine.ts（三阶段流水线：OCR → LLM 意图识别 → 工具执行，含支付方式防编造清洗）
+- [x] Stores：chat.ts（Options API 风格，管理消息/确认/编辑/追问/学习，含 lastConfirmedRecord 修正定位）
 - [x] OCR：智能 Python 探测 + 自动安装依赖 + OCR 识别 + Settings 页管理（`.ps1` 支持 Windows，`.sh` 支持 macOS/Linux）
 
 ---
@@ -97,7 +97,7 @@
 
 #### 4.3 AI Agent 后续增强
 
-> 以下任务来自 2026-06-02 Agent 修正流程设计，本期先不实现，后续逐项确认后再开发。
+> 2026-06-03 已实现基础风险分级修正流：`lastConfirmedRecord`、支付方式防编造、低风险直接执行、高风险 `CorrectionConfirmCard` 确认、StepList 修正 diff 展示。以下为未纳入本期的后续增强。
 
 - [ ] 候选记录选择卡：修正意图匹配到多条可能记录时，让用户选择目标记录
 - [ ] 全部修正强制确认模式：提供可选安全策略，所有 `correct_record` / `update_record` 都确认后再落库

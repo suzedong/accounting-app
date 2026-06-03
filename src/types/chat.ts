@@ -18,6 +18,13 @@ export interface Step {
   collapsed: boolean;
 }
 
+export interface CorrectionChange {
+  field: string;
+  label: string;
+  oldValue: unknown;
+  newValue: unknown;
+}
+
 /** 步骤详情 */
 export interface StepDetail {
   action?: string;
@@ -30,6 +37,12 @@ export interface StepDetail {
   result?: {
     message?: string;
     id?: unknown;
+  };
+  correction?: {
+    targetRecord: Record<string, unknown>;
+    changes: CorrectionChange[];
+    risk: 'low' | 'high';
+    reason?: string;
   };
   ocr?: {
     status: 'success' | 'error';
