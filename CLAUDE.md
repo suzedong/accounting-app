@@ -2,14 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## ⚠️ 当前状态：重构进行中（新旧架构并存）
+## ⚠️ 当前状态：Phase 4 同步层开发中
 
-项目正在从**旧架构**（纯前端 HTML/JS + Python server.py + NocoBase REST API）重构为**新架构**（Tauri 2 桌面应用 + Vue 3 + SQLite 本地数据库 + NocoBase 可选同步）。
+项目已完成从**旧架构**（纯前端 HTML/JS + Python server.py + NocoBase REST API）到**新架构**（Tauri 2 桌面应用 + Vue 3 + SQLite 本地数据库）的重构。旧架构代码已全部删除。
 
-- **旧架构代码**已全部删除（web/、server/、scripts/、.env 均不再保留）
-- **新架构代码**在 `src/`（Vue 3 前端）和 `src-tauri/`（Rust 后端） — 持续开发中
+- **新架构代码**在 `src/`（Vue 3 前端）和 `src-tauri/`（Rust 后端）
 - **开发命令**：`npm run dev`（启动 Tauri，前端 Vite + 后端 Rust）
-- **旧架构文档**详见 `README.md`（面向旧架构的完整用户文档）
+- **当前重点**：实现 NocoBase 双向同步（push/pull/import）
 
 ### 重构完成度
 
@@ -18,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Phase 1: Tauri 骨架 + SQLite | ✅ 已完成 | 数据库（7 张表）、CRUD、前端基础 |
 | Phase 2: 业务逻辑迁移 | ✅ 已完成 | Rust commands 齐全（记录/差旅/统计），Vue 6 个页面全部可用 |
 | Phase 3: AI 聊天 + Agent | ✅ 已完成 | 百炼 API 直连、LLM dispatch、action handlers、ChatWidget、学习引擎、对话历史、OCR |
-| Phase 4: 同步层 + 清理 | ✅ 进行中 | 旧架构代码已全部删除，push/pull/import 占位待实现 |
+| Phase 4: 同步层 | 🔄 进行中 | 旧架构代码已全部删除。push/pull/import 同步功能待实现 |
 
 ### 新架构目录
 
@@ -220,7 +219,7 @@ Agent 采用 **LLM Function Calling + 前端 Tool Registry** 的架构：
 
 | 模块 | 文件 | 职责 |
 |---|---|---|
-| `AgentEngine` | `src/ai/agent-engine.ts` | 全局单例，三阶段流水线：① OCR 识别（如有图片）② LLM 意图识别（Function Calling）③ 工具执行。负责加载上下文、构建 system message、调用 LLM、解析 tool_calls、清洗无效支付方式（用户未提及支付时自动删除 payment 字段）。 |
+| `AgentEngine` | `src/ai/agent-engine.ts` | 全局单例，两阶段流水线：① LLM 意图识别（Function Calling） 工具执行。负责加载上下文、构建 system message、调用 LLM、解析 tool_calls、清洗无效支付方式（用户未提及支付时自动删除 payment 字段）。OCR 在前端输入预处理阶段完成，不在 AgentEngine 中。 |
 | `ToolRegistry` | `src/ai/tool-registry.ts` | 使用 Zod schema 注册工具，自动将 Zod schema 转为 JSON Schema 传给 LLM。执行工具时通过 runtime context 传递应用事实（`lastConfirmedRecord`），`correct_record` 按风险分级（低风险直接执行 / 高风险返回 CorrectionConfirmCard）。 |
 | `ChatStore` | `src/stores/chat.ts` | Pinia store，管理消息列表、发送流程、确认/编辑/追问交互、持久化、学习去重、`lastConfirmedRecord`（跟踪最近一次用户确认的记录，用于"上一条"修正定位）。 |
 | `ChatWidget` | `src/components/chat/ChatWidget.vue` | 主容器组件，悬浮按钮 + 侧边聊天面板。包含欢迎页、消息列表、设置对话框、修正确认卡片（CorrectionConfirmCard）。 |

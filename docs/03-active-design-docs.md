@@ -7,17 +7,19 @@
 ## 1. AI Agent 架构重构
 
 > 最后更新：2026-05-27
+> **状态：✅ 已完成**（2026-06-03 风险分级修正流已实现）
 
 ### 1.1 背景与目标
 
-**现状**：当前 Agent 架构采用手写 dispatch prompt + JSON 解析模式——LLM 调用通过 50+ 行 JSON schema 定义在 system prompt 中，响应用正则提取 JSON，上下文管理拼接最近 6 条消息为字符串，`ChatWidget.vue` 1200 行同时充当 store/orchestrator/presenter。
+**原问题**：Agent 架构采用手写 dispatch prompt + JSON 解析模式——LLM 调用通过 50+ 行 JSON schema 定义在 system prompt 中，响应用正则提取 JSON，上下文管理拼接最近 6 条消息为字符串，`ChatWidget.vue` 1200 行同时充当 store/orchestrator/presenter。
 
-**目标**：
+**已实现目标**：
 1. **用 Function Calling 替代手写 dispatch prompt** — 标准格式、不 parse JSON、token 减半
 2. **推理链可视化** — 每条消息展示完整执行过程（意图识别 → 字段提取 → 执行入库 → 最终回复）
 3. **分层架构** — UI 层（~300行）/ Store 层（~200行）/ Agent 层（~150行）/ 工具层（~50行）
 4. **开发者调试** — Ctrl+` 打开控制台，查看每轮 LLM 调用的原始请求/响应
 5. **对话即学习** — 用户自然对话纠正，LLM 自动检测纠正意图，Agent 自动提取差异存入 learning_data
+6. **风险分级修正流** — `lastConfirmedRecord`、支付方式防编造、低风险直接执行、高风险 `CorrectionConfirmCard` 确认
 
 ### 1.2 分层架构
 
@@ -101,10 +103,9 @@ async function onSend(text: string, imageBase64?: string) {
 用户消息 → ChatStore.sendMessage(text, imageBase64)
   → F10: 创建 userMsg 推入 messages[] → 持久化 SQLite
   → F11: 创建 aiMsg (loading=true, steps=[])
-  → B4: AgentEngine.processMessage(text, imageBase64, onStep 回调)
+  → B4: AgentEngine.processMessage(text, onStep 回调)
     ├─ 加载上下文（dispatch prompt + preferences + learning data）
     ├─ 构建 SystemMessage（拼接 prompt + 偏好 + 学习纠正上下文）
-    ├─ OCR 处理（仅当有图片，ocr_recognize → 文本拼接到 text）
     ├─ 调用 LLM（Function Calling）→ toolCall 或 text
     ├─ 执行工具 → ToolResult（纯数据）
     └─ 返回 { steps[], toolResult, finalReply, action }
@@ -117,6 +118,8 @@ async function onSend(text: string, imageBase64?: string) {
   → F12: UI 渲染（loading→spinner / steps→推理链 / content→文本 / pending→ConfirmCard）
   → 持久化到 SQLite
 ```
+
+> **注**：OCR 在 ChatWidget.onSend 中预处理（F5-b 图片通道），AgentEngine 收到的 text 已是合并后的完整文本。
 
 ### 1.4 消息历史
 
@@ -361,15 +364,17 @@ for (const [key, newValue] of Object.entries(args.fields)) {
 
 ### 1.8 实施顺序
 
-1. 添加 zod 依赖 + 实现 ToolRegistry
-2. 创建 AgentEngine 层（LLM 调用 + 工具执行 + 推理链构建）
-3. 重构 ChatStore（状态管理 + 对话流程）
-4. 创建 StepList 组件（推理链可视化）
-5. 重构 ChatWidget（瘦身为纯 UI）
-6. 实现开发者控制台
-7. 更新 Settings 页面（Prompt/偏好/学习数据 tab + 系统诊断）
-8. 更新 Rust 后端（Function Calling 支持）
-9. 清理旧代码
+> ✅ 全部完成（2026-05-27）
+
+1. [x] 添加 zod 依赖 + 实现 ToolRegistry
+2. [x] 创建 AgentEngine 层（LLM 调用 + 工具执行 + 推理链构建）
+3. [x] 重构 ChatStore（状态管理 + 对话流程）
+4. [x] 创建 StepList 组件（推理链可视化）
+5. [x] 重构 ChatWidget（瘦身为纯 UI）
+6. [x] 实现开发者控制台
+7. [x] 更新 Settings 页面（Prompt/偏好/学习数据 tab + 系统诊断）
+8. [x] 更新 Rust 后端（Function Calling 支持）
+9. [x] 清理旧代码
 
 ### 1.9 测试计划
 
