@@ -45,10 +45,11 @@ src/              # Vue 3 前端（TypeScript + Element Plus + Pinia）
     │   ├── ConfirmCard.vue     # AI 返回的记录/差旅确认卡片
     │   ├── FollowUpCard.vue    # AI 追问补充信息卡片
     │   ├── RecordCard.vue      # 已创建记录卡片（含修正/删除按钮）
-    │   ├── StepList.vue        # 推理链展示（OCR→意图→字段→执行）
+    │   ├── CorrectionConfirmCard.vue # 高风险修正确认卡片
+    │   ├── StepList.vue        # 推理链展示（含修正 diff）
     │   ├── ImagePreview.vue    # 图片预览（截图/上传）
     │   ├── SettingsPanel.vue   # 设置面板（Prompt/偏好/学习数据/诊断）
-    │   └── DevConsole.vue      # 开发者控制台（IPC日志/LLM日志/Rust日志）
+    │   └── DevConsole.vue      # 开发者控制台（IPC/LLM/Rust + 复制全部）
     └── stats/                  # 统计图表
         ├── CategoryBarChart.vue
         ├── AccountPieChart.vue
@@ -219,10 +220,10 @@ Agent 采用 **LLM Function Calling + 前端 Tool Registry** 的架构：
 
 | 模块 | 文件 | 职责 |
 |---|---|---|
-| `AgentEngine` | `src/ai/agent-engine.ts` | 全局单例，三阶段流水线：① OCR 识别（如有图片）② LLM 意图识别（Function Calling）③ 工具执行。负责加载上下文（dispatch prompt + preferences + learning data）、构建 system message、调用 LLM、解析 tool_calls。 |
-| `ToolRegistry` | `src/ai/tool-registry.ts` | 使用 Zod schema 注册工具，自动将 Zod schema 转为 JSON Schema 传给 LLM。执行工具时根据 action 路由到对应 handler。 |
-| `ChatStore` | `src/stores/chat.ts` | Pinia store，管理消息列表、发送流程、确认/编辑/追问交互、持久化、学习去重。 |
-| `ChatWidget` | `src/components/chat/ChatWidget.vue` | 主容器组件，悬浮按钮 + 侧边聊天面板。包含欢迎页、消息列表、设置对话框。 |
+| `AgentEngine` | `src/ai/agent-engine.ts` | 全局单例，三阶段流水线：① OCR 识别（如有图片）② LLM 意图识别（Function Calling）③ 工具执行。负责加载上下文、构建 system message、调用 LLM、解析 tool_calls、清洗无效支付方式（用户未提及支付时自动删除 payment 字段）。 |
+| `ToolRegistry` | `src/ai/tool-registry.ts` | 使用 Zod schema 注册工具，自动将 Zod schema 转为 JSON Schema 传给 LLM。执行工具时通过 runtime context 传递应用事实（`lastConfirmedRecord`），`correct_record` 按风险分级（低风险直接执行 / 高风险返回 CorrectionConfirmCard）。 |
+| `ChatStore` | `src/stores/chat.ts` | Pinia store，管理消息列表、发送流程、确认/编辑/追问交互、持久化、学习去重、`lastConfirmedRecord`（跟踪最近一次用户确认的记录，用于"上一条"修正定位）。 |
+| `ChatWidget` | `src/components/chat/ChatWidget.vue` | 主容器组件，悬浮按钮 + 侧边聊天面板。包含欢迎页、消息列表、设置对话框、修正确认卡片（CorrectionConfirmCard）。 |
 
 ### 注册的工具列表
 
@@ -230,8 +231,9 @@ Agent 采用 **LLM Function Calling + 前端 Tool Registry** 的架构：
 |---|---|---|
 | `create_record` | 创建记账记录 | 生成确认卡片 |
 | `confirm_record` | 用户确认创建 | 写入数据库 + 保存学习数据 |
-| `correct_record` | 纠正上一条记录（自动搜索定位） | 生成修正确认卡片 |
-| `update_record` | 修改指定记录 | 生成修改确认卡片 |
+| `correct_record` | 纠正上一条记录（应用定位目标 + 风险分级） | 低风险直接执行 / 高风险返回修正确认卡 |
+| `confirm_correction` | 确认高风险修正（仅由 UI 确认后调用） | 执行 updateRecord + 保存学习数据 |
+| `update_record` | 按 ID 修改指定记录 | 生成修改确认卡片 |
 | `query_records` | 查询记录列表 | 返回表格/列表结果 |
 | `render_stats` | 渲染统计分析 | 调用统计命令 |
 | `render_budget` | 渲染预算状态 | 计算预算执行情况 |
@@ -302,6 +304,7 @@ SYSTEM_PROMPT 存储在 SQLite `system_prompts` 表中，文件缓存在 `src-ta
 | `ConfirmCard.vue` | 确认卡片：展示 AI 生成的记录/差旅补助，支持确认/修改/取消 |
 | `FollowUpCard.vue` | 追问卡片：AI 缺少必要信息时展示，提供字段按钮供用户选择 |
 | `RecordCard.vue` | 记录卡片：展示已创建的记账记录，含修正/删除按钮 |
+| `CorrectionConfirmCard.vue` | 高风险修正确认卡片：展示目标记录、修改 diff、风险原因 |
 | `StepList.vue` | 推理链：逐步展示 OCR 识别→意图识别→字段提取→执行过程 |
 | `ImagePreview.vue` | 图片预览：支持截图/上传预览，可移除和 OCR 加载状态覆盖 |
 | `SettingsPanel.vue` | 设置面板：4 个 Tab（Dispatch Prompt 编辑、偏好编辑、学习数据表格、系统诊断） |

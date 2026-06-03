@@ -1,5 +1,5 @@
 import { callLLMWithTools, getSystemPrompt, getLearningCorrections } from '@/api/tauri';
-import { toolRegistry, type ToolResult } from './tool-registry';
+import { toolRegistry, type ToolResult, type ToolRuntimeContext } from './tool-registry';
 import type { LLMMessage, Step } from '@/types/chat';
 
 // ============================================================
@@ -68,6 +68,7 @@ export class AgentEngine {
     text: string,
     _imageBase64?: string,
     onStep?: (step: Step) => void | Promise<void>,
+    runtimeContext?: Omit<ToolRuntimeContext, 'userMessage'>,
   ): Promise<ProcessResult> {
     const steps: Step[] = [];
 
@@ -102,6 +103,7 @@ export class AgentEngine {
       };
     }
     this.removeOrphanSourceFields(parsed.params);
+    this.removeInventedPaymentFields(parsed.params, text);
 
     intentStep.status = 'success';
     intentStep.detail!.action = parsed.action;
@@ -187,7 +189,10 @@ export class AgentEngine {
       }
     }
 
-    const toolResult = await toolRegistry.execute(parsed.action, parsed.params);
+    const toolResult = await toolRegistry.execute(parsed.action, parsed.params, {
+      userMessage: text,
+      ...runtimeContext,
+    });
 
     if (toolResult.success) {
       executeStep.status = 'success';
@@ -196,6 +201,20 @@ export class AgentEngine {
       };
       if (toolResult.data && typeof toolResult.data === 'object' && 'id' in toolResult.data) {
         (executeStep.detail!.result as Record<string, unknown>).id = (toolResult.data as { id?: number }).id;
+      }
+      if (toolResult.data && typeof toolResult.data === 'object' && 'changes' in toolResult.data) {
+        const correction = toolResult.data as {
+          targetRecord?: Record<string, unknown>;
+          changes?: Array<{ field: string; label: string; oldValue: unknown; newValue: unknown }>;
+          risk?: 'low' | 'high';
+          reason?: string;
+        };
+        executeStep.detail!.correction = {
+          targetRecord: correction.targetRecord || {},
+          changes: correction.changes || [],
+          risk: correction.risk || 'low',
+          reason: correction.reason,
+        };
       }
     } else {
       executeStep.status = 'error';
@@ -393,6 +412,18 @@ export class AgentEngine {
         delete params[key];
       }
     }
+  }
+
+  private removeInventedPaymentFields(params: Record<string, unknown>, originalText: string) {
+    if (!('payment' in params) && !('payment_method' in params)) return;
+    const paymentKeywords = ['微信', '支付宝', '刷卡', '银行卡', '信用卡', '现金', '花呗', '零钱', '储蓄卡', '招商', '浦发', '尾号', '卡号'];
+    const hasPaymentKeyword = paymentKeywords.some(keyword => originalText.includes(keyword));
+    if (hasPaymentKeyword) return;
+
+    delete params.payment;
+    delete params.payment_method;
+    delete params.payment_source;
+    delete params.payment_method_source;
   }
 
   /** 构建学习数据上下文 */

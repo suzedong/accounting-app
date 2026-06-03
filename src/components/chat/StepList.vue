@@ -65,6 +65,31 @@
           </dl>
         </div>
 
+        <!-- 修正信息 -->
+        <div v-if="step.detail?.correction" class="detail-section correction-section">
+          <div class="correction-title">目标记录</div>
+          <dl class="fields-list">
+            <div v-for="field in targetRecordFields(step.detail.correction.targetRecord)" :key="field.label" class="field-row">
+              <dt>{{ field.label }}</dt>
+              <dd><span class="field-value">{{ field.value }}</span></dd>
+            </div>
+          </dl>
+          <div class="correction-title">修改内容</div>
+          <dl class="fields-list">
+            <div v-for="change in step.detail.correction.changes" :key="change.field" class="field-row">
+              <dt>{{ change.label }}</dt>
+              <dd>
+                <span class="old-value">{{ formatCorrectionValue(change.oldValue) }}</span>
+                <span class="arrow">→</span>
+                <span class="new-value">{{ formatCorrectionValue(change.newValue) }}</span>
+              </dd>
+            </div>
+          </dl>
+          <div v-if="step.detail.correction.risk === 'high'" class="risk-warning">
+            风险等级：高<span v-if="step.detail.correction.reason">，{{ step.detail.correction.reason }}</span>
+          </div>
+        </div>
+
         <!-- 执行结果 -->
         <div v-if="step.detail?.result" class="detail-section">
           <p class="result-text">{{ step.detail.result.message || '操作完成' }}</p>
@@ -88,6 +113,30 @@ defineProps<{
 
 function sourceLabel(source: 'extracted' | 'inferred' | 'default'): string {
   return { extracted: '提取', inferred: '推断', default: '默认' }[source];
+}
+
+function targetRecordFields(record: Record<string, unknown>) {
+  const labels: Record<string, string> = {
+    datetime: '时间',
+    type: '类型',
+    amount: '金额',
+    category: '分类',
+    account: '账户',
+    note: '备注',
+    payment_method: '支付方式',
+  };
+  return ['datetime', 'type', 'amount', 'category', 'account', 'note', 'payment_method']
+    .filter(key => record[key] !== undefined && record[key] !== null && record[key] !== '')
+    .map(key => ({
+      label: labels[key] || key,
+      value: key === 'amount' ? `¥${formatCorrectionValue(record[key])}` : formatCorrectionValue(record[key]),
+    }));
+}
+
+function formatCorrectionValue(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '空';
+  if (typeof value === 'number') return value.toFixed(2).replace(/\.00$/, '');
+  return String(value);
 }
 </script>
 
@@ -283,5 +332,39 @@ function sourceLabel(source: 'extracted' | 'inferred' | 'default'): string {
 .error-text {
   color: #dc2626;
   margin: 0;
+}
+
+.correction-section {
+  background: #f9fafb;
+  border-radius: 6px;
+  padding: 6px;
+}
+
+.correction-title {
+  font-weight: 600;
+  color: #374151;
+  margin: 4px 0;
+}
+
+.old-value {
+  color: #6b7280;
+  text-decoration: line-through;
+}
+
+.arrow {
+  color: #9ca3af;
+}
+
+.new-value {
+  color: #059669;
+  font-weight: 600;
+}
+
+.risk-warning {
+  margin-top: 6px;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 4px;
+  padding: 4px 6px;
 }
 </style>

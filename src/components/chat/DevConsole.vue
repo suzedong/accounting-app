@@ -4,6 +4,7 @@
       <div class="dev-console-header">
         <span class="dev-console-title">调试控制台 (Ctrl+`)</span>
         <div class="dev-console-actions">
+          <el-button size="small" text @click="copyAllTabs">复制全部</el-button>
           <el-button size="small" text @click="copyActiveTab">复制</el-button>
           <el-button size="small" text @click="clearActiveTab">清空</el-button>
           <el-button size="small" text @click="close">
@@ -253,6 +254,41 @@ function copyActiveTab() {
   }
   navigator.clipboard.writeText(text);
   ElMessage.success('已复制到剪贴板');
+}
+
+function copyAllTabs() {
+  const sections: string[] = [];
+  sections.push('=== IPC 调用 ===');
+  if (ipcLogs.value.length === 0) {
+    sections.push('(无记录)');
+  } else {
+    sections.push(ipcLogs.value.map(log =>
+      `[#${log.id}] ${log.timestamp} ${log.command} (${log.latency}ms)\n` +
+      `参数: ${JSON.stringify(log.params)}\n` +
+      (log.success ? `结果: ${JSON.stringify(log.result)}` : `错误: ${log.error}`),
+    ).join('\n---\n'));
+  }
+  sections.push('\n\n=== LLM 请求 ===');
+  if (llmLogs.value.length === 0) {
+    sections.push('(无记录)');
+  } else {
+    sections.push(llmLogs.value.map(log =>
+      `[#${log.id}] ${log.timestamp} (${log.latency}ms)\n` +
+      `用户: ${log.userMessage}\n` +
+      `AI: ${log.response}`,
+    ).join('\n---\n'));
+  }
+  sections.push('\n\n=== Rust 端日志 ===');
+  if (rustLogs.value.length === 0) {
+    sections.push('(无记录)');
+  } else {
+    sections.push(rustLogs.value.map(log =>
+      `[#${log.id}] ${log.timestamp} [${log.level}] [${log.module}] ${log.message}` +
+      (log.latencyMs != null ? ` (${log.latencyMs}ms)` : ''),
+    ).join('\n'));
+  }
+  navigator.clipboard.writeText(sections.join('\n'));
+  ElMessage.success('已复制全部日志');
 }
 
 // ============================================================

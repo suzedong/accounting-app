@@ -87,11 +87,21 @@
 
                     <!-- Confirmation card -->
                     <ConfirmCard
-                      v-if="msg.status === 'pending' && msg.data"
+                      v-if="msg.status === 'pending' && msg.data && msg.render !== 'correctionCard'"
                       :fields="msg.data"
                       @confirm="handleCardAction(msg, 'confirm')"
                       @cancel="handleCardAction(msg, 'cancel')"
                       @save="handleCardSave(msg, $event)"
+                    />
+
+                    <!-- Correction confirmation card -->
+                    <CorrectionConfirmCard
+                      v-if="msg.status === 'pending' && msg.data && msg.render === 'correctionCard'"
+                      :target-record="(msg.data as Record<string, unknown>).targetRecord as Record<string, unknown> || {}"
+                      :changes="(msg.data as Record<string, unknown>).changes as Array<{ field: string; label: string; oldValue: unknown; newValue: unknown }> || []"
+                      :reason="(msg.data as Record<string, unknown>).reason as string || ''"
+                      @confirm="handleCardAction(msg, 'confirm')"
+                      @cancel="handleCardAction(msg, 'cancel')"
                     />
 
                     <!-- Follow-up card -->
@@ -146,6 +156,7 @@ import { ChatDotRound, Close, Delete, Setting, Monitor, ArrowDown } from '@eleme
 import { storeToRefs } from 'pinia';
 import ChatInput from './ChatInput.vue';
 import ConfirmCard from './ConfirmCard.vue';
+import CorrectionConfirmCard from './CorrectionConfirmCard.vue';
 import FollowUpCard from './FollowUpCard.vue';
 import StepList from './StepList.vue';
 import SettingsPanel from './SettingsPanel.vue';

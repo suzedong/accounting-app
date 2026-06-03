@@ -4,6 +4,7 @@ import { agentEngine } from '@/ai/agent-engine';
 import { toolRegistry } from '@/ai/tool-registry';
 import { getChatHistory, saveChatMessage, clearChatHistory } from '@/api/tauri';
 import type { ChatMessage, Step } from '@/types/chat';
+import type { AccountRecord } from '@/types';
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([]);
@@ -15,6 +16,7 @@ export const useChatStore = defineStore('chat', () => {
   // 对话状态
   const pendingRecord = ref<Record<string, unknown> | null>(null);
   const pendingAction = ref<string | null>(null);
+  const lastConfirmedRecord = ref<AccountRecord | null>(null);
   const awaitingFollowUp = ref(false);
   const pendingFollowUp = ref<{
     question: string;
@@ -112,6 +114,8 @@ export const useChatStore = defineStore('chat', () => {
         } else {
           aiMsg.steps!.push(step);
         }
+      }, {
+        lastConfirmedRecord: lastConfirmedRecord.value,
       });
 
       // 处理完成，解除 loading，设置最终内容
@@ -125,6 +129,19 @@ export const useChatStore = defineStore('chat', () => {
         aiMsg.status = 'pending';
         pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
         pendingAction.value = result.action;
+      }
+
+      // 处理高风险修正确认卡
+      if (result.action === 'correct_record' && result.toolResult?.render === 'correctionCard') {
+        aiMsg.status = 'pending';
+        pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
+        pendingAction.value = 'confirm_correction';
+      }
+
+      // 低风险修正成功后更新最近确认记录
+      if (result.action === 'correct_record' && result.toolResult?.render === 'text') {
+        const data = result.toolResult?.data as { updatedRecord?: AccountRecord } | undefined;
+        if (data?.updatedRecord) lastConfirmedRecord.value = data.updatedRecord;
       }
 
       // 处理追问
@@ -175,7 +192,14 @@ export const useChatStore = defineStore('chat', () => {
     try {
       await agentEngine.loadContext();
 
-      const toolResult = await toolRegistry.execute(action.replace('create_', 'confirm_'), record);
+      const toolName = action === 'confirm_correction' ? 'confirm_correction' : action.replace('create_', 'confirm_');
+      const toolArgs = action === 'confirm_correction'
+        ? (record.pendingUpdate as Record<string, unknown>)
+        : record;
+      const toolResult = await toolRegistry.execute(toolName, toolArgs, {
+        userMessage: msg.content,
+        lastConfirmedRecord: lastConfirmedRecord.value,
+      });
 
       msg.content = toolResult.success
         ? (toolResult.message || '已确认')
@@ -183,6 +207,15 @@ export const useChatStore = defineStore('chat', () => {
       msg.render = toolResult.render || 'text';
       msg.data = toolResult.data as Record<string, unknown>;
       msg.status = 'confirmed';
+
+      const confirmedData = toolResult.data as AccountRecord | { updatedRecord?: AccountRecord } | undefined;
+      if (toolResult.success && confirmedData) {
+        if ('updatedRecord' in confirmedData && confirmedData.updatedRecord) {
+          lastConfirmedRecord.value = confirmedData.updatedRecord;
+        } else if ('id' in confirmedData) {
+          lastConfirmedRecord.value = confirmedData as AccountRecord;
+        }
+      }
 
       // 学习
       if (originalParse.value) {
@@ -338,6 +371,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingFollowUp.value = null;
     editingField.value = null;
     originalParse.value = null;
+    lastConfirmedRecord.value = null;
   }
 
   async function clearHistory() {
@@ -353,7 +387,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, isOpen, sending, ocrLoading,
-    pendingRecord, pendingAction, awaitingFollowUp, pendingFollowUp, editingField,
+    pendingRecord, pendingAction, lastConfirmedRecord, awaitingFollowUp, pendingFollowUp, editingField,
     genId, loadHistory, sendMessage, confirmRecord, cancelRecord,
     startEditField, applyFieldEdit, answerFollowUp, clearMessages, clearHistory,
   };

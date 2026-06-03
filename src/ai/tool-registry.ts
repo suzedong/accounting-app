@@ -4,7 +4,7 @@ import {
   getBudgetAnalysis, updateSystemPrompt, updatePreference, clearChatHistory,
   createTrip, updateTrip, deleteTrip, getTrips, getRecords as getRecordsApi,
 } from '@/api/tauri';
-import type { RecordInput, TripRecord } from '@/types';
+import type { AccountRecord, RecordInput, RecordType, TripRecord } from '@/types';
 
 // ============================================================
 // Tool Schema 定义（一个定义，三种用途：JSON Schema / TS 类型 / 运行时校验）
@@ -30,6 +30,7 @@ const CorrectRecordSchema = z.object({
     account: z.string().optional(),
     note: z.string().optional(),
     payment_method: z.string().optional(),
+    payment: z.string().optional(),
   }),
   context: z.object({
     amount: z.coerce.number().optional(),
@@ -48,6 +49,21 @@ const UpdateRecordSchema = z.object({
     account: z.string().optional(),
     note: z.string().optional(),
     payment_method: z.string().optional(),
+    payment: z.string().optional(),
+  }),
+});
+
+const ConfirmCorrectionSchema = z.object({
+  recordId: z.number(),
+  fields: z.object({
+    datetime: z.string().optional(),
+    type: z.enum(['收入', '支出']).transform(s => s.trim()).optional(),
+    category: z.string().optional(),
+    amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0').optional(),
+    account: z.string().optional(),
+    note: z.string().optional(),
+    payment_method: z.string().optional(),
+    payment: z.string().optional(),
   }),
 });
 
@@ -145,6 +161,7 @@ const QueryCollectionSchema = z.object({
 export type CreateRecordArgs = z.infer<typeof CreateRecordSchema>;
 export type CorrectRecordArgs = z.infer<typeof CorrectRecordSchema>;
 export type UpdateRecordArgs = z.infer<typeof UpdateRecordSchema>;
+export type ConfirmCorrectionArgs = z.infer<typeof ConfirmCorrectionSchema>;
 export type QueryRecordsArgs = z.infer<typeof QueryRecordsSchema>;
 export type RenderStatsArgs = z.infer<typeof RenderStatsSchema>;
 export type AskFollowUpArgs = z.infer<typeof AskFollowUpSchema>;
@@ -172,11 +189,35 @@ export interface ToolResult {
   data?: unknown;       // 结构化的数据（可选）
 }
 
+export interface ToolRuntimeContext {
+  userMessage: string;
+  lastConfirmedRecord?: AccountRecord | null;
+}
+
+export interface CorrectionChange {
+  field: string;
+  label: string;
+  oldValue: unknown;
+  newValue: unknown;
+}
+
+export interface CorrectionResultData {
+  targetRecord: Record<string, unknown>;
+  changes: CorrectionChange[];
+  risk: 'low' | 'high';
+  reason?: string;
+  pendingUpdate?: {
+    recordId: number;
+    fields: Record<string, unknown>;
+  };
+  updatedRecord?: Record<string, unknown>;
+}
+
 export interface Tool<Args> {
   name: string;
   description: string;
   schema: z.ZodType<Args>;
-  execute: (args: Args) => Promise<ToolResult>;
+  execute: (args: Args, context?: ToolRuntimeContext) => Promise<ToolResult>;
 }
 
 // ============================================================
@@ -206,7 +247,7 @@ class ToolRegistry {
   }
 
   /** 执行工具（带运行时校验） */
-  async execute(name: string, args: unknown): Promise<ToolResult> {
+  async execute(name: string, args: unknown, context?: ToolRuntimeContext): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) return { success: false, error: `未知工具: ${name}` };
 
@@ -216,7 +257,7 @@ class ToolRegistry {
     }
 
     try {
-      const result = await tool.execute(parsed.data);
+      const result = await tool.execute(parsed.data, context);
       return result;
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
@@ -286,6 +327,124 @@ class ToolRegistry {
 }
 
 // ============================================================
+// 修正流程工具函数
+// ============================================================
+
+const LOW_RISK_FIELDS = new Set(['account', 'category', 'note', 'payment_method', 'payment']);
+const HIGH_RISK_FIELDS = new Set(['amount', 'datetime', 'type']);
+const RECENT_RECORD_KEYWORDS = ['上一条', '刚才那条', '刚刚那条', '这条', '刚才的', '上一笔'];
+
+const FIELD_LABELS: Record<string, string> = {
+  datetime: '时间',
+  type: '类型',
+  category: '分类',
+  amount: '金额',
+  account: '账户',
+  note: '备注',
+  payment_method: '支付方式',
+  payment: '支付方式',
+};
+
+function normalizeRecordFields(fields: Record<string, unknown>): Partial<RecordInput> {
+  const normalized: Partial<RecordInput> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null || value === '') continue;
+    const targetKey = key === 'payment' ? 'payment_method' : key;
+    if (targetKey === 'amount') {
+      const amount = typeof value === 'number' ? value : parseFloat(String(value));
+      if (!Number.isNaN(amount) && amount > 0) normalized.amount = Math.abs(amount);
+    } else if (targetKey === 'type') {
+      const trimmed = String(value).trim();
+      if (trimmed === '收入' || trimmed === '支出') normalized.type = trimmed;
+    } else if (['datetime', 'category', 'account', 'note', 'payment_method'].includes(targetKey)) {
+      (normalized as Record<string, unknown>)[targetKey] = String(value);
+    }
+  }
+  return normalized;
+}
+
+function hasRecentRecordReference(message: string): boolean {
+  return RECENT_RECORD_KEYWORDS.some(keyword => message.includes(keyword));
+}
+
+function recordToCorrectionTarget(record: AccountRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    datetime: record.datetime,
+    type: record.type,
+    amount: record.amount,
+    category: record.category,
+    account: record.account,
+    note: record.note,
+    payment_method: record.payment_method,
+  };
+}
+
+function buildCorrectionChanges(target: AccountRecord, fields: Partial<RecordInput>): CorrectionChange[] {
+  return Object.entries(fields)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .filter(([field, value]) => String((target as unknown as Record<string, unknown>)[field] ?? '') !== String(value ?? ''))
+    .map(([field, value]) => ({
+      field,
+      label: FIELD_LABELS[field] || field,
+      oldValue: (target as unknown as Record<string, unknown>)[field] ?? '',
+      newValue: value,
+    }));
+}
+
+function hasContextConflict(target: AccountRecord, context?: CorrectRecordArgs['context']): boolean {
+  if (!context) return false;
+  if (context.amount !== undefined && Math.abs(target.amount - context.amount) > 0.01) return true;
+  if (context.note && !(target.note || '').includes(context.note)) return true;
+  if (context.datetime && target.datetime !== context.datetime) return true;
+  return false;
+}
+
+function classifyCorrectionRisk(
+  changes: CorrectionChange[],
+  targetSource: 'lastConfirmed' | 'latest' | 'context' | 'none',
+  contextConflict: boolean,
+  userMessage: string,
+): { risk: 'low' | 'high'; reason?: string } {
+  if (targetSource === 'none') return { risk: 'high', reason: '未找到明确目标记录' };
+  if (targetSource === 'context') return { risk: 'high', reason: '只能通过上下文模糊匹配目标记录' };
+  if (contextConflict) return { risk: 'high', reason: '检测到目标信息不一致，请确认修改' };
+  if (changes.length === 0) return { risk: 'high', reason: '没有检测到实际修改内容' };
+  if (changes.length > 1) return { risk: 'high', reason: '一次修改多个字段，需要确认' };
+  const field = changes[0].field;
+  if (HIGH_RISK_FIELDS.has(field)) return { risk: 'high', reason: `修改${FIELD_LABELS[field] || field}，需要确认` };
+  if (!LOW_RISK_FIELDS.has(field)) return { risk: 'high', reason: `修改${FIELD_LABELS[field] || field}，需要确认` };
+  if (/那条改一下|这个不对|改一下|不对$/.test(userMessage)) return { risk: 'high', reason: '用户表达较含糊，需要确认' };
+  return { risk: 'low' };
+}
+
+async function resolveCorrectionTarget(
+  args: CorrectRecordArgs,
+  context?: ToolRuntimeContext,
+): Promise<{ record: AccountRecord | null; source: 'lastConfirmed' | 'latest' | 'context' | 'none' }> {
+  if (context?.lastConfirmedRecord) {
+    return { record: context.lastConfirmedRecord, source: 'lastConfirmed' };
+  }
+
+  if (context?.userMessage && hasRecentRecordReference(context.userMessage)) {
+    const records = await getRecords({ page: 1, pageSize: 1, sort: 'datetime_desc' });
+    if (records.data.length > 0) return { record: records.data[0], source: 'latest' };
+  }
+
+  if (args.context) {
+    const records = await getRecords({ page: 1, pageSize: 100, sort: 'datetime_desc' });
+    for (const record of records.data) {
+      if (args.context.amount !== undefined && Math.abs(record.amount - args.context.amount) > 0.01) continue;
+      if (args.context.note && !(record.note || '').includes(args.context.note)) continue;
+      if (args.context.datetime && record.datetime !== args.context.datetime) continue;
+      return { record, source: 'context' };
+    }
+  }
+
+  return { record: null, source: 'none' };
+}
+
+// ============================================================
 // 工具实现
 // ============================================================
 
@@ -324,19 +483,19 @@ toolRegistry.register<CreateRecordArgs>({
     const now = new Date();
     const fields: RecordInput = {
       datetime: args.datetime || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} 12:00:00`,
-      type: args.type,
+      type: args.type as RecordType,
       category: args.category || '其他',
       amount: args.amount,
       account: args.account || '个人',
       note: args.note || '',
       payment_method: args.payment || '',
     };
-    await createRecord(fields);
+    const created = await createRecord(fields);
     return {
       success: true,
       render: 'text',
       message: `已记录：${fields.type} ${fields.amount}元 - ${fields.category}`,
-      data: fields,
+      data: created,
     };
   },
 });
@@ -344,35 +503,49 @@ toolRegistry.register<CreateRecordArgs>({
 // --- correct_record ---
 toolRegistry.register<CorrectRecordArgs>({
   name: 'correct_record',
-  description: '纠正上一条或最近的记录，根据 context 匹配目标记录并更新',
+  description: '纠正上一条或最近的记录，应用定位目标记录并按风险分级执行',
   schema: CorrectRecordSchema,
-  execute: async (args) => {
-    if (!args.fields || Object.keys(args.fields).length === 0) {
+  execute: async (args, context) => {
+    const fields = normalizeRecordFields(args.fields as Record<string, unknown>);
+    if (Object.keys(fields).length === 0) {
       return { success: false, error: '缺少修正信息', render: 'text' };
     }
 
-    let target: { id: number } | undefined;
+    const { record: target, source } = await resolveCorrectionTarget(args, context);
+    if (!target) return { success: false, error: '未找到可修正的记录，请说明要修改哪一条。', render: 'text' };
 
-    if (args.context) {
-      const records = await getRecords({ page: 1, pageSize: 100, sort: 'datetime_desc' });
-      for (const r of records.data) {
-        let match = true;
-        if (args.context.amount && Math.abs(r.amount - args.context.amount) > 0.01) match = false;
-        if (args.context.note && !r.note?.includes(args.context.note)) match = false;
-        if (args.context.datetime && r.datetime !== args.context.datetime) match = false;
-        if (match) { target = { id: r.id }; break; }
-      }
+    const changes = buildCorrectionChanges(target, fields);
+    const contextConflict = hasContextConflict(target, args.context);
+    const { risk, reason } = classifyCorrectionRisk(changes, source, contextConflict, context?.userMessage || '');
+    const targetRecord = recordToCorrectionTarget(target);
+
+    if (risk === 'high') {
+      const data: CorrectionResultData = {
+        targetRecord,
+        changes,
+        risk,
+        reason,
+        pendingUpdate: {
+          recordId: target.id,
+          fields: fields as Record<string, unknown>,
+        },
+      };
+      return {
+        success: true,
+        render: 'correctionCard',
+        message: '请确认修改（尚未保存）',
+        data,
+      };
     }
 
-    if (!target) {
-      const records = await getRecords({ page: 1, pageSize: 1, sort: 'datetime_desc' });
-      if (records.data.length > 0) target = { id: records.data[0].id };
-    }
-
-    if (!target) return { success: false, error: '未找到可修正的记录', render: 'text' };
-
-    const updated = await updateRecord(target.id, args.fields as Partial<RecordInput>);
-    return { success: true, render: 'text', message: '已修正记录', data: updated };
+    const updated = await updateRecord(target.id, fields);
+    const data: CorrectionResultData = {
+      targetRecord,
+      changes,
+      risk,
+      updatedRecord: updated as unknown as Record<string, unknown>,
+    };
+    return { success: true, render: 'text', message: '已修正记录', data };
   },
 });
 
@@ -382,8 +555,26 @@ toolRegistry.register<UpdateRecordArgs>({
   description: '按记录 ID 修改指定记录',
   schema: UpdateRecordSchema,
   execute: async (args) => {
-    await updateRecord(args.recordId, args.fields as Partial<RecordInput>);
+    await updateRecord(args.recordId, normalizeRecordFields(args.fields as Record<string, unknown>));
     return { success: true, render: 'text', message: '已更新记录' };
+  },
+});
+
+// --- confirm_correction ---
+toolRegistry.register<ConfirmCorrectionArgs>({
+  name: 'confirm_correction',
+  description: '确认并执行高风险修正（仅由 UI 确认流程调用）',
+  schema: ConfirmCorrectionSchema,
+  execute: async (args) => {
+    const fields = normalizeRecordFields(args.fields as Record<string, unknown>);
+    const updated = await updateRecord(args.recordId, fields);
+    const data: CorrectionResultData = {
+      targetRecord: recordToCorrectionTarget(updated),
+      changes: [],
+      risk: 'high',
+      updatedRecord: updated as unknown as Record<string, unknown>,
+    };
+    return { success: true, render: 'text', message: '已修正记录', data };
   },
 });
 
