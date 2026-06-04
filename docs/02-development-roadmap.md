@@ -9,7 +9,7 @@
 | Phase 1 | Tauri 骨架 + SQLite | 项目初始化、数据库设计、基础 CRUD | 2 周 | ✅ 已完成 |
 | Phase 2 | 业务逻辑迁移 | 差旅、统计、预算、设置页面 | 2 周 | ✅ 已完成 |
 | Phase 3 | AI 聊天 + Agent | 百炼 API dispatch、11 个 action handlers、OCR | 2 周 | ✅ 已完成 |
-| Phase 4 | 同步层 + 清理 | NocoBase 双向同步、清理旧代码 | 2 周 | ✅ 进行中 |
+| Phase 4 | 同步层 + 清理 | NocoBase 双向同步、清理旧代码 | 2 周 | ✅ 已完成 |
 | Phase 5 | 本地 LLM | Candle 推理引擎、Qwen2 模型、GPU 自动检测 | ~7 天 | 📝 规划中 |
 
 **总预计：约 10 周**

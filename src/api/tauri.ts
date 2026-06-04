@@ -264,6 +264,23 @@ export async function setOcrEnabled(enabled: boolean): Promise<void> {
   return invoke('set_ocr_enabled', { enabled });
 }
 
+// 同步相关
+export async function syncFull(): Promise<{ pushed: number; pulled: number; errors: string[] }> {
+  return invoke('sync_full');
+}
+
+export async function syncPush(): Promise<{ pushed: number; pulled: number; errors: string[] }> {
+  return invoke('sync_push');
+}
+
+export async function syncPull(): Promise<{ pushed: number; pulled: number; errors: string[] }> {
+  return invoke('sync_pull');
+}
+
+export async function getSyncLogs(limit?: number): Promise<{ data: any[] }> {
+  return invoke('get_sync_logs', { limit });
+}
+
 export async function installBundledPython(sessionId: string): Promise<string> {
   return invoke('install_bundled_python', { sessionId });
 }

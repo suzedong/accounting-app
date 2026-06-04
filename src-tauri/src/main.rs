@@ -77,10 +77,10 @@ fn main() {
             commands::config::save_ai_services,
             commands::config::activate_ai_service,
             // Sync
+            commands::sync::nocobase_test_connection,
             commands::sync::sync_push,
             commands::sync::sync_pull,
             commands::sync::sync_full,
-            commands::sync::import_from_nocobase,
             commands::sync::get_sync_logs,
             // OCR
             commands::ocr::check_ocr_status,

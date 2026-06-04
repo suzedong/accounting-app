@@ -4,60 +4,48 @@
 
 ### 1.1 项目背景
 
-原项目基于 NocoBase + server.py 代理的纯前端记账 Web 应用（旧架构已删除）。重构前存在以下核心问题：
+本地优先（Local-first）的桌面记账应用，数据存储在本地 SQLite，不依赖任何外部服务。NocoBase 作为可选同步目标，有连接时可双向同步数据。
 
-- **server.py 是最不稳定的环节**：需要公网 IP 和端口，可能是临时机器，配置不高，维护成本高
-- **NocoBase 虽已部署但并非必要条件**：用户可能在无网络环境、出差场景下使用
-- **数据可用性强依赖服务在线**：NocoBase 宕机或 server.py 断连 → 应用完全不可用
-- **多设备数据同步困难**：依赖云端 NocoBase，NAS 内网访问受限
-
-### 1.2 目标
-
-**将应用从"依赖云端服务的 C/S 架构"重构为"本地优先（Local-first）的桌面应用程序。**
-
-核心原则：
-- **数据永远可用**：所有数据存储在本地 SQLite，不依赖任何外部服务
-- **零自有服务依赖**：不再需要 server.py（已删除）、不需要公网 IP、不需要端口映射
+核心设计原则：
+- **数据永远可用**：无网络时所有核心功能正常
 - **NocoBase 作为可选同步目标**：有连接时同步，无连接时完全本地运行
-- **AI 能力直连**：前端直连云端 AI API（百炼），无需代理层
+- **AI 能力直连**：前端通过 Rust 后端直连云端 AI API（百炼），无需代理层
 - **桌面原生体验**：系统通知、全局快捷键、文件关联
 
-### 1.3 功能需求
+### 1.2 功能需求
 
-#### 核心功能（现有，需完整迁移）
+#### 核心功能
 
-| 功能 | 说明 | 当前实现 | 目标 |
-|---|---|---|---|
-| AI 对话记账 | 自然语言输入 → 意图识别 → 创建记录 | AgentEngine + LLM Function Calling | 桌面内集成，数据存本地 |
-| 记录管理 | 增删改查 + 分页 + 筛选 | records.html | 存 SQLite |
-| 预算管理 | 月度预算跟踪 + 超支预警 | budget.html | 存 SQLite |
-| 统计分析 | 多维度图表（分类、账户、趋势、对比） | stats.html + Chart.js | SQLite GROUP BY + ECharts |
-| 差旅补助 | 出差记录 + 补助发放 + 金额匹配 | trip_allowance.html | 存 SQLite |
-| OCR 识别 | 图片识别 → 自动记账 | PaddleOCR（Python 子进程调用） | Python subprocess |
-| 学习引擎 | 用户修正 → 个性化规则 | localStorage + NocoBase | 存 SQLite |
-| 对话历史 | AI 对话记录 | localStorage | 存 SQLite |
+| 功能 | 说明 |
+|---|---|
+| AI 对话记账 | 自然语言输入 → 意图识别 → 创建记录 |
+| 记录管理 | 增删改查 + 分页 + 筛选 |
+| 预算管理 | 月度预算跟踪 + 超支预警 |
+| 统计分析 | 多维度图表（分类、账户、趋势、对比） |
+| 差旅补助 | 出差记录 + 补助发放 + 金额匹配 |
+| OCR 识别 | 图片识别 → 自动记账（PaddleOCR 子进程） |
+| 学习引擎 | 用户修正 → 个性化规则 |
+| 对话历史 | AI 对话记录 |
 
 #### 新增功能
 
 | 功能 | 说明 |
 |---|---|
-| 本地存储 | SQLite 替代 NocoBase 作为主数据源 |
+| 本地存储 | SQLite 为主数据源 |
 | 数据同步 | 本地 ↔ NocoBase 双向同步（可选） |
 | 系统通知 | 记账成功/失败系统级通知 |
 | 全局快捷键 | 一键呼出记账窗口 |
-| 配置管理 | API Key、NocoBase URL 等设置（本地配置文件） |
+| 配置管理 | API Key、NocoBase URL 等设置 |
 | 数据导出 | 导出 CSV/Excel |
-| 数据导入 | 从现有 NocoBase 数据导入 |
 
-#### 功能保留不变
+#### 数据模型
 
-| 功能 | 说明 |
+| 特性 | 说明 |
 |---|---|
-| AI 意图识别 | 调用百炼 API，直连不调用代理 |
-| 偏好管理 | preferences.md 已迁移为 SQLite 存储 |
-| Prompt 管理 | dispatch.md / record.md 已迁移为 SQLite 存储 |
-| 账户管理 | 从 NocoBase collections 改为硬编码预置 |
-| 分类/支付方式 | 不再需要独立表，records 中直接存自由文本 |
+| 账户管理 | 硬编码预置 |
+| 分类/支付方式 | 自由文本，无需独立表 |
+| 偏好管理 | SQLite 存储 |
+| Prompt 管理 | dispatch.md / record.md 数据库存储 |
 
 ### 1.4 非功能需求
 
@@ -338,11 +326,36 @@ Rust 后端                  百炼 API              NocoBase
 
 ### 2.5 同步策略
 
-- **触发时机**：应用启动时检测连接自动同步、手动点击同步按钮
-- **推送（Push）**：本地未同步记录 → NocoBase，筛选 synced=0 的记录，批量 POST 到 NocoBase，成功后更新 synced=1, nocobase_id, nocobase_updated_at
-- **拉取（Pull）**：NocoBase → 本地，查询 nocobase_updated_at > 本地对应值的记录，按 uuid 匹配（已存在则比较时间戳，新覆盖旧；不存在则插入新记录）
-- **冲突处理**：last-write-wins，个人记账场景足够
-- **多设备同步特殊数据**：system_prompts 按 name 匹配比较 updated_at；learning_data 每条独立 uuid 不会冲突；复用 records 的同步逻辑
+**同步范围**：
+- `records` ↔ `records`（记账记录）
+- `business_trip` ↔ `business_trip`（差旅补助）
+- `learning_data` ↔ `learning_data`（学习数据）
+- 不需要同步的表：`system_prompts`、`chat_history`、`app_config`、`sync_log`
+
+**同步键**：`uuid`（全局唯一标识）
+
+**NocoBase 前置要求**：
+- 每个 collection 必须包含 `uuid` 字段
+- 启用 `createdAt` 和 `updatedAt` 自动时间戳
+- 历史数据需回填 `uuid` 和 `updatedAt`（已完成）
+
+**推送（Push）**：查询 `synced = 0` 的本地记录 → 逐条检查 NocoBase 是否已有（通过 `uuid`）→ 冲突解决后创建/更新 → 更新本地 `synced = 1`、`nocobase_id`、`nocobase_updated_at`
+
+**拉取（Pull）**：查询本地最大 `nocobase_updated_at` → 首次全量，增量拉取 `updatedAt > 本地时间` → 按 `uuid` 匹配 → 冲突解决后创建/更新
+
+**冲突处理**：`last-write-wins`，比较 `local_updated_at` 与 `nocobase_updated_at`
+
+**NocoBase API**：
+- 认证：`Authorization: Bearer <token>`
+- 创建：`POST /api/{collection}:create`
+- 查询：`GET/POST /api/{collection}:list`（支持 filter 过滤、分页）
+- 更新：`POST /api/{collection}:update/{id}`
+- 删除：`POST /api/{collection}:destroy/{id}`
+- 分页响应：`{ data: [...], meta: { count, page, pageSize, totalPage } }`
+
+**运行数据**：
+- 服务器：`http://121.17.49.100:13000`
+- 首次同步：拉取 716 条 records 记录
 
 ### 2.6 关键架构决策
 
@@ -442,16 +455,7 @@ ChatInput 支持剪贴板图片粘贴（Cmd+V / Ctrl+V），自动读取为 File
 
 包含 AI 服务管理（单选列表、添加/编辑/删除、测试连接）、NocoBase 同步配置、预算设置、OCR 管理、Dispatch Prompt 编辑器、用户偏好编辑器、学习数据表格（可删除条目）、系统诊断（检查数据库/AI 服务/OCR 状态）。
 
-### 3.5 现有页面改动说明
-
-- **首页**：数据获取从 `fetch('/api/records')` 改为 Tauri `invoke()`，对话历史从 localStorage 改为 SQLite，AI 调用通过 AgentEngine 调用 LLM Function Calling
-- **记录管理**：所有 CRUD 从 NocoBase API 改为 SQLite，筛选和分页由 SQL 查询完成
-- **预算**：预算数据从 SQLite 读取，统计计算由 SQL GROUP BY 完成
-- **统计**：数据获取从 `pageSize=10000` 改为 SQL 聚合查询，ECharts 渲染
-- **差旅补助**：数据从 SQLite 读取，补助计算逻辑不变
-- **设置**：全新页面，包含 AI 服务管理、NocoBase 同步配置、预算设置、OCR 管理、Prompt/偏好编辑、学习数据表格、系统诊断
-
-### 3.6 视觉风格
+### 3.5 视觉风格
 
 保持现有配色方案：
 

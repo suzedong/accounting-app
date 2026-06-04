@@ -7,6 +7,7 @@ pub mod preferences;
 pub mod learning;
 pub mod chat_history;
 pub mod sync_log;
+pub mod nocobase;
 
 pub use connection::Database;
 pub use records::{RecordInput, RecordUpdateInput};

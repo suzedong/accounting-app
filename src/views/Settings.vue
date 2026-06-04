@@ -73,10 +73,63 @@
           <el-input v-model="syncForm.nocobase_token" type="password" show-password />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="saveSyncConfig" :loading="saving">保存</el-button>
-          <el-button @click="testNocobaseConnection">测试连接</el-button>
+          <el-button type="primary" @click="saveSyncConfig" :loading="saving">保存配置</el-button>
+          <el-button @click="testNocobaseConnection" :loading="testingSync">测试连接</el-button>
         </el-form-item>
       </el-form>
+
+      <el-divider />
+
+      <!-- 同步操作区 -->
+      <div style="max-width: 600px">
+        <div style="display: flex; gap: 8px; margin-bottom: 12px">
+          <el-button type="primary" @click="handleSyncFull" :loading="syncing" :disabled="!syncConfigured">
+            双向同步
+          </el-button>
+          <el-button @click="handleSyncPush" :loading="syncing" :disabled="!syncConfigured">
+            推送本地
+          </el-button>
+          <el-button @click="handleSyncPull" :loading="syncing" :disabled="!syncConfigured">
+            拉取远程
+          </el-button>
+        </div>
+        <el-alert
+          v-if="!syncConfigured"
+          title="请先保存 NocoBase 配置"
+          type="warning"
+          :closable="false"
+          style="margin-bottom: 12px"
+        />
+
+        <!-- 同步结果 -->
+        <div v-if="syncResult" class="sync-result">
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="推送记录">{{ syncResult.pushed }} 条</el-descriptions-item>
+            <el-descriptions-item label="拉取记录">{{ syncResult.pulled }} 条</el-descriptions-item>
+          </el-descriptions>
+          <div v-if="syncResult.errors.length > 0" class="sync-errors">
+            <el-alert
+              v-for="(err, idx) in syncResult.errors"
+              :key="idx"
+              :title="err"
+              type="error"
+              :closable="false"
+              style="margin-top: 8px"
+            />
+          </div>
+        </div>
+
+        <!-- 同步日志 -->
+        <div v-if="showSyncTerminal" class="sync-terminal">
+          <div class="sync-terminal-header">
+            <span>同步日志</span>
+            <el-button size="small" text @click="showSyncTerminal = false">关闭</el-button>
+          </div>
+          <div ref="syncTerminalBodyRef" class="sync-terminal-body">
+            <div v-for="(line, idx) in syncTerminalLines" :key="idx" class="sync-line">{{ line }}</div>
+          </div>
+        </div>
+      </div>
     </el-card>
 
     <!-- 预算设置 -->
@@ -316,11 +369,13 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Loading, Download, InfoFilled } from '@element-plus/icons-vue';
 import { listen } from '@tauri-apps/api/event';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile } from '@/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
+import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, syncFull, syncPush, syncPull, importFromNocobase } from '@/api/tauri';
 import { agentEngine } from '@/ai/agent-engine';
 import type { AiService } from '@/types';
 
 // Types for OCR
+import { syncFull, syncPush, syncPull } from '@/api/tauri';
 interface SystemPython {
   path: string;
   version: string;
@@ -362,6 +417,15 @@ const syncForm = ref({
   nocobase_url: '',
   nocobase_token: '',
 });
+const syncConfigured = computed(() => syncForm.value.nocobase_url && syncForm.value.nocobase_token);
+
+// Sync state
+const syncing = ref(false);
+const testingSync = ref(false);
+const syncResult = ref<{ pushed: number; pulled: number; errors: string[] } | null>(null);
+const showSyncTerminal = ref(false);
+const syncTerminalLines = ref<string[]>([]);
+const syncTerminalBodyRef = ref<HTMLElement | null>(null);
 
 const budgetMonthly = ref(3500);
 
@@ -649,12 +713,79 @@ async function saveBudget() {
   }
 }
 
-function testNocobaseConnection() {
-  if (!syncForm.value.nocobase_url) {
-    ElMessage.warning('请先填写服务器地址');
-    return;
+async function testNocobaseConnection() {
+    if (!syncForm.value.nocobase_url) {
+      ElMessage.warning('请先填写服务器地址');
+      return;
+    }
+    testingSync.value = true;
+    try {
+      await invoke('nocobase_test_connection', {
+        params: {
+          url: syncForm.value.nocobase_url,
+          token: syncForm.value.nocobase_token,
+        },
+      });
+      ElMessage.success('NocoBase 连接成功');
+    } catch (e: unknown) {
+      ElMessage.error(`连接失败: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      testingSync.value = false;
+    }
   }
-  ElMessage.info('NocoBase 连接测试（Phase 4 实现）');
+
+async function handleSyncFull() {
+  syncResult.value = null;
+  syncing.value = true;
+  try {
+    const result = await syncFull();
+    syncResult.value = result;
+    if (result.errors.length > 0) {
+      ElMessage.warning(`同步完成，但有 ${result.errors.length} 个错误`);
+    } else {
+      ElMessage.success(`同步完成：推送 ${result.pushed} 条，拉取 ${result.pulled} 条`);
+    }
+  } catch (e: unknown) {
+    ElMessage.error(`同步失败: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    syncing.value = false;
+  }
+}
+
+async function handleSyncPush() {
+  syncResult.value = null;
+  syncing.value = true;
+  try {
+    const result = await syncPush();
+    syncResult.value = result;
+    if (result.errors.length > 0) {
+      ElMessage.warning(`推送完成，但有 ${result.errors.length} 个错误`);
+    } else {
+      ElMessage.success(`推送完成：${result.pushed} 条`);
+    }
+  } catch (e: unknown) {
+    ElMessage.error(`推送失败: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    syncing.value = false;
+  }
+}
+
+async function handleSyncPull() {
+  syncResult.value = null;
+  syncing.value = true;
+  try {
+    const result = await syncPull();
+    syncResult.value = result;
+    if (result.errors.length > 0) {
+      ElMessage.warning(`拉取完成，但有 ${result.errors.length} 个错误`);
+    } else {
+      ElMessage.success(`拉取完成：${result.pulled} 条`);
+    }
+  } catch (e: unknown) {
+    ElMessage.error(`拉取失败: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    syncing.value = false;
+  }
 }
 
 // Prompt handlers
@@ -906,6 +1037,46 @@ function openPythonDownload() {
   color: #666;
   font-size: 0.9em;
   margin-bottom: 8px;
+}
+
+.sync-result {
+  margin-top: 12px;
+}
+
+.sync-errors {
+  margin-top: 8px;
+}
+
+.sync-terminal {
+  margin-top: 12px;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sync-terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  font-weight: bold;
+  font-size: 0.9em;
+}
+
+.sync-terminal-body {
+  padding: 8px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: monospace;
+  font-size: 0.85em;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.sync-line {
+  white-space: pre-wrap;
+  line-height: 1.5;
 }
 
 .ocr-status {
