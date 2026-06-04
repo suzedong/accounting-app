@@ -31,10 +31,6 @@ pub struct ActivePython {
     pub paddleocr_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paddlepaddle_version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gpu_support: Option<String>, // "cuda" | "metal" | "cpu"
-    #[serde(default)]
-    pub system_gpus: Vec<GpuInfo>,
 }
 
 #[derive(Serialize)]
@@ -200,115 +196,6 @@ fn get_module_version(python: &str, module: &str) -> Option<String> {
     }
 }
 
-/// 检测 GPU 支持情况
-fn detect_gpu_support(python: &str) -> Option<String> {
-    // Try to detect GPU support via paddlepaddle
-    let output = Command::new(python)
-        .arg("-c")
-        .arg(r#"
-import paddle
-try:
-    if paddle.is_compiled_with_cuda():
-        print('cuda')
-    elif paddle.is_compiled_with_rocm():
-        print('rocm')
-    else:
-        print('cpu')
-except:
-    print('cpu')
-"#)
-        .output()
-        .ok()?;
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Some("cpu".to_string())
-    }
-}
-
-/// GPU 信息结构体
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GpuInfo {
-    pub name: String,
-    pub has_cuda: bool,
-    pub cuda_version: Option<String>,
-    pub vram_mb: Option<u64>,
-}
-
-/// 检测系统 GPU 信息（返回所有 GPU）
-fn detect_system_gpus() -> Vec<GpuInfo> {
-    let mut gpus = Vec::new();
-    
-    if cfg!(windows) {
-        // Windows: Use PowerShell to query all GPU info
-        let output = Command::new("powershell")
-            .args([
-                "-Command",
-                r#"
-$gpus = Get-CimInstance -ClassName Win32_VideoController | Where-Object { $_.Name -notlike '*Microsoft*' -and $_.Name -notlike '*Virtual*' }
-if ($gpus) {
-    foreach ($gpu in $gpus) {
-        $name = $gpu.Name
-        $vram = [math]::Round($gpu.AdapterRAM / 1MB)
-        $isNvidia = $name -like '*NVIDIA*'
-        $isAMD = $name -like '*AMD*' -or $name -like '*Radeon*'
-        Write-Output "$name|$vram|$isNvidia|$isAMD"
-    }
-} else {
-    Write-Output "NONE"
-}
-"#,
-            ])
-            .output();
-        
-        if let Ok(output) = output {
-            if output.status.success() {
-                let lines = String::from_utf8_lossy(&output.stdout);
-                for line in lines.lines() {
-                    let trimmed = line.trim();
-                    if trimmed != "NONE" && !trimmed.is_empty() {
-                        let parts: Vec<&str> = trimmed.split('|').collect();
-                        if parts.len() >= 4 {
-                            let name = parts[0].to_string();
-                            let vram = parts[1].parse::<u64>().ok();
-                            let is_nvidia = parts[2] == "True";
-                            // parts[3] is is_amd, reserved for future use
-                            
-                            gpus.push(GpuInfo {
-                                name,
-                                has_cuda: is_nvidia,
-                                cuda_version: None,
-                                vram_mb: vram,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    } else if cfg!(target_os = "macos") {
-        // macOS: Check for Apple Silicon (Metal support)
-        let output = Command::new("uname")
-            .arg("-m")
-            .output();
-        
-        if let Ok(output) = output {
-            let arch_str = String::from_utf8_lossy(&output.stdout).to_string();
-            let arch = arch_str.trim();
-            if arch == "arm64" {
-                gpus.push(GpuInfo {
-                    name: "Apple Silicon (Metal)".to_string(),
-                    has_cuda: false,
-                    cuda_version: None,
-                    vram_mb: None, // Unified memory
-                });
-            }
-        }
-    }
-    
-    gpus
-}
-
 // --- PythonInfo for internal use (with is_bundled) ---
 
 #[derive(Debug, Clone)]
@@ -320,7 +207,6 @@ struct PythonInfo {
     is_bundled: bool,
     paddleocr_version: Option<String>,
     paddlepaddle_version: Option<String>,
-    gpu_support: Option<String>,
 }
 
 fn parse_minor(version: &str) -> Option<u8> {
@@ -355,14 +241,13 @@ fn try_python_cmd(cmd: &str) -> Option<PythonInfo> {
     let has_paddleocr = check_module(cmd, "paddleocr").unwrap_or(false);
     
     // Get detailed info only if paddleocr is installed
-    let (paddleocr_version, paddlepaddle_version, gpu_support) = if has_paddleocr {
+    let (paddleocr_version, paddlepaddle_version) = if has_paddleocr {
         (
             get_module_version(cmd, "paddleocr"),
             get_module_version(cmd, "paddle"),
-            detect_gpu_support(cmd),
         )
     } else {
-        (None, None, None)
+        (None, None)
     };
     
     Some(PythonInfo {
@@ -373,7 +258,6 @@ fn try_python_cmd(cmd: &str) -> Option<PythonInfo> {
         is_bundled: false,
         paddleocr_version,
         paddlepaddle_version,
-        gpu_support,
     })
 }
 
@@ -385,8 +269,6 @@ fn build_active_python(info: &PythonInfo) -> ActivePython {
         has_paddleocr: info.has_paddleocr,
         paddleocr_version: info.paddleocr_version.clone(),
         paddlepaddle_version: info.paddlepaddle_version.clone(),
-        gpu_support: info.gpu_support.clone(),
-        system_gpus: detect_system_gpus(),
     }
 }
 
@@ -923,102 +805,6 @@ pub async fn uninstall_bundled_python() -> Result<String, String> {
     }
 }
 
-// --- GPU Mode Switching ---
-
-/// 切换 PaddlePaddle 的 GPU/CPU 版本
-#[tauri::command]
-pub async fn switch_gpu_mode(
-    app: AppHandle,
-    _app_config: State<'_, AppConfig>,
-    _db: State<'_, Database>,
-    python_path: String,
-    use_gpu: bool,
-    session_id: String,
-) -> Result<String, String> {
-    let target_pkg = if use_gpu { "paddlepaddle-gpu" } else { "paddlepaddle" };
-    
-    emit_line(&app, &session_id, &format!(">>> 正在切换到 {} 版本...", if use_gpu { "GPU" } else { "CPU" }));
-    emit_line(&app, &session_id, &format!(">>> Python 路径: {}", python_path));
-    emit_line(&app, &session_id, ">>> 卸载当前 PaddlePaddle...");
-    
-    // Uninstall current paddlepaddle
-    {
-        let uninstall_output = TokioCommand::new(&python_path)
-            .args(["-m", "pip", "uninstall", "-y", "paddlepaddle", "paddlepaddle-gpu"])
-            .output()
-            .await
-            .map_err(|e| format!("卸载失败: {}", e))?;
-        
-        let stdout = String::from_utf8_lossy(&uninstall_output.stdout);
-        let stderr = String::from_utf8_lossy(&uninstall_output.stderr);
-        
-        if !stdout.trim().is_empty() {
-            emit_line(&app, &session_id, &format!("   {}", stdout.trim()));
-        }
-        if !stderr.trim().is_empty() {
-            emit_line(&app, &session_id, &format!("   {}", stderr.trim()));
-        }
-        
-        if !uninstall_output.status.success() {
-            emit_line(&app, &session_id, "⚠ 卸载时出现警告，继续安装...");
-        }
-    }
-    
-    // Install target version
-    emit_line(&app, &session_id, &format!(">>> 安装 {}...", target_pkg));
-    
-    let mut child = TokioCommand::new(&python_path)
-        .args(["-m", "pip", "install", target_pkg])
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PIP_PROGRESS_BAR", "on")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("启动安装命令失败: {}", e))?;
-    
-    let last_output_ts = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64,
-    ));
-    
-    spawn_stream_readers(&app, &session_id, &mut child, last_output_ts.clone());
-    
-    // Heartbeat for long installs
-    let heartbeat_sid = session_id.clone();
-    let heartbeat_app = app.clone();
-    let heartbeat_ts = last_output_ts.clone();
-    let heartbeat = tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            let last = heartbeat_ts.load(std::sync::atomic::Ordering::Relaxed);
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
-            if now - last > 8000 {
-                emit_line(&heartbeat_app, &heartbeat_sid, "   正在下载安装包，请稍候...");
-                heartbeat_ts.store(now, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-    });
-    
-    let status = child.wait().await
-        .map_err(|e| format!("等待安装完成失败: {}", e))?;
-    heartbeat.abort();
-    let _ = heartbeat.await;
-    
-    if !status.success() {
-        emit_line(&app, &session_id, "✗ 切换失败");
-        return Err(format!("切换 PaddlePaddle 版本失败，请查看日志了解详情"));
-    }
-    
-    emit_line(&app, &session_id, &format!("✓ 已切换到 {} 版本", if use_gpu { "GPU" } else { "CPU" }));
-    
-    Ok(if use_gpu { "已切换到 GPU 版本" } else { "已切换到 CPU 版本" }.to_string())
-}
-
 // --- Legacy compatibility ---
 
 fn detect_python() -> Option<PythonInfo> {
@@ -1154,14 +940,42 @@ async fn call_paddle_ocr(python: &str, script_dir: &std::path::Path, base64_str:
     use std::time::Duration;
     use tokio::time::timeout;
 
+    // region debug-point ocr-env-check
+    debug_log(&format!("[ocr-debug] Python 路径: {}", python));
+    debug_log(&format!("[ocr-debug] Script 目录: {}", script_dir.display()));
+    debug_log(&format!("[ocr-debug] Base64 长度: {} 字符", base64_str.len()));
+    // endregion
+
     let tmp_dir = std::env::temp_dir();
     let b64_path = tmp_dir.join(format!("ocr_b64_{}.txt", uuid::Uuid::new_v4()));
     std::fs::write(&b64_path, base64_str)
         .map_err(|e| format!("写入临时文件失败: {}", e))?;
+    
+    // region debug-point ocr-gpu-env
+    // 检测 GPU 环境变量
+    let cuda_visible = std::env::var("CUDA_VISIBLE_DEVICES").unwrap_or_else(|_| "未设置".to_string());
+    let cuda_home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "未设置".to_string());
+    debug_log(&format!("[ocr-debug] CUDA_VISIBLE_DEVICES: {}", cuda_visible));
+    debug_log(&format!("[ocr-debug] CUDA_HOME: {}", cuda_home));
+    // endregion
+    
     let wrapper = format!(
         r#"
 import sys, os
 sys.path.insert(0, r'{script_dir}')
+
+# region debug-point ocr-python-runtime
+import paddle
+print(f"[OCR-DEBUG] PaddlePaddle 版本: {{paddle.__version__}}", file=sys.stderr)
+print(f"[OCR-DEBUG] CUDA 编译: {{paddle.is_compiled_with_cuda()}}", file=sys.stderr)
+print(f"[OCR-DEBUG] CUDA 可用: {{paddle.device.is_compiled_with_cuda()}}", file=sys.stderr)
+try:
+    print(f"[OCR-DEBUG] CUDA 设备数: {{paddle.device.cuda.device_count()}}", file=sys.stderr)
+    print(f"[OCR-DEBUG] 当前设备: {{paddle.device.cuda.current_device()}}", file=sys.stderr)
+except Exception as e:
+    print(f"[OCR-DEBUG] 获取 CUDA 设备信息失败: {{e}}", file=sys.stderr)
+# endregion
+
 from ocr_service import recognize_image
 with open(r'{b64_path}', 'r', encoding='utf-8') as f:
     b64 = f.read()
@@ -1176,6 +990,8 @@ print(result['text'])
     let python_clone = python.to_string();
     let b64_path_clone = b64_path.clone();
 
+    debug_log(&format!("[ocr-debug] 开始执行 Python OCR 脚本..."));
+
     // 使用异步超时执行，避免 Python 进程卡住导致应用崩溃
     let output = timeout(
         Duration::from_secs(60),  // 60 秒超时
@@ -1184,6 +1000,7 @@ print(result['text'])
                 .arg("-c")
                 .arg(&wrapper)
                 .env("PYTHONIOENCODING", "utf-8")
+                .env("CUDA_LAUNCH_BLOCKING", "1")  // 同步 CUDA 操作以便捕获错误
                 .output()
         })
     ).await
@@ -1193,6 +1010,12 @@ print(result['text'])
 
     // 确保清理临时文件
     let _ = std::fs::remove_file(&b64_path_clone);
+
+    // region debug-point ocr-result
+    debug_log(&format!("[ocr-debug] Python 进程退出码: {}", output.status.code().unwrap_or(-1)));
+    debug_log(&format!("[ocr-debug] Stdout 长度: {}", output.stdout.len()));
+    debug_log(&format!("[ocr-debug] Stderr 长度: {}", output.stderr.len()));
+    // endregion
 
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();

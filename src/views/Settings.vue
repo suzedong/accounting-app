@@ -161,43 +161,12 @@
                   PaddleOCR {{ activePython.paddleocrVersion }}
                 </span>
                 <span v-if="activePython.paddlepaddleVersion" class="paddle-version">
-                  PaddlePaddle {{ activePython.paddlepaddleVersion }}
+                  PaddlePaddle {{ activePython.paddlepaddleVersion }} (CPU)
                 </span>
-                <el-tag 
-                  v-if="activePython.gpuSupport" 
-                  :type="activePython.gpuSupport === 'cpu' ? 'info' : 'success'" 
-                  size="small"
-                >
-                  {{ gpuDisplay(activePython.gpuSupport) }}
-                </el-tag>
-              </div>
-              <!-- 系统 GPU 列表 -->
-              <div v-if="activePython.systemGpus && activePython.systemGpus.length > 0" class="gpu-list">
-                <div v-for="(gpu, idx) in activePython.systemGpus" :key="idx" class="gpu-item">
-                  <span class="gpu-icon">{{ gpu.hasCuda ? '⚡' : '💻' }}</span>
-                  <span class="gpu-name">{{ gpu.name }}</span>
-                  <span v-if="gpu.vramMb" class="gpu-vram">({{ formatVram(gpu.vramMb) }})</span>
-                  <el-tag v-if="gpu.hasCuda" type="success" size="small" class="gpu-tag">CUDA</el-tag>
-                </div>
               </div>
             </div>
           </div>
           <div class="python-actions">
-            <!-- GPU/CPU 切换按钮 -->
-            <el-tooltip 
-              v-if="hasNvidiaGpu" 
-              :content="activePython.gpuSupport === 'cpu' ? '切换到 GPU 版本以加速 OCR' : '切换到 CPU 版本'"
-              placement="top"
-            >
-              <el-button 
-                size="small" 
-                :type="activePython.gpuSupport === 'cpu' ? 'success' : 'default'"
-                @click="handleSwitchGpuMode(false)"
-                :loading="switchingGpu"
-              >
-                {{ activePython.gpuSupport === 'cpu' ? '切换到 GPU' : '切换到 CPU' }}
-              </el-button>
-            </el-tooltip>
             <el-button size="small" @click="handleReinstallDepsForPython(activePython.path)">
               重新安装依赖
             </el-button>
@@ -347,7 +316,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Loading, Download, InfoFilled } from '@element-plus/icons-vue';
 import { listen } from '@tauri-apps/api/event';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, switchGpuMode } from '@/api/tauri';
+import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile } from '@/api/tauri';
 import { agentEngine } from '@/ai/agent-engine';
 import type { AiService } from '@/types';
 
@@ -362,13 +331,6 @@ interface SystemPython {
   isUsable: boolean;
 }
 
-interface GpuInfo {
-  name: string;
-  hasCuda: boolean;
-  cudaVersion?: string;
-  vramMb?: number;
-}
-
 interface ActivePython {
   path: string;
   version: string;
@@ -376,8 +338,6 @@ interface ActivePython {
   hasPaddleocr: boolean;
   paddleocrVersion?: string;
   paddlepaddleVersion?: string;
-  gpuSupport?: string; // "cuda" | "metal" | "rocm" | "cpu"
-  systemGpus?: GpuInfo[];
 }
 
 const saving = ref(false);
@@ -421,9 +381,8 @@ const discoverLoading = ref(false); // True while background discover is running
 const showTerminal = ref(false);
 const terminalLines = ref<string[]>([]);
 const terminalBodyRef = ref<HTMLElement | null>(null);
-const currentOperation = ref(''); // e.g., 'install_deps', 'install_bundled', 'reinstall_bundled', 'install_for_python'
+const currentOperation = ref('');
 const operationSessionId = ref('');
-const switchingGpu = ref(false); // GPU mode switching in progress
 
 // Legacy compat
 const isOperationRunning = computed(() => currentOperation.value !== '');
@@ -882,55 +841,6 @@ function versionDisplay(version: string): string {
   // Extract just "3.12.x" from "Python 3.12.x"
   const parts = version.split(' ');
   return parts.length > 1 ? parts[1] : version;
-}
-
-function gpuDisplay(gpu: string): string {
-  const map: Record<string, string> = {
-    'cuda': 'CUDA',
-    'rocm': 'ROCm',
-    'metal': 'Metal',
-    'cpu': 'CPU',
-  };
-  return map[gpu] || gpu;
-}
-
-function formatVram(mb: number): string {
-  if (mb >= 1024) {
-    const gb = mb / 1024;
-    return gb % 1 === 0 ? `${gb} GB` : `${gb.toFixed(1)} GB`;
-  }
-  return `${mb} MB`;
-}
-
-// 检查是否有 NVIDIA GPU
-const hasNvidiaGpu = computed(() => {
-  return activePython.value?.systemGpus?.some(gpu => gpu.hasCuda) || false;
-});
-
-async function handleSwitchGpuMode(toCpu: boolean) {
-  if (!activePython.value) return;
-  
-  const useGpu = !toCpu;
-  switchingGpu.value = true;
-  
-  try {
-    const sid = `gpu_switch_${Date.now()}`;
-    operationSessionId.value = sid; // 关键：设置 sessionId 以便日志路由
-    showTerminal.value = true;
-    terminalLines.value = [];
-    
-    await switchGpuMode(activePython.value.path, useGpu, sid);
-    
-    ElMessage.success(useGpu ? '已切换到 GPU 版本' : '已切换到 CPU 版本');
-    await refreshOcrStatus();
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    terminalLines.value.push(`✗ ${msg}`);
-    ElMessage.error(`切换失败: ${msg}`);
-  } finally {
-    switchingGpu.value = false;
-    operationSessionId.value = ''; // 清理
-  }
 }
 
 // 打开 Python 3.12.10 下载页
