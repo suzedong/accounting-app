@@ -17,6 +17,7 @@ pub struct SystemPython {
     pub is_compatible: bool,
     pub has_paddleocr: bool,
     pub source: String,
+    pub is_usable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -26,6 +27,14 @@ pub struct ActivePython {
     pub version: String,
     pub is_bundled: bool,
     pub has_paddleocr: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paddleocr_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paddlepaddle_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_support: Option<String>, // "cuda" | "metal" | "cpu"
+    #[serde(default)]
+    pub system_gpus: Vec<GpuInfo>,
 }
 
 #[derive(Serialize)]
@@ -49,6 +58,8 @@ struct ShellPythonInfo {
     is_compatible: bool,
     has_paddleocr: bool,
     source: String,
+    #[serde(default)]
+    is_usable: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -175,6 +186,129 @@ fn check_module(python: &str, module: &str) -> Option<bool> {
     Some(output.status.success())
 }
 
+/// 获取已安装模块的版本号
+fn get_module_version(python: &str, module: &str) -> Option<String> {
+    let output = Command::new(python)
+        .arg("-c")
+        .arg(format!("import {}; print({}.__version__)", module, module))
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// 检测 GPU 支持情况
+fn detect_gpu_support(python: &str) -> Option<String> {
+    // Try to detect GPU support via paddlepaddle
+    let output = Command::new(python)
+        .arg("-c")
+        .arg(r#"
+import paddle
+try:
+    if paddle.is_compiled_with_cuda():
+        print('cuda')
+    elif paddle.is_compiled_with_rocm():
+        print('rocm')
+    else:
+        print('cpu')
+except:
+    print('cpu')
+"#)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Some("cpu".to_string())
+    }
+}
+
+/// GPU 信息结构体
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuInfo {
+    pub name: String,
+    pub has_cuda: bool,
+    pub cuda_version: Option<String>,
+    pub vram_mb: Option<u64>,
+}
+
+/// 检测系统 GPU 信息（返回所有 GPU）
+fn detect_system_gpus() -> Vec<GpuInfo> {
+    let mut gpus = Vec::new();
+    
+    if cfg!(windows) {
+        // Windows: Use PowerShell to query all GPU info
+        let output = Command::new("powershell")
+            .args([
+                "-Command",
+                r#"
+$gpus = Get-CimInstance -ClassName Win32_VideoController | Where-Object { $_.Name -notlike '*Microsoft*' -and $_.Name -notlike '*Virtual*' }
+if ($gpus) {
+    foreach ($gpu in $gpus) {
+        $name = $gpu.Name
+        $vram = [math]::Round($gpu.AdapterRAM / 1MB)
+        $isNvidia = $name -like '*NVIDIA*'
+        $isAMD = $name -like '*AMD*' -or $name -like '*Radeon*'
+        Write-Output "$name|$vram|$isNvidia|$isAMD"
+    }
+} else {
+    Write-Output "NONE"
+}
+"#,
+            ])
+            .output();
+        
+        if let Ok(output) = output {
+            if output.status.success() {
+                let lines = String::from_utf8_lossy(&output.stdout);
+                for line in lines.lines() {
+                    let trimmed = line.trim();
+                    if trimmed != "NONE" && !trimmed.is_empty() {
+                        let parts: Vec<&str> = trimmed.split('|').collect();
+                        if parts.len() >= 4 {
+                            let name = parts[0].to_string();
+                            let vram = parts[1].parse::<u64>().ok();
+                            let is_nvidia = parts[2] == "True";
+                            // parts[3] is is_amd, reserved for future use
+                            
+                            gpus.push(GpuInfo {
+                                name,
+                                has_cuda: is_nvidia,
+                                cuda_version: None,
+                                vram_mb: vram,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        // macOS: Check for Apple Silicon (Metal support)
+        let output = Command::new("uname")
+            .arg("-m")
+            .output();
+        
+        if let Ok(output) = output {
+            let arch_str = String::from_utf8_lossy(&output.stdout).to_string();
+            let arch = arch_str.trim();
+            if arch == "arm64" {
+                gpus.push(GpuInfo {
+                    name: "Apple Silicon (Metal)".to_string(),
+                    has_cuda: false,
+                    cuda_version: None,
+                    vram_mb: None, // Unified memory
+                });
+            }
+        }
+    }
+    
+    gpus
+}
+
 // --- PythonInfo for internal use (with is_bundled) ---
 
 #[derive(Debug, Clone)]
@@ -184,6 +318,9 @@ struct PythonInfo {
     minor_version: u8,
     has_paddleocr: bool,
     is_bundled: bool,
+    paddleocr_version: Option<String>,
+    paddlepaddle_version: Option<String>,
+    gpu_support: Option<String>,
 }
 
 fn parse_minor(version: &str) -> Option<u8> {
@@ -216,12 +353,27 @@ fn try_python_cmd(cmd: &str) -> Option<PythonInfo> {
     }
     let minor_version = parse_minor(&version).unwrap_or(0);
     let has_paddleocr = check_module(cmd, "paddleocr").unwrap_or(false);
+    
+    // Get detailed info only if paddleocr is installed
+    let (paddleocr_version, paddlepaddle_version, gpu_support) = if has_paddleocr {
+        (
+            get_module_version(cmd, "paddleocr"),
+            get_module_version(cmd, "paddle"),
+            detect_gpu_support(cmd),
+        )
+    } else {
+        (None, None, None)
+    };
+    
     Some(PythonInfo {
         path: cmd.to_string(),
         version,
         minor_version,
         has_paddleocr,
         is_bundled: false,
+        paddleocr_version,
+        paddlepaddle_version,
+        gpu_support,
     })
 }
 
@@ -231,6 +383,10 @@ fn build_active_python(info: &PythonInfo) -> ActivePython {
         version: info.version.clone(),
         is_bundled: info.is_bundled,
         has_paddleocr: info.has_paddleocr,
+        paddleocr_version: info.paddleocr_version.clone(),
+        paddlepaddle_version: info.paddlepaddle_version.clone(),
+        gpu_support: info.gpu_support.clone(),
+        system_gpus: detect_system_gpus(),
     }
 }
 
@@ -251,6 +407,7 @@ fn discover_system_pythons() -> Vec<SystemPython> {
                             is_compatible: p.is_compatible,
                             has_paddleocr: p.has_paddleocr,
                             source: p.source,
+                            is_usable: p.is_usable,
                         })
                         .collect()
                 }
@@ -283,6 +440,7 @@ fn discover_all_pythons(bundled_installed: bool) -> Vec<SystemPython> {
                     is_compatible: is_python_compatible(info.minor_version),
                     has_paddleocr: info.has_paddleocr,
                     source: "bundled".to_string(),
+                    is_usable: true,
                 });
             }
         }
@@ -765,6 +923,102 @@ pub async fn uninstall_bundled_python() -> Result<String, String> {
     }
 }
 
+// --- GPU Mode Switching ---
+
+/// 切换 PaddlePaddle 的 GPU/CPU 版本
+#[tauri::command]
+pub async fn switch_gpu_mode(
+    app: AppHandle,
+    _app_config: State<'_, AppConfig>,
+    _db: State<'_, Database>,
+    python_path: String,
+    use_gpu: bool,
+    session_id: String,
+) -> Result<String, String> {
+    let target_pkg = if use_gpu { "paddlepaddle-gpu" } else { "paddlepaddle" };
+    
+    emit_line(&app, &session_id, &format!(">>> 正在切换到 {} 版本...", if use_gpu { "GPU" } else { "CPU" }));
+    emit_line(&app, &session_id, &format!(">>> Python 路径: {}", python_path));
+    emit_line(&app, &session_id, ">>> 卸载当前 PaddlePaddle...");
+    
+    // Uninstall current paddlepaddle
+    {
+        let uninstall_output = TokioCommand::new(&python_path)
+            .args(["-m", "pip", "uninstall", "-y", "paddlepaddle", "paddlepaddle-gpu"])
+            .output()
+            .await
+            .map_err(|e| format!("卸载失败: {}", e))?;
+        
+        let stdout = String::from_utf8_lossy(&uninstall_output.stdout);
+        let stderr = String::from_utf8_lossy(&uninstall_output.stderr);
+        
+        if !stdout.trim().is_empty() {
+            emit_line(&app, &session_id, &format!("   {}", stdout.trim()));
+        }
+        if !stderr.trim().is_empty() {
+            emit_line(&app, &session_id, &format!("   {}", stderr.trim()));
+        }
+        
+        if !uninstall_output.status.success() {
+            emit_line(&app, &session_id, "⚠ 卸载时出现警告，继续安装...");
+        }
+    }
+    
+    // Install target version
+    emit_line(&app, &session_id, &format!(">>> 安装 {}...", target_pkg));
+    
+    let mut child = TokioCommand::new(&python_path)
+        .args(["-m", "pip", "install", target_pkg])
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PIP_PROGRESS_BAR", "on")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动安装命令失败: {}", e))?;
+    
+    let last_output_ts = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+    ));
+    
+    spawn_stream_readers(&app, &session_id, &mut child, last_output_ts.clone());
+    
+    // Heartbeat for long installs
+    let heartbeat_sid = session_id.clone();
+    let heartbeat_app = app.clone();
+    let heartbeat_ts = last_output_ts.clone();
+    let heartbeat = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            let last = heartbeat_ts.load(std::sync::atomic::Ordering::Relaxed);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            if now - last > 8000 {
+                emit_line(&heartbeat_app, &heartbeat_sid, "   正在下载安装包，请稍候...");
+                heartbeat_ts.store(now, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    });
+    
+    let status = child.wait().await
+        .map_err(|e| format!("等待安装完成失败: {}", e))?;
+    heartbeat.abort();
+    let _ = heartbeat.await;
+    
+    if !status.success() {
+        emit_line(&app, &session_id, "✗ 切换失败");
+        return Err(format!("切换 PaddlePaddle 版本失败，请查看日志了解详情"));
+    }
+    
+    emit_line(&app, &session_id, &format!("✓ 已切换到 {} 版本", if use_gpu { "GPU" } else { "CPU" }));
+    
+    Ok(if use_gpu { "已切换到 GPU 版本" } else { "已切换到 CPU 版本" }.to_string())
+}
+
 // --- Legacy compatibility ---
 
 fn detect_python() -> Option<PythonInfo> {
@@ -893,10 +1147,13 @@ pub async fn ocr_recognize(
     };
     let script_dir = find_script_dir()
         .ok_or("找不到 scripts/ocr_service.py，请确保项目结构正确")?;
-    call_paddle_ocr(&info.path, &script_dir, &clean_base64)
+    call_paddle_ocr(&info.path, &script_dir, &clean_base64).await
 }
 
-fn call_paddle_ocr(python: &str, script_dir: &std::path::Path, base64_str: &str) -> Result<String, String> {
+async fn call_paddle_ocr(python: &str, script_dir: &std::path::Path, base64_str: &str) -> Result<String, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
     let tmp_dir = std::env::temp_dir();
     let b64_path = tmp_dir.join(format!("ocr_b64_{}.txt", uuid::Uuid::new_v4()));
     std::fs::write(&b64_path, base64_str)
@@ -914,13 +1171,29 @@ print(result['text'])
         script_dir = script_dir.display(),
         b64_path = b64_path.display(),
     );
-    let output = Command::new(python)
-        .arg("-c")
-        .arg(wrapper)
-        .env("PYTHONIOENCODING", "utf-8")
-        .output()
-        .map_err(|e| format!("启动 Python 失败: {}", e))?;
-    let _ = std::fs::remove_file(&b64_path);
+
+    // 克隆字符串以满足 'static 生命周期要求
+    let python_clone = python.to_string();
+    let b64_path_clone = b64_path.clone();
+
+    // 使用异步超时执行，避免 Python 进程卡住导致应用崩溃
+    let output = timeout(
+        Duration::from_secs(60),  // 60 秒超时
+        tokio::task::spawn_blocking(move || {
+            Command::new(&python_clone)
+                .arg("-c")
+                .arg(&wrapper)
+                .env("PYTHONIOENCODING", "utf-8")
+                .output()
+        })
+    ).await
+    .map_err(|e| format!("OCR 识别超时: {}", e))?
+    .map_err(|e| format!("执行任务失败: {}", e))?
+    .map_err(|e| format!("启动 Python 失败: {}", e))?;
+
+    // 确保清理临时文件
+    let _ = std::fs::remove_file(&b64_path_clone);
+
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if text.is_empty() {

@@ -395,7 +395,21 @@ for (const [key, newValue] of Object.entries(args.fields)) {
 
 ## 2. OCR Python 管理重设计
 
-> 最后更新：2026-05-27
+> 最后更新：2026-06-04
+> **状态：✅ 已完成**
+>
+> 完成项：
+> - [x] 系统 Python 列表展示（版本/路径/PaddleOCR 状态/来源标签）
+> - [x] 活跃 Python 选择与持久化
+> - [x] 依赖管理（安装/卸载/重装 PaddleOCR）
+> - [x] 内置 Python 生命周期管理
+> - [x] 事件驱动发现机制（startOcrDiscover → ocr_discover_result）
+> - [x] 扫描加载状态显示
+> - [x] Microsoft Store Python 限制处理（标记为不可用）
+> - [x] PaddleOCR/PaddlePaddle 版本检测与显示
+> - [x] GPU 信息检测（Windows 多 GPU / macOS Apple Silicon）
+> - [x] PaddlePaddle GPU/CPU 版本切换功能
+> - [x] 终端面板日志路由修复（operationSessionId）
 
 ### 2.1 背景
 
@@ -415,6 +429,8 @@ pub struct SystemPython {
     pub minor_version: u8,         // 12 (for compatibility check)
     pub is_compatible: bool,       // PaddleOCR supports Python 3.8-3.12
     pub has_paddleocr: bool,
+    pub source: String,            // "macos" | "uv" | "homebrew" | "pythonorg" | "pyenv" | "store" | "unknown"
+    pub is_usable: bool,           // false for Microsoft Store Python (cannot install deps in non-interactive terminal)
 }
 ```
 
@@ -426,6 +442,21 @@ pub struct ActivePython {
     pub version: String,
     pub is_bundled: bool,
     pub has_paddleocr: bool,
+    pub paddleocr_version: Option<String>,       // PaddleOCR 版本号，如 "3.6.0"
+    pub paddlepaddle_version: Option<String>,    // PaddlePaddle 版本号，如 "3.3.1"
+    pub gpu_support: Option<String>,             // "cuda" | "rocm" | "metal" | "cpu"
+    pub system_gpus: Vec<GpuInfo>,               // 系统检测到的所有 GPU
+}
+```
+
+#### 新增类型：`GpuInfo`
+
+```rust
+pub struct GpuInfo {
+    pub name: String,                  // 显卡名称，如 "NVIDIA GeForce RTX 4060"
+    pub has_cuda: bool,                // 是否支持 CUDA（NVIDIA 显卡）
+    pub cuda_version: Option<String>,  // CUDA 版本（预留）
+    pub vram_mb: Option<u64>,          // 显存大小（MB）
 }
 ```
 
@@ -463,20 +494,81 @@ pub struct OcrStatus {
 | 来源 | 扫描方式 | 说明 |
 |---|---|---|
 | PATH | `python`, `python3`, `py`（py launcher） | 通过 `Get-Command` 和 `py -0p` 发现 |
+| Microsoft Store | `winget list --name Python` + 注册表 `HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders\Local AppData` | WindowsApps 目录下的 App Execution Aliases |
 | 注册表 HKLM | `HKLM:\SOFTWARE\Python\PythonCore\*\InstallPath` | 所有用户安装的 Python |
 | 注册表 HKCU | `HKCU:\SOFTWARE\Python\PythonCore\*\InstallPath` | 当前用户安装的 Python |
 | 常见路径 | `%LOCALAPPDATA%\Programs\Python\Python3*\` | Python.org 安装器默认路径 |
 | 常见路径 | `%PROGRAMFILES%\Python3*\` | 全局安装路径 |
+
+**Microsoft Store Python 限制：**
+- Microsoft Store 安装的 Python 使用 App Execution Aliases（`.exe` stub 文件）
+- 这些 stub 文件在非交互式终端环境（如 Tauri 后台进程）中无法执行
+- 即使使用 `wt send-keys`、`.cmd` 批处理、`Start-Process` 等方式也无法绕过此限制
+- 这是 Windows 安全机制，不是技术缺陷
+- **处理方式**：在 Python 列表中标记为"Microsoft Store"标签，"操作"列显示"不可用"按钮，tooltip 提示用户从 python.org 下载安装
 
 对每个找到的 `python3` 可执行文件：
 1. 运行 `--version` 获取版本字符串
 2. 解析 minor version（如 "Python 3.12.9" → 12）
 3. 检查兼容性：`8 <= minor <= 12`
 4. 检查 PaddleOCR：`python -c "import paddleocr"`
+5. 如果已安装 PaddleOCR，获取版本号：`python -c "import paddleocr; print(paddleocr.__version__)"`
+6. 如果已安装 PaddlePaddle，获取版本号：`python -c "import paddle; print(paddle.__version__)"`
+7. 检测 GPU 支持：`python -c "import paddle; paddle.is_compiled_with_cuda()"`
+
+##### GPU 信息检测
+
+**Windows GPU 检测 (`detect_system_gpus()`)**：
+- 使用 PowerShell 查询 `Win32_VideoController` WMI 类
+- 过滤 Microsoft 基本显示适配器和虚拟显示适配器
+- 返回所有物理显卡列表，包含名称、显存、是否 NVIDIA
+
+```powershell
+$gpus = Get-CimInstance -ClassName Win32_VideoController | Where-Object { 
+    $_.Name -notlike '*Microsoft*' -and $_.Name -notlike '*Virtual*' 
+}
+foreach ($gpu in $gpus) {
+    $name = $gpu.Name
+    $vram = [math]::Round($gpu.AdapterRAM / 1MB)
+    $isNvidia = $name -like '*NVIDIA*'
+    Write-Output "$name|$vram|$isNvidia"
+}
+```
+
+**macOS GPU 检测**：
+- 检查 `uname -m` 是否为 `arm64`（Apple Silicon）
+- Apple Silicon 支持 Metal 加速
+
+##### GPU/CPU 版本切换
+
+| 命令 | 参数 | 说明 |
+|---|---|---|
+| `switch_gpu_mode` | `python_path, use_gpu, session_id` | 切换 PaddlePaddle 的 GPU/CPU 版本 |
+
+**切换流程**：
+1. 卸载当前版本：`pip uninstall -y paddlepaddle paddlepaddle-gpu`
+2. 安装目标版本：
+   - GPU 模式：`pip install paddlepaddle-gpu`
+   - CPU 模式：`pip install paddlepaddle`
+3. 实时日志通过 `ocr_install_log` 事件推送到前端终端面板
+
+**注意事项**：
+- GPU 版本需要 NVIDIA 显卡 + CUDA 环境
+- 默认使用官方 PyPI 源（清华镜像源对 paddlepaddle-gpu 返回 403）
+- GPU 版本包较大（约 500MB），下载可能较慢
 
 ##### 发现所有 Python — `discover_all_pythons()`
 
 合并内置 Python + 系统 Python：先检查内置 Python（如果存在，加入列表），再调用 `discover_system_pythons()` 获取系统 Python，去重（同一路径只保留一个）。
+
+**事件驱动发现机制：**
+
+- 前端调用 `startOcrDiscover()` 命令，Rust 后台立即返回（不阻塞 UI）
+- Rust 在后台线程执行 `discover_all_pythons()`（PowerShell 脚本扫描）
+- 扫描完成后通过 Tauri 事件 `ocr_discover_result` 将结果推送给前端
+- 前端在 `onMounted` 中先注册事件监听器，再调用 `startOcrDiscover()`
+- 监听器收到事件后更新 `systemPythons` 并关闭 `discoverLoading` 动画
+- 扫描期间 UI 显示"正在扫描系统 Python…"加载提示
 
 ##### 活跃 Python 选择与持久化
 
@@ -518,18 +610,36 @@ pub struct OcrStatus {
 checkOcrStatus(): Promise<{
   available: boolean;
   enabled: boolean;
-  activePython: { path: string; version: string; isBundled: boolean; hasPaddleocr: boolean } | null;
+  activePython: {
+    path: string;
+    version: string;
+    isBundled: boolean;
+    hasPaddleocr: boolean;
+    paddleocrVersion?: string;
+    paddlepaddleVersion?: string;
+    gpuSupport?: string;
+    systemGpus?: GpuInfo[];
+  } | null;
   systemPythons: Array<{ path: string; version: string; minorVersion: number; isCompatible: boolean; hasPaddleocr: boolean }>;
   bundledPythonInstalled: boolean;
   message: string;
 }>
 
+// GPU 信息类型
+interface GpuInfo {
+  name: string;
+  hasCuda: boolean;
+  cudaVersion?: string;
+  vramMb?: number;
+}
+
 // 新增
 selectPython(path: string): Promise<void>
 installPaddleocrForPython(pythonPath: string, sessionId: string): Promise<string>
-uninstallPaddleocrForPython(pythonPath: string): Promise<string>
+uninstallPaddleocrForPython(pythonPath: string, sessionId: string): Promise<string>
 reinstallPaddleocrForPython(pythonPath: string, sessionId: string): Promise<string>
 reinstallBundledPython(sessionId: string): Promise<string>
+switchGpuMode(pythonPath: string, useGpu: boolean, sessionId: string): Promise<string>
 ```
 
 #### 文件：`src/views/Settings.vue` — UI 布局
@@ -539,19 +649,29 @@ reinstallBundledPython(sessionId: string): Promise<string>
 │ OCR 识别                          [ 开关 ]     │
 ├────────────────────────────────────────────────┤
 │ 当前使用的 Python                              │
-│   Python 3.12.9  ✓  PaddleOCR 已安装           │
-│   /Users/.../python3                           │
-│   [ 重新安装依赖 ]                              │
-├────────────────────────────────────────────────┤
-│ 系统 Python 列表                               │
+│   Python 3.12.10  ✓  PaddleOCR 已安装          │
+│   C:\Users\...\python.exe                      │
+│   ┌──────────────────────────────────────┐    │
+│   │ PaddleOCR 3.6.0  PaddlePaddle 3.3.1  │    │
+│   │ [CPU]                                │    │
+│   │ ⚡ NVIDIA GeForce RTX 4060 (4 GB)   │    │
+│   │ 💻 Intel(R) Iris(R) Xe Graphics     │    │
+│   │                                [CUDA]│    │
+│   └──────────────────────────────────────┘    │
+│   [ 切换到 GPU ]  [ 重新安装依赖 ]              │
+────────────────────────────────────────────────┤
+│ 系统 Python 列表            [⏳ 正在扫描...]     │
 │ ┌───────┬──────────┬──────────────┬──────────┐ │
 │ │ 版本   │ 路径      │ PaddleOCR     │ 操作      │ │
 │ ├───────┼──────────┼──────────────┼──────────┤ │
-│ │ 3.12.9│ /opt/... │ ✓ 已安装     │ 使用     │ │
+│ │ 3.12.10│ C:\...  │ ✓ 已安装     │ 使用     │ │
 │ │ 3.11.9│ /opt/... │ ✓ 已安装     │ 使用     │ │
 │ │ 3.14.4│ /opt/... │ ✗ 不兼容     │ —        │ │
-│ ───────┴────────────────────────┴──────────┘ │
-├────────────────────────────────────────────────┤
+│ │ 3.12.0│ WindowsA │ 未安装       │ 不可用   │ │
+│ │       │   pp/... │              │ [tooltip]│ │
+│ ──────┴──────────┴──────────────┴──────────┘ │
+│   ↑ Microsoft Store Python 标记为不可用         │
+────────────────────────────────────────────────┤
 │ 内置 Python 3.12                               │
 │ 未安装 / 已安装 (显示完整路径)                  │
 │ [ 安装 ] [ 重装 ] [ 卸载 ]                      │
@@ -562,6 +682,13 @@ reinstallBundledPython(sessionId: string): Promise<string>
 └────────────────────────────────────────────────┘
 ```
 
+**GPU 列表说明**：
+- ⚡ 表示支持 CUDA 的 NVIDIA 显卡
+-  表示普通显卡（Intel/AMD 等）
+- [CUDA] 标签显示在 NVIDIA 显卡右侧
+- 有 NVIDIA 显卡时显示"切换到 GPU"按钮
+- 当前为 GPU 版本时按钮显示"切换到 CPU"
+
 #### 状态管理
 
 ```ts
@@ -570,25 +697,36 @@ const systemPythons = ref<SystemPython[]>([])
 const bundledPythonInstalled = ref(false)
 const terminalLines = ref<string[]>([])
 const currentOperation = ref<string>('') // 当前操作标识
+const switchingGpu = ref(false) // GPU 模式切换中
+const operationSessionId = ref<string>('') // 当前操作的 sessionId（用于日志路由）
 ```
 
-所有 pip/brew 操作共享一个 `ocr_install_log` 事件，前端根据 `session_id` 决定是否显示到终端面板。终端面板只保留一个，显示最近一次操作。
+所有 pip/brew 操作共享一个 `ocr_install_log` 事件，前端根据 `session_id` 是否等于 `operationSessionId` 决定是否显示到终端面板。终端面板只保留一个，显示最近一次操作。
+
+**关键修复**：GPU 切换功能必须设置 `operationSessionId.value = sid`，否则日志不会被路由到终端面板。
 
 ### 2.5 文件清单
 
 | 文件 | 改动 |
 |---|---|
-| `src-tauri/src/commands/ocr.rs` | 重写：新增发现逻辑、选择逻辑、依赖管理命令 |
-| `src-tauri/src/main.rs` | 新增 4 个命令注册 |
-| `src/api/tauri.ts` | 修改 `checkOcrStatus` 返回类型，新增 5 个 API 函数 |
-| `src/views/Settings.vue` | 重写 OCR 区域 UI（表格 + 操作按钮 + 共享终端） |
+| `src-tauri/src/commands/ocr.rs` | 重写：新增发现逻辑、选择逻辑、依赖管理、GPU 检测、GPU/CPU 切换 |
+| `src-tauri/src/main.rs` | 新增命令注册（select_python, switch_gpu_mode 等） |
+| `src/api/tauri.ts` | 修改返回类型，新增 switchGpuMode 等 API 函数 |
+| `src/views/Settings.vue` | 重写 OCR 区域 UI（GPU 信息显示、版本切换按钮、日志路由修复） |
 
 ### 2.6 验证方法
 
 1. 启动应用，设置页应列出所有系统 Python（3.11, 3.12, 3.14 等）
 2. 3.14 应标记为"不兼容"，不可选择
-3. 点击 3.12 的"使用此版本"，当前使用 Python 应更新
-4. 点击"安装内置 Python"，应安装到 `%LOCALAPPDATA%\accounting-app\python\`（Windows）或 `~/Library/Application Support/accounting-app/python/`（macOS）
-5. 安装完成后当前使用的 Python 应自动切换到内置版本
-6. 在任意 Python 上点击"安装依赖"，终端应实时显示 pip 输出
-7. 重启应用后，选择的 Python 应保持不变（持久化）
+3. Microsoft Store Python 应标记为"Microsoft Store"标签，"操作"列显示"不可用"按钮
+4. 点击 3.12 的"使用此版本"，当前使用 Python 应更新
+5. 点击"安装内置 Python"，应安装到 `%LOCALAPPDATA%\accounting-app\python\`（Windows）或 `~/Library/Application Support/accounting-app/python/`（macOS）
+6. 安装完成后当前使用的 Python 应自动切换到内置版本
+7. 在任意 Python 上点击"安装依赖"，终端应实时显示 pip 输出
+8. 重启应用后，选择的 Python 应保持不变（持久化）
+9. 扫描期间应显示"正在扫描系统 Python…"加载提示，扫描完成后自动消失
+10. 已安装 PaddleOCR 的 Python 应显示 PaddleOCR 和 PaddlePaddle 版本号
+11. 有 NVIDIA GPU 的系统应显示显卡列表（名称、显存、CUDA 标签）
+12. 有 NVIDIA GPU 时显示"切换到 GPU"按钮，点击后应切换 PaddlePaddle 版本
+13. 切换过程中终端面板应实时显示 pip 卸载和安装日志
+14. 切换完成后刷新 OCR 状态，GPU 标签应从 [CPU] 变为 [CUDA]

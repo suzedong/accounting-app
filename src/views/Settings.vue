@@ -126,6 +126,22 @@
           <span class="ocr-hint">{{ ocrStatusHint }}</span>
         </div>
 
+        <!-- 未找到兼容 Python 时的引导提示（仅 macOS 显示，Windows 使用内置 Python 区域的提示） -->
+        <div v-if="!isWindows && !ocrAvailable && !activePython && !discoverLoading && systemPythons.length > 0" class="python-guide-card">
+          <div class="guide-title">如何安装兼容的 Python</div>
+          <ol class="guide-steps">
+            <li>访问 python.org 下载 Python 3.12（推荐 3.12.10）</li>
+            <li>安装时务必勾选 <strong>"Add Python to PATH"</strong></li>
+            <li>安装完成后点击 <el-button text size="small" type="primary" @click="handleRefreshStatus">刷新状态</el-button> 重新扫描</li>
+          </ol>
+          <div class="guide-links">
+            <el-button text size="small" type="primary" @click="openPythonDownload">
+              <el-icon><Download /></el-icon>
+              打开 Python 3.12.10 下载页 (Windows 64-bit)
+            </el-button>
+          </div>
+        </div>
+
         <!-- 当前使用的 Python -->
         <div v-if="activePython" class="active-python-section">
           <div class="section-title">当前使用的 Python</div>
@@ -138,8 +154,50 @@
               <el-tag v-if="activePython.isBundled" type="primary" size="small">内置</el-tag>
             </div>
             <div class="python-path" :title="activePython.path">{{ formatPythonPath(activePython.path) }}</div>
+            <!-- PaddleOCR 详细信息 -->
+            <div v-if="activePython.hasPaddleocr" class="paddle-details">
+              <div class="paddle-info-row">
+                <span v-if="activePython.paddleocrVersion" class="paddle-version">
+                  PaddleOCR {{ activePython.paddleocrVersion }}
+                </span>
+                <span v-if="activePython.paddlepaddleVersion" class="paddle-version">
+                  PaddlePaddle {{ activePython.paddlepaddleVersion }}
+                </span>
+                <el-tag 
+                  v-if="activePython.gpuSupport" 
+                  :type="activePython.gpuSupport === 'cpu' ? 'info' : 'success'" 
+                  size="small"
+                >
+                  {{ gpuDisplay(activePython.gpuSupport) }}
+                </el-tag>
+              </div>
+              <!-- 系统 GPU 列表 -->
+              <div v-if="activePython.systemGpus && activePython.systemGpus.length > 0" class="gpu-list">
+                <div v-for="(gpu, idx) in activePython.systemGpus" :key="idx" class="gpu-item">
+                  <span class="gpu-icon">{{ gpu.hasCuda ? '⚡' : '💻' }}</span>
+                  <span class="gpu-name">{{ gpu.name }}</span>
+                  <span v-if="gpu.vramMb" class="gpu-vram">({{ formatVram(gpu.vramMb) }})</span>
+                  <el-tag v-if="gpu.hasCuda" type="success" size="small" class="gpu-tag">CUDA</el-tag>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="python-actions">
+            <!-- GPU/CPU 切换按钮 -->
+            <el-tooltip 
+              v-if="hasNvidiaGpu" 
+              :content="activePython.gpuSupport === 'cpu' ? '切换到 GPU 版本以加速 OCR' : '切换到 CPU 版本'"
+              placement="top"
+            >
+              <el-button 
+                size="small" 
+                :type="activePython.gpuSupport === 'cpu' ? 'success' : 'default'"
+                @click="handleSwitchGpuMode(false)"
+                :loading="switchingGpu"
+              >
+                {{ activePython.gpuSupport === 'cpu' ? '切换到 GPU' : '切换到 CPU' }}
+              </el-button>
+            </el-tooltip>
             <el-button size="small" @click="handleReinstallDepsForPython(activePython.path)">
               重新安装依赖
             </el-button>
@@ -161,6 +219,7 @@
                 <span>{{ versionDisplay(row.version) }}</span>
                 <el-tag v-if="activePython && activePython.path === row.path" type="primary" size="small" class="current-tag">当前</el-tag>
                 <el-tag v-if="!row.isCompatible" type="danger" size="small" class="source-tag">不兼容</el-tag>
+                <el-tag v-else-if="row.source === 'store'" type="warning" size="small" class="source-tag">Microsoft Store</el-tag>
                 <el-tag v-else-if="row.source === 'macos'" type="warning" size="small" class="source-tag">只读</el-tag>
                 <el-tag v-else-if="row.source === 'uv'" type="info" size="small" class="source-tag">uv</el-tag>
                 <el-tag v-else-if="row.source === 'bundled'" type="primary" size="small" class="source-tag">内置</el-tag>
@@ -182,19 +241,30 @@
               <template #default="{ row }">
                 <div class="action-buttons">
                   <template v-if="row.isCompatible && row.source !== 'macos'">
-                    <el-button
-                      v-if="activePython && activePython.path !== row.path"
-                      size="small"
-                      type="primary"
-                      @click="handleSelectPython(row.path)"
-                    >使用</el-button>
-                    <el-button v-else-if="activePython" size="small" disabled>当前</el-button>
-                    <el-button size="small" @click="handleInstallDepsForPython(row.path)">安装</el-button>
-                    <el-button
-                      v-if="row.hasPaddleocr"
-                      size="small"
-                      @click="handleUninstallDepsForPython(row.path)"
-                    >卸载</el-button>
+                    <!-- Microsoft Store Python 不可用 -->
+                    <template v-if="row.source === 'store'">
+                      <el-tooltip content="Microsoft Store Python 无法安装依赖，请从 python.org 下载 Python 3.8-3.12" placement="top">
+                        <el-button size="small" disabled>不可用</el-button>
+                      </el-tooltip>
+                    </template>
+                    <template v-else>
+                      <el-button
+                        v-if="activePython && activePython.path !== row.path"
+                        size="small"
+                        type="primary"
+                        @click="handleSelectPython(row.path)"
+                      >使用</el-button>
+                      <el-button v-else-if="activePython" size="small" disabled>当前</el-button>
+                      <el-button 
+                        size="small" 
+                        @click="handleInstallDepsForPython(row.path)"
+                      >安装</el-button>
+                      <el-button
+                        v-if="row.hasPaddleocr"
+                        size="small"
+                        @click="handleUninstallDepsForPython(row.path)"
+                      >卸载</el-button>
+                    </template>
                   </template>
                   <span v-else-if="row.isCompatible && row.source === 'macos'" class="no-action">只读</span>
                   <span v-else class="no-action">—</span>
@@ -242,8 +312,12 @@
             <el-tag type="info" size="small">不支持</el-tag>
           </div>
           <p class="bundled-desc">
-            Windows 平台不支持自动安装内置 Python，请从 <a href="https://www.python.org/downloads/" target="_blank">python.org</a> 下载或通过 Microsoft Store 安装。
+            Windows 平台不支持自动安装内置 Python。请从 <a href="https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe" target="_blank">python.org</a> 下载 Python 3.12.10 并手动安装。
           </p>
+          <div class="bundled-note">
+            <el-icon><InfoFilled /></el-icon>
+            <span>注意：Microsoft Store 版本的 Python 无法安装 PaddleOCR，请勿使用。</span>
+          </div>
         </div>
 
         <!-- 共享终端面板 -->
@@ -271,11 +345,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Loading } from '@element-plus/icons-vue';
+import { Loading, Download, InfoFilled } from '@element-plus/icons-vue';
 import { listen } from '@tauri-apps/api/event';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile } from '@/api/tauri';
+import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, switchGpuMode } from '@/api/tauri';
 import { agentEngine } from '@/ai/agent-engine';
-import type { AiService, AllConfig } from '@/types';
+import type { AiService } from '@/types';
 
 // Types for OCR
 interface SystemPython {
@@ -284,7 +358,15 @@ interface SystemPython {
   minorVersion: number;
   isCompatible: boolean;
   hasPaddleocr: boolean;
-  source: string; // macos | uv | homebrew | pythonorg | pyenv | unknown
+  source: string; // macos | uv | homebrew | pythonorg | pyenv | store | unknown
+  isUsable: boolean;
+}
+
+interface GpuInfo {
+  name: string;
+  hasCuda: boolean;
+  cudaVersion?: string;
+  vramMb?: number;
 }
 
 interface ActivePython {
@@ -292,6 +374,10 @@ interface ActivePython {
   version: string;
   isBundled: boolean;
   hasPaddleocr: boolean;
+  paddleocrVersion?: string;
+  paddlepaddleVersion?: string;
+  gpuSupport?: string; // "cuda" | "metal" | "rocm" | "cpu"
+  systemGpus?: GpuInfo[];
 }
 
 const saving = ref(false);
@@ -337,6 +423,7 @@ const terminalLines = ref<string[]>([]);
 const terminalBodyRef = ref<HTMLElement | null>(null);
 const currentOperation = ref(''); // e.g., 'install_deps', 'install_bundled', 'reinstall_bundled', 'install_for_python'
 const operationSessionId = ref('');
+const switchingGpu = ref(false); // GPU mode switching in progress
 
 // Legacy compat
 const isOperationRunning = computed(() => currentOperation.value !== '');
@@ -355,19 +442,40 @@ let unlistenInstallLog: (() => void) | null = null;
 let unlistenDiscoverResult: (() => void) | null = null;
 
 async function setupEventListeners() {
-  unlistenInstallLog = await listen('ocr_install_log', (event: unknown) => {
-    const payload = event as { payload: { sessionId: string; text: string } };
+  unlistenInstallLog = await listen('ocr_install_log', (event: any) => {
+    const data = event.payload;
     // Route to shared terminal if session matches current operation
-    if (payload.payload.sessionId === operationSessionId.value) {
-      terminalLines.value.push(payload.payload.text);
+    if (data.sessionId === operationSessionId.value) {
+      terminalLines.value.push(data.text);
     }
   });
 
   // Listen for background discover result
-  unlistenDiscoverResult = await listen('ocr_discover_result', (event: unknown) => {
-    const payload = event as { payload: { systemPythons: SystemPython[] } };
-    systemPythons.value = payload.payload.systemPythons;
-    discoverLoading.value = false;
+  unlistenDiscoverResult = await listen('ocr_discover_result', async (event: any) => {
+    console.log('[Settings] Received ocr_discover_result event');
+    try {
+      const data = event.payload;
+      systemPythons.value = data.systemPythons || [];
+      console.log('[Settings] systemPythons updated:', systemPythons.value.length);
+      
+      // Update OCR status message based on discovered pythons
+      const compatiblePythons = systemPythons.value.filter(p => p.isCompatible && p.source !== 'store');
+      if (compatiblePythons.length > 0 && !activePython.value) {
+        // Found compatible pythons but none selected yet
+        ocrMessage.value = `找到 ${compatiblePythons.length} 个兼容的 Python，请选择一个使用`;
+      } else if (compatiblePythons.length === 0) {
+        ocrMessage.value = '未找到兼容的 Python (需要 3.8-3.12，非 Microsoft Store 版本)';
+      } else {
+        ocrMessage.value = '';
+      }
+      
+      // Directly update without async
+      discoverLoading.value = false;
+      console.log('[Settings] discoverLoading set to:', discoverLoading.value);
+    } catch (e) {
+      console.error('[Settings] Error:', e);
+      discoverLoading.value = false;
+    }
   });
 }
 
@@ -380,12 +488,14 @@ const ocrStatusTag = computed(() => {
 
 const ocrStatusText = computed(() => {
   if (!ocrEnabled.value) return '已禁用';
+  if (discoverLoading.value) return '正在扫描...';
   if (ocrAvailable.value) return 'PaddleOCR 已就绪';
   if (activePython.value) return 'Python 已找到，需要安装依赖';
   return '未找到兼容的 Python';
 });
 
 const ocrStatusHint = computed(() => {
+  if (discoverLoading.value) return '正在扫描系统 Python...';
   if (ocrMessage.value) return ocrMessage.value;
   if (activePython.value) return `${activePython.value.version} — ${activePython.value.path}`;
   return '需要 Python 3.8-3.12';
@@ -430,16 +540,17 @@ onMounted(async () => {
     bundledPythonInstalled.value = status.bundledPythonInstalled;
   }
 
-  // Start background discover (scans system Python, returns via event)
+  // Setup event listeners FIRST (before starting discover)
+  await setupEventListeners();
+
+  // Then start background discover (scans system Python, returns via event)
   try {
     discoverLoading.value = true;
     await startOcrDiscover();
-  } catch {
+  } catch (e) {
+    console.error('[Settings] startOcrDiscover failed:', e);
     discoverLoading.value = false;
   }
-
-  // Setup event listeners for OCR install logs and discover result
-  await setupEventListeners();
 });
 
 onUnmounted(() => {
@@ -772,6 +883,61 @@ function versionDisplay(version: string): string {
   const parts = version.split(' ');
   return parts.length > 1 ? parts[1] : version;
 }
+
+function gpuDisplay(gpu: string): string {
+  const map: Record<string, string> = {
+    'cuda': 'CUDA',
+    'rocm': 'ROCm',
+    'metal': 'Metal',
+    'cpu': 'CPU',
+  };
+  return map[gpu] || gpu;
+}
+
+function formatVram(mb: number): string {
+  if (mb >= 1024) {
+    const gb = mb / 1024;
+    return gb % 1 === 0 ? `${gb} GB` : `${gb.toFixed(1)} GB`;
+  }
+  return `${mb} MB`;
+}
+
+// 检查是否有 NVIDIA GPU
+const hasNvidiaGpu = computed(() => {
+  return activePython.value?.systemGpus?.some(gpu => gpu.hasCuda) || false;
+});
+
+async function handleSwitchGpuMode(toCpu: boolean) {
+  if (!activePython.value) return;
+  
+  const useGpu = !toCpu;
+  switchingGpu.value = true;
+  
+  try {
+    const sid = `gpu_switch_${Date.now()}`;
+    operationSessionId.value = sid; // 关键：设置 sessionId 以便日志路由
+    showTerminal.value = true;
+    terminalLines.value = [];
+    
+    await switchGpuMode(activePython.value.path, useGpu, sid);
+    
+    ElMessage.success(useGpu ? '已切换到 GPU 版本' : '已切换到 CPU 版本');
+    await refreshOcrStatus();
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    terminalLines.value.push(`✗ ${msg}`);
+    ElMessage.error(`切换失败: ${msg}`);
+  } finally {
+    switchingGpu.value = false;
+    operationSessionId.value = ''; // 清理
+  }
+}
+
+// 打开 Python 3.12.10 下载页
+function openPythonDownload() {
+  // Windows 64-bit 官方安装包
+  window.open('https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe', '_blank');
+}
 </script>
 
 <style scoped>
@@ -843,6 +1009,40 @@ function versionDisplay(version: string): string {
   font-size: 0.9em;
 }
 
+/* Python 安装引导卡片 */
+.python-guide-card {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+}
+
+.guide-title {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 12px;
+  font-size: 0.95em;
+}
+
+.guide-steps {
+  margin: 0 0 16px 0;
+  padding-left: 20px;
+  color: #555;
+  font-size: 0.9em;
+  line-height: 1.8;
+}
+
+.guide-steps strong {
+  color: #e6a23c;
+}
+
+.guide-links {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .ocr-info {
   margin-top: 16px;
 }
@@ -881,6 +1081,62 @@ function versionDisplay(version: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* PaddleOCR details */
+.paddle-details {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+
+.paddle-info-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.paddle-version {
+  font-size: 0.85em;
+  color: #6b7280;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.gpu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gpu-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8em;
+  color: #4b5563;
+}
+
+.gpu-icon {
+  font-size: 0.9em;
+  width: 16px;
+  text-align: center;
+}
+
+.gpu-name {
+  font-weight: 500;
+}
+
+.gpu-vram {
+  color: #9ca3af;
+}
+
+.gpu-tag {
+  margin-left: auto;
+  font-size: 0.75em;
+  padding: 0 6px;
 }
 
 .python-actions {
@@ -944,6 +1200,24 @@ function versionDisplay(version: string): string {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Bundled Python note (Windows) */
+.bundled-note {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fff3e0;
+  border: 1px solid #ffe0b2;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: #e65100;
+}
+
+.bundled-note .el-icon {
+  font-size: 16px;
 }
 
 .discover-loading {

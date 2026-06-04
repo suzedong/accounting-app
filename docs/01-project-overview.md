@@ -162,14 +162,16 @@
 
 #### OCR 层
 
-**PaddleOCR（Python 子进程）+ 智能 Python 探测 + 自动安装依赖**
+**PaddleOCR（Python 子进程）+ 智能 Python 探测 + 自动安装依赖 + 事件驱动发现**
 
 - Rust 端通过 `std::process::Command` 调用 `src-tauri/scripts/ocr_service.py` 子进程
-- 跨平台 Python 智能探测（Windows `py`/`python` + 注册表，macOS `python3`/Homebrew，Linux `python3`），通过 `python_manager.ps1`（Windows）和 `python_manager.sh`（macOS/Linux）实现
+- 跨平台 Python 智能探测（Windows `py`/`python` + 注册表 + Microsoft Store 检测，macOS `python3`/Homebrew，Linux `python3`），通过 `python_manager.ps1`（Windows）和 `python_manager.sh`（macOS/Linux）实现
 - 首次使用时 Settings 页一键 `pip install paddlepaddle paddleocr`
 - 通过临时文件传递 base64 图片数据，避免命令行长度限制
 - 启动时自动检测 Python 和 paddleocr 安装状态
-- Settings 页提供 OCR 管理（状态展示 / 安装依赖 / 启用禁用开关）
+- Settings 页提供 OCR 管理（状态展示 / 安装依赖 / 启用禁用开关 / 事件驱动扫描）
+- **事件驱动发现机制**：前端调用 `startOcrDiscover()`，Rust 后台线程扫描 Python，完成后通过 Tauri 事件 `ocr_discover_result` 推送结果，扫描期间显示加载动画
+- **Microsoft Store Python 限制**：App Execution Aliases（stub 文件）在非交互式终端中无法执行，标记为"不可用"，提示用户从 python.org 安装
 
 #### 本地 LLM 层
 

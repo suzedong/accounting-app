@@ -36,7 +36,12 @@
       />
 
       <!-- Send button -->
-      <el-button @click="handleSend" :loading="sending" type="primary">
+      <el-button 
+        @click="handleSend" 
+        :loading="sending || ocrLoading" 
+        :disabled="sending || ocrLoading"
+        type="primary"
+      >
         <el-icon><Promotion /></el-icon>
       </el-button>
     </div>
@@ -88,11 +93,28 @@ function handlePaste(event: ClipboardEvent) {
 }
 
 function loadImageFile(file: File) {
+  // 验证文件大小（最大 10MB）
+  const maxSize = 10 * 1024 * 1024;
+  if (file.size > maxSize) {
+    ElMessage.error(`图片过大，最大支持 10MB，当前文件 ${(file.size / 1024 / 1024).toFixed(1)}MB`);
+    return;
+  }
+
+  // 验证文件类型
+  const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/bmp', 'image/gif', 'image/webp'];
+  if (!validTypes.includes(file.type)) {
+    ElMessage.error(`不支持的图片格式: ${file.type}`);
+    return;
+  }
+
   const reader = new FileReader();
   reader.onload = () => {
     const result = reader.result as string;
     imageSrc.value = result;
     imageBase64.value = result.includes(',') ? result.split(',')[1] : result;
+  };
+  reader.onerror = () => {
+    ElMessage.error('图片读取失败');
   };
   reader.readAsDataURL(file);
 }
@@ -120,6 +142,14 @@ async function handleSend() {
     ocrLoading.value = true;
     try {
       const ocrText = await ocrRecognize(imageBase64.value!);
+      
+      // 检查 OCR 结果：未识别到文字且用户没有输入文字，则不发送
+      const isEmptyResult = ocrText === '未识别到文字' || ocrText.trim() === '';
+      if (isEmptyResult && !mergedText) {
+        ElMessage.warning('图片中未识别到文字，请上传包含文字的图片');
+        return;
+      }
+      
       // 合并文本：用户文字 + OCR 识别文字
       const finalText = mergedText
         ? `${mergedText} ${ocrText}`

@@ -96,6 +96,7 @@ fn main() {
             commands::ocr::install_bundled_python,
             commands::ocr::uninstall_bundled_python,
             commands::ocr::reinstall_bundled_python,
+            commands::ocr::switch_gpu_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

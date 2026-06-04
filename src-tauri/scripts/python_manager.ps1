@@ -1,12 +1,12 @@
-# Python 版本发现和依赖管理脚本 — Windows 版本
-# 被 Tauri Rust 后端调用
-# 用法: .\python_manager.ps1 <command> [args...]
-#   discover                    - 发现系统中所有 Python
-#   install <python_path>        - 在指定 Python 安装 paddlepaddle+paddleocr
-#   uninstall <python_path>      - 从指定 Python 卸载 paddleocr
-#   check_paddle <python_path>   - 检查指定 Python 是否有 paddleocr
-#   install_bundled              - Windows 不支持，返回提示
-#   uninstall_bundled            - 删除内置 Python 目录
+# Python version discovery and dependency management script - Windows version
+# Called by Tauri Rust backend
+# Usage: .\python_manager.ps1 <command> [args...]
+#   discover                    - Discover all Python in system
+#   install <python_path>        - Install paddlepaddle+paddleocr on specified Python
+#   uninstall <python_path>      - Uninstall paddleocr from specified Python
+#   check_paddle <python_path>   - Check if specified Python has paddleocr
+#   install_bundled              - Not supported on Windows, returns hint
+#   uninstall_bundled            - Delete built-in Python directory
 
 param(
     [Parameter(Position=0)]
@@ -22,7 +22,7 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-# 内置 Python 路径 (Windows)
+# Built-in Python path (Windows)
 $BundledPythonDir = Join-Path $env:LOCALAPPDATA 'accounting-app\python'
 $BundledPython = Join-Path $BundledPythonDir 'python.exe'
 
@@ -30,9 +30,26 @@ $BundledPython = Join-Path $BundledPythonDir 'python.exe'
 function Get-PythonVersion {
     param([string]$path)
     try {
+        # For Microsoft Store stub files, use Get-ItemProperty to get version
+        if ($path -like '*WindowsApps*') {
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($path)
+            if ($baseName -match 'python(\d+)\.(\d+)') {
+                return "Python $($matches[1]).$($matches[2])"
+            }
+        }
         $output = & $path --version 2>&1
         if ($LASTEXITCODE -eq 0) {
             return $output.Trim()
+        }
+    } catch {}
+    # Fallback: try to get version from registry
+    try {
+        $regVersions = Get-ChildItem 'HKCU:\SOFTWARE\Python\PythonCore' -ErrorAction SilentlyContinue
+        foreach ($ver in $regVersions) {
+            $installPath = (Get-ItemProperty "$($ver.PSPath)\InstallPath" -ErrorAction SilentlyContinue).'(default)'
+            if ($installPath -and $path.ToLower().Contains($installPath.ToLower())) {
+                return "Python $($ver.PSChildName)"
+            }
         }
     } catch {}
     return $null
@@ -100,12 +117,12 @@ function Add-UniquePythonCandidate {
     return $null
 }
 
-# --- discover: 发现所有 Python ---
+# --- discover: Discover all Python ---
 function Invoke-Discover {
     $candidates = @()
 
-    # 1. PATH 中的常见命令
-    $pathCommands = @('python', 'python3', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8')
+    # 1. Common commands in PATH
+    $pathCommands = @('python', 'python3', 'python3.14', 'python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8')
     foreach ($cmd in $pathCommands) {
         $found = Get-Command $cmd -ErrorAction SilentlyContinue
         if ($found -and $found.Source) {
@@ -114,7 +131,7 @@ function Invoke-Discover {
         }
     }
 
-    # 2. py launcher: 列出所有已注册的 Python
+    # 2. py launcher: List all registered Python
     $pyLauncher = Get-Command 'py' -ErrorAction SilentlyContinue
     if ($pyLauncher) {
         try {
@@ -131,7 +148,7 @@ function Invoke-Discover {
         } catch {}
     }
 
-    # 3. 注册表查询 - HKLM (所有用户)
+    # 3. Registry query - HKLM (all users)
     $regPaths = @(
         'HKLM:\SOFTWARE\Python\PythonCore',
         'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore'
@@ -155,7 +172,7 @@ function Invoke-Discover {
         } catch {}
     }
 
-    # 4. 注册表查询 - HKCU (当前用户)
+    # 4. Registry query - HKCU (current user)
     try {
         if (Test-Path 'HKCU:\SOFTWARE\Python\PythonCore') {
             $versions = Get-ChildItem 'HKCU:\SOFTWARE\Python\PythonCore' -ErrorAction SilentlyContinue
@@ -173,7 +190,7 @@ function Invoke-Discover {
         }
     } catch {}
 
-    # 5. 常见安装路径 (使用 Get-ChildItem 代替 .NET API，避免 $matches 冲突)
+    # 5. Common installation paths
     $searchDirs = @()
     if ($env:LOCALAPPDATA) {
         $searchDirs += Join-Path $env:LOCALAPPDATA 'Programs\Python'
@@ -196,7 +213,7 @@ function Invoke-Discover {
         } catch {}
     }
 
-    # 构建 JSON 输出
+    # Build JSON output
     $jsonItems = @()
     foreach ($path in $candidates) {
         $version = Get-PythonVersion $path
@@ -206,6 +223,12 @@ function Invoke-Discover {
         $isCompatible = Test-PythonCompatible $version
         $hasPaddle = Test-PaddleOCR $path
         $source = Get-PythonSource $path
+        
+        # Mark Microsoft Store Python as unusable for installation
+        $isUsable = $true
+        if ($source -eq 'store') {
+            $isUsable = $false
+        }
 
         $jsonItems += @{
             path = $path
@@ -214,6 +237,7 @@ function Invoke-Discover {
             is_compatible = $isCompatible
             has_paddleocr = $hasPaddle
             source = $source
+            is_usable = $isUsable
         }
     }
 
@@ -228,45 +252,55 @@ function Invoke-Discover {
     return ($result | ConvertTo-Json -Depth 3 -Compress)
 }
 
-# --- install: 在指定 Python 上安装 paddlepaddle + paddleocr ---
+# --- install: Install paddlepaddle + paddleocr on specified Python ---
 function Invoke-Install {
     param([string]$pythonPath)
     if (-not (Test-Path $pythonPath)) {
-        Write-Output "error: Python 可执行文件不存在: $pythonPath"
+        Write-Output "error: Python executable not found: $pythonPath"
         return
+    }
+
+    # Check if this is a Microsoft Store stub file
+    if ($pythonPath -like '*WindowsApps*') {
+        Write-Output "error: Microsoft Store Python stub files cannot be used for package installation."
+        Write-Output "Please install Python from python.org and select that path instead."
+        Write-Output "Download: https://www.python.org/downloads/"
+        $err = @{ error = "Microsoft Store Python not supported for installation. Please use python.org version." }
+        Write-Output ($err | ConvertTo-Json -Compress)
+        exit 1
     }
 
     $packages = @('paddlepaddle', 'paddleocr')
     foreach ($pkg in $packages) {
-        Write-Output ">>> 正在安装 $pkg ..."
+        Write-Output ">>> Installing $pkg ..."
         & $pythonPath -m pip install --upgrade $pkg 2>&1 | ForEach-Object { Write-Output $_ }
         if ($LASTEXITCODE -ne 0) {
-            Write-Output "✗ 安装 $pkg 失败"
+            Write-Output "[FAIL] Failed to install $pkg"
             return
         }
-        Write-Output "✓ $pkg 安装完成"
+        Write-Output "[OK] $pkg installed"
     }
-    Write-Output ">>> 全部安装完成！"
+    Write-Output ">>> All packages installed"
 }
 
-# --- uninstall: 卸载 paddleocr + paddlepaddle ---
+# --- uninstall: Uninstall paddleocr + paddlepaddle ---
 function Invoke-Uninstall {
     param([string]$pythonPath)
     if (-not (Test-Path $pythonPath)) {
-        Write-Output "error: Python 可执行文件不存在: $pythonPath"
+        Write-Output "error: Python executable not found: $pythonPath"
         return
     }
 
     $packages = @('paddleocr', 'paddlepaddle')
     foreach ($pkg in $packages) {
-        Write-Output ">>> 正在卸载 $pkg ..."
+        Write-Output ">>> Uninstalling $pkg ..."
         & $pythonPath -m pip uninstall -y $pkg 2>&1 | ForEach-Object { Write-Output $_ }
-        Write-Output "✓ $pkg 已卸载"
+        Write-Output "[OK] $pkg uninstalled"
     }
-    Write-Output ">>> 卸载完成"
+    Write-Output ">>> Uninstall complete"
 }
 
-# --- check_paddle: 检查 paddleocr ---
+# --- check_paddle: Check paddleocr ---
 function Invoke-CheckPaddle {
     param([string]$pythonPath)
     if (Test-PaddleOCR $pythonPath) {
@@ -276,24 +310,24 @@ function Invoke-CheckPaddle {
     }
 }
 
-# --- install_bundled: Windows 不支持 ---
+# --- install_bundled: Not supported on Windows ---
 function Invoke-InstallBundled {
     param([string]$sessionId)
-    Write-Output ">>> Windows 平台不支持内置 Python 自动安装"
-    Write-Output ">>> 请从 python.org 下载 Python 3.12，或通过 Microsoft Store 安装"
-    $err = @{ error = "Windows 平台不支持内置 Python 自动安装" }
+    Write-Output ">>> Windows does not support automatic built-in Python installation"
+    Write-Output ">>> Please download Python 3.12 from python.org, or install via Microsoft Store"
+    $err = @{ error = "Windows does not support automatic built-in Python installation" }
     Write-Output ($err | ConvertTo-Json -Compress)
     exit 1
 }
 
-# --- uninstall_bundled: 删除内置 Python 目录 ---
+# --- uninstall_bundled: Delete built-in Python directory ---
 function Invoke-UninstallBundled {
     if (Test-Path $BundledPythonDir) {
         try {
             Remove-Item $BundledPythonDir -Recurse -Force -ErrorAction SilentlyContinue
-            Write-Output "✓ 内置 Python 已卸载"
+            Write-Output "[OK] Built-in Python uninstalled"
         } catch {
-            Write-Output "⚠ 卸载内置 Python 时出错: $_"
+            Write-Output "[WARN] Error uninstalling built-in Python: $_"
         }
     }
     $ok = @{ status = "ok" }
@@ -309,7 +343,7 @@ switch ($Command) {
     'install_bundled'    { Invoke-InstallBundled $Arg1 }
     'uninstall_bundled'  { Invoke-UninstallBundled }
     default {
-        Write-Output "error: 未知操作。用法: discover|install|uninstall|check_paddle|install_bundled|uninstall_bundled [args]"
+        Write-Output "error: Unknown operation. Usage: discover|install|uninstall|check_paddle|install_bundled|uninstall_bundled [args]"
         exit 1
     }
 }

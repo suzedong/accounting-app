@@ -391,11 +391,58 @@ def get_engine():
             target.use_vl = False
 
     _log('正在加载 PaddleOCR 模型...')
-    # GPU 模式下使用 device='gpu'，否则 'cpu'
-    device = 'gpu' if target.device == 'gpu' else 'cpu'
+    
+    # 强制使用 CPU 模式，避免 GPU 版本兼容性问题
+    device = 'cpu'
+    
     with _suppress_paddle_output():
         from paddleocr import PaddleOCR
-        _engine = PaddleOCR(use_angle_cls=True, lang='ch', device=device)
+        
+        # 尝试多种初始化方式，处理版本兼容性问题
+        try:
+            # 方式1: 尝试禁用文档预处理功能（解决 PaddleOCR 3.x 与 PaddlePaddle 2.x 不兼容问题）
+            _engine = PaddleOCR(
+                use_angle_cls=True, 
+                lang='ch', 
+                device=device,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_table=False,
+                det_db_score_mode='fast'
+            )
+        except AttributeError as e:
+            _log(f'方式1 失败 ({e})，尝试方式2...')
+            try:
+                # 方式2: 新版本 API（PaddleOCR 3.x）
+                _engine = PaddleOCR(use_angle_cls=True, lang='ch', device=device)
+            except AttributeError as e2:
+                _log(f'方式2 失败 ({e2})，尝试方式3...')
+                try:
+                    # 方式3: 仅基础参数
+                    _engine = PaddleOCR(lang='ch', device=device)
+                except Exception as e3:
+                    _log(f'方式3 失败 ({e3})，尝试方式4...')
+                    try:
+                        # 方式4: 禁用角度分类
+                        _engine = PaddleOCR(use_angle_cls=False, lang='ch', device=device)
+                    except Exception as e4:
+                        _log(f'所有方式都失败 ({e4})，尝试自动降级安装兼容版本...')
+                        # 方式5: 自动降级安装兼容版本的 PaddleOCR
+                        try:
+                            _log('正在安装兼容版本的 PaddleOCR...')
+                            _pip_install('paddleocr==2.7.0')
+                            
+                            # 重新导入
+                            import importlib
+                            import paddleocr as paddleocr_module
+                            importlib.reload(paddleocr_module)
+                            from paddleocr import PaddleOCR
+                            
+                            _engine = PaddleOCR(use_angle_cls=True, lang='ch', device=device)
+                            _log('降级安装 PaddleOCR 2.7.0 成功')
+                        except Exception as e5:
+                            raise RuntimeError(f'无法初始化 OCR 引擎: {e5}')
+    
     _log('PaddleOCR 模型加载完成')
 
     return _engine
@@ -411,51 +458,163 @@ def recognize_image(base64_str):
     Returns:
         dict: { text: str, lines: list }
     """
-    if not base64_str:
+    import threading
+    
+    # 设置函数级超时（防止无限循环）
+    class TimeoutException(Exception):
+        pass
+    
+    timeout_event = threading.Event()
+    
+    def timeout_checker(timeout_sec):
+        timeout_event.wait(timeout_sec)
+        if not timeout_event.is_set():
+            _log(f'OCR 识别超时（{timeout_sec}秒）')
+    
+    # 启动超时检查线程（跨平台兼容）
+    timeout_thread = threading.Thread(target=timeout_checker, args=(45,), daemon=True)
+    timeout_thread.start()
+    
+    try:
+        if not base64_str:
+            return {'text': '', 'lines': []}
+        # 移除 data URI 前缀
+        if ',' in base64_str:
+            base64_str = base64_str.split(',', 1)[1]
+
+        # 验证 Base64 数据
+        if len(base64_str) > 50 * 1024 * 1024:  # 限制最大 50MB
+            _log('图片过大，超过 50MB 限制')
+            return {'text': '', 'lines': []}
+
+        # 安全解码 Base64
+        try:
+            image_bytes = base64.b64decode(base64_str)
+        except Exception as e:
+            _log(f'Base64 解码失败: {e}')
+            return {'text': '', 'lines': []}
+
+        # 验证图片数据大小
+        if len(image_bytes) == 0:
+            _log('图片数据为空')
+            return {'text': '', 'lines': []}
+
+        # 打开并验证图片
+        img = Image.open(io.BytesIO(image_bytes))
+
+        # 检查图片格式是否支持
+        supported_formats = {'JPEG', 'PNG', 'BMP', 'GIF', 'WEBP'}
+        if img.format and img.format not in supported_formats:
+            _log(f'不支持的图片格式: {img.format}')
+            return {'text': '', 'lines': []}
+
+        # 转换为 RGB 模式（处理灰度、RGBA、CMYK 等模式）
+        if img.mode not in ('RGB', 'L'):
+            img = img.convert('RGB')
+
+        # 图片尺寸限制（防止超大图片导致内存不足）
+        max_size = 4096
+        if img.width > max_size or img.height > max_size:
+            _log(f'图片尺寸过大 ({img.width}x{img.height})，正在缩小')
+            ratio = min(max_size / img.width, max_size / img.height)
+            new_width = int(img.width * ratio)
+            new_height = int(img.height * ratio)
+            img = img.resize((new_width, new_height), Image.LANCZOS)
+
+        # 转换为 numpy 数组
+        img_array = np.array(img)
+
+        # 获取引擎
+        engine = get_engine()
+
+        # 根据引擎类型选择调用方式
+        if _device_mode and _device_mode.use_vl:
+            # PaddleOCR-VL — 结果从 page.json['res']['parsing_res_list'] 提取
+            result = engine.predict(img_array)
+            lines = []
+            if result:
+                for page in result:
+                    res = page.json.get('res', {})
+                    parsing_list = res.get('parsing_res_list', [])
+                    for block in parsing_list:
+                        content = block.get('block_content', '').strip()
+                        if content:
+                            lines.append(content)
+        else:
+            # 标准 PaddleOCR - 支持多种返回格式
+            result = engine.predict(img_array, use_doc_orientation_classify=False, use_doc_unwarping=False)
+            lines = []
+            
+            # 尝试将结果转换为列表
+            try:
+                result_list = list(result) if not isinstance(result, list) else result
+            except:
+                result_list = []
+            
+            _log(f'PaddleOCR 返回类型: {type(result).__name__}, 长度: {len(result_list) if result_list else 0}')
+            
+            if result_list:
+                # 调试：打印第一个结果的结构
+                import json
+                _log(f'第一个结果结构: {json.dumps(result_list[0], default=str, ensure_ascii=False)[:500]}')
+                
+                for page in result_list:
+                    # 格式1: 字典格式，包含 rec_texts 和 rec_scores
+                    if isinstance(page, dict):
+                        rec_texts = page.get('rec_texts', []) or []
+                        rec_scores = page.get('rec_scores', []) or []
+                        if rec_texts:
+                            _log(f'找到 {len(rec_texts)} 个识别结果')
+                            for text, score in zip(rec_texts, rec_scores):
+                                score = float(score) if score else 0
+                                if score > 0.3 and text and text.strip():
+                                    lines.append(text.strip())
+                            continue
+                    
+                    # 格式2: 标准 PaddleOCR 格式 [[[bbox], (text, score)], ...]
+                    # 外层列表，每个元素是 [[位置], (文字, 置信度)]
+                    if isinstance(page, list):
+                        _log(f'处理列表格式，长度: {len(page)}')
+                        for item in page:
+                            # 检查是否为 [[bbox], (text, score)] 格式
+                            if isinstance(item, list) and len(item) >= 2:
+                                # item[0] 是 bbox，item[1] 应该是 (text, score)
+                                text_info = item[1]
+                                if isinstance(text_info, tuple) and len(text_info) >= 2:
+                                    text, score = text_info[0], float(text_info[1])
+                                    _log(f'识别到文字: "{text}" (置信度: {score})')
+                                    if score > 0.2 and text and text.strip():
+                                        lines.append(text.strip())
+                            # 也可能是直接的 (text, score) 元组
+                            elif isinstance(item, tuple) and len(item) >= 2:
+                                text, score = item[0], float(item[1])
+                                _log(f'识别到文字(元组): "{text}" (置信度: {score})')
+                                if score > 0.2 and text and text.strip():
+                                    lines.append(text.strip())
+                    
+                    # 格式3: 直接是 (text, score) 元组
+                    elif isinstance(page, tuple) and len(page) >= 2:
+                        text, score = page[0], float(page[1])
+                        _log(f'识别到文字(直接元组): "{text}" (置信度: {score})')
+                        if score > 0.2 and text and text.strip():
+                            lines.append(text.strip())
+
+        full_text = '\n'.join(lines)
+        _log(f'识别完成，共 {len(lines)} 行，文本长度: {len(full_text)}')
+
+        return {
+            'text': full_text,
+            'lines': lines
+        }
+
+    except Exception as e:
+        _log(f'OCR 识别异常: {type(e).__name__}: {e}')
+        import traceback
+        _log(f'异常堆栈: {traceback.format_exc()[:2000]}')
         return {'text': '', 'lines': []}
-
-    # 移除 data URI 前缀
-    if ',' in base64_str:
-        base64_str = base64_str.split(',', 1)[1]
-
-    image_bytes = base64.b64decode(base64_str)
-    img = Image.open(io.BytesIO(image_bytes))
-    img_array = np.array(img)
-
-    engine = get_engine()
-
-    # 根据引擎类型选择调用方式
-    if _device_mode and _device_mode.use_vl:
-        # PaddleOCR-VL — 结果从 page.json['res']['parsing_res_list'] 提取
-        result = engine.predict(img_array)
-        lines = []
-        if result:
-            for page in result:
-                res = page.json.get('res', {})
-                parsing_list = res.get('parsing_res_list', [])
-                for block in parsing_list:
-                    content = block.get('block_content', '').strip()
-                    if content:
-                        lines.append(content)
-    else:
-        # 标准 PaddleOCR
-        result = list(engine.predict(img_array, use_doc_orientation_classify=False, use_doc_unwarping=False))
-        lines = []
-        if result:
-            for page in result:
-                rec_texts = page.get('rec_texts', []) or []
-                rec_scores = page.get('rec_scores', []) or []
-                for text, score in zip(rec_texts, rec_scores):
-                    if score > 0.5 and text:
-                        lines.append(text)
-
-    full_text = '\n'.join(lines)
-    _log(f'识别完成，共 {len(lines)} 行，文本长度: {len(full_text)}')
-
-    return {
-        'text': full_text,
-        'lines': lines
-    }
+    finally:
+        # 取消超时检查
+        timeout_event.set()
 
 
 def _get_device_status():

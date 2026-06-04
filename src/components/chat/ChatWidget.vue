@@ -161,7 +161,7 @@ import FollowUpCard from './FollowUpCard.vue';
 import StepList from './StepList.vue';
 import SettingsPanel from './SettingsPanel.vue';
 import { useChatStore } from '@/stores/chat';
-import { getSystemPrompt, getLearningCorrections, updateSystemPrompt, deleteCorrection, clearCorrections, clearChatHistory } from '@/api/tauri';
+import { getSystemPrompt, getLearningCorrections, updateSystemPrompt, deleteCorrection, clearCorrections } from '@/api/tauri';
 import type { Step } from '@/types/chat';
 
 const chat = useChatStore();
@@ -182,7 +182,8 @@ function formatThinkingLabel(steps: Step[]): string {
   return steps.map(s => s.title).join(' · ');
 }
 
-function currentStepLabel(steps: Step[]): string {
+function currentStepLabel(steps: Step[] | undefined): string {
+  if (!steps) return '处理中';
   const running = steps.find(s => s.status === 'running');
   return running ? running.title : '处理中';
 }

@@ -260,6 +260,10 @@ export async function reinstallPaddleocrForPython(pythonPath: string, sessionId:
   return invoke('reinstall_paddleocr_for_python', { pythonPath, sessionId });
 }
 
+export async function switchGpuMode(pythonPath: string, useGpu: boolean, sessionId: string): Promise<string> {
+  return invoke('switch_gpu_mode', { pythonPath, useGpu, sessionId });
+}
+
 export async function setOcrEnabled(enabled: boolean): Promise<void> {
   return invoke('set_ocr_enabled', { enabled });
 }

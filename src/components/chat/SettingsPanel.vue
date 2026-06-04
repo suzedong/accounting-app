@@ -187,8 +187,8 @@ async function runDiagnostics() {
   // 1. Database
   try {
     const { getRecords } = await import('@/api/tauri');
-    const res = await getRecords({ page: 1, pageSize: 1 });
-    items.push({ name: '数据库', status: 'ok', value: `连接正常 (${res.total} 条记录)` });
+    await getRecords({ page: 1, pageSize: 1 });
+    items.push({ name: '数据库', status: 'ok', value: `连接正常` });
   } catch {
     items.push({ name: '数据库', status: 'error', value: '连接失败' });
   }
@@ -204,9 +204,9 @@ async function runDiagnostics() {
 
   // 3. OCR
   try {
-    const { ocrRecognize } = await import('@/api/tauri');
-    // Just check if the command exists
-    items.push({ name: 'OCR 识别', status: 'ok', value: '可用' });
+    const { checkOcrStatusFast } = await import('@/api/tauri');
+    const status = await checkOcrStatusFast();
+    items.push({ name: 'OCR 识别', status: status.available ? 'ok' : 'warn', value: status.available ? '可用' : '不可用' });
   } catch {
     items.push({ name: 'OCR 识别', status: 'warn', value: '不可用' });
   }
@@ -245,7 +245,7 @@ async function runDiagnostics() {
   try {
     const { getChatHistory } = await import('@/api/tauri');
     const res = await getChatHistory(1);
-    items.push({ name: '对话历史', status: 'ok', value: `${res.total} 条消息` });
+    items.push({ name: '对话历史', status: 'ok', value: `${res.data.length} 条消息` });
   } catch {
     items.push({ name: '对话历史', status: 'error', value: '加载失败' });
   }

@@ -33,6 +33,16 @@ export function useOCR() {
     error.value = null;
 
     try {
+      // 验证 Base64 数据
+      if (!imageBase64 || typeof imageBase64 !== 'string') {
+        throw new Error('无效的图片数据');
+      }
+
+      // 检查数据大小（最大 50MB Base64）
+      if (imageBase64.length > 50 * 1024 * 1024) {
+        throw new Error('图片数据过大');
+      }
+
       const rawText = await ocrRecognize(imageBase64);
       const cleanText = rawText.split('\n')
         .filter(line => !line.startsWith('[OCR]') && line !== '[OCR 识别结果]')
