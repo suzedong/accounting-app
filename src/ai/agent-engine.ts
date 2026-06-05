@@ -34,6 +34,7 @@ export class AgentEngine {
   private contextLoaded = false;
   private llmLogs: LLMLogEntry[] = [];
   private llmLogListeners = new Set<(entry: LLMLogEntry) => void>();
+  private lastConfirmedRecordContext = '';  // 上一条记录的结构化摘要
   private nextLogId = 1;
 
   /** 加载 system prompt + preferences + learning data */
@@ -257,17 +258,20 @@ export class AgentEngine {
     userMessage: string,
     _recentMessages: LLMMessage[],
   ): Promise<{ content: string; toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null }> {
-    // 注入对话上下文
+    // 智能上下文注入：只在检测到修正意图时注入历史
     let systemWithHistory = systemMessage;
-    if (_recentMessages.length > 1) {
-      const contextLines: string[] = [];
-      for (let i = Math.max(0, _recentMessages.length - 6); i < _recentMessages.length; i++) {
-        const m = _recentMessages[i];
-        const prefix = m.role === 'user' ? '用户' : 'AI';
-        const content = (m.content || '').substring(0, 80);
-        contextLines.push(`${prefix}: ${content}`);
+
+    if (this.needsHistoryContext(userMessage)) {
+      // 优先使用 lastConfirmedRecord 的摘要（最精确）
+      if (this.lastConfirmedRecordContext) {
+        systemWithHistory += `\n\n## 上一条记录\n${this.lastConfirmedRecordContext}`;
+      } else if (_recentMessages.length > 1) {
+        // 降级：从最近对话中提取摘要
+        const contextSummary = this.buildContextSummary(_recentMessages);
+        if (contextSummary) {
+          systemWithHistory += `\n\n## 最近对话上下文\n${contextSummary}\n\n**重要**：以上是对话历史，用户可能在纠正上一条记录。请根据上下文理解用户意图。`;
+        }
       }
-      systemWithHistory += `\n\n## 最近对话上下文\n${contextLines.join('\n')}\n\n**重要**：以上是对话历史，用户可能在纠正上一条记录。请根据上下文理解用户意图。`;
     }
 
     // 获取工具定义（JSON Schema 格式）
@@ -429,6 +433,65 @@ export class AgentEngine {
     delete params.payment_method;
     delete params.payment_source;
     delete params.payment_method_source;
+  }
+
+  /**
+   * 检测用户消息是否需要注入历史上下文
+   * 触发条件：用户明确引用历史记录或表达修正意图
+   */
+  private needsHistoryContext(userMessage: string): boolean {
+    const msg = userMessage.toLowerCase();
+    // 显式引用词
+    const referenceWords = ['上面', '前面', '上一条', '刚才', '上条', '之前'];
+    // 修正动作词
+    const correctionWords = ['改成', '改为', '改一下', '修正', '纠正', '更新', '修改'];
+    // 否定判断词
+    const negationWords = ['不对', '错了', '不是', '有误', '错误'];
+    // 省略主语的修正表达（"应该是"、"应该是家庭"）
+    const implicitCorrection = ['应该是', '应为', '应是', '改成', '改为'];
+
+    const allTriggers = [...referenceWords, ...correctionWords, ...negationWords, ...implicitCorrection];
+    return allTriggers.some(word => msg.includes(word));
+  }
+
+  /**
+   * 从最近对话历史中构建上下文摘要
+   * 提取关键信息，避免注入完整 OCR 原文
+   */
+  private buildContextSummary(recentMessages: LLMMessage[]): string | null {
+    // 取最近 3 轮（6 条消息），排除当前消息
+    const historyForContext = recentMessages.slice(0, -2);
+    const displayCount = Math.min(6, historyForContext.length);
+    if (displayCount === 0) return null;
+
+    const contextLines: string[] = [];
+    for (let i = historyForContext.length - displayCount; i < historyForContext.length; i++) {
+      if (i < 0) continue;
+      const m = historyForContext[i];
+      const prefix = m.role === 'user' ? '用户' : 'AI';
+      contextLines.push(`${prefix}: ${m.content || ''}`);
+    }
+    return contextLines.join('\n');
+  }
+
+  /**
+   * 设置上一条确认记录的上下文摘要
+   * 在确认记录后调用，用于后续修正意图的快速上下文注入
+   */
+  setLastConfirmedRecordContext(record: Record<string, unknown> | null) {
+    if (!record) {
+      this.lastConfirmedRecordContext = '';
+      return;
+    }
+    const lines: string[] = [];
+    if (record.amount) lines.push(`金额：${record.amount}元`);
+    if (record.type) lines.push(`类型：${record.type}`);
+    if (record.category) lines.push(`分类：${record.category}`);
+    if (record.account) lines.push(`账户：${record.account}`);
+    if (record.payment) lines.push(`支付：${record.payment}`);
+    if (record.note) lines.push(`备注：${record.note}`);
+    if (record.datetime) lines.push(`时间：${record.datetime}`);
+    this.lastConfirmedRecordContext = lines.join('\n');
   }
 
   /** 构建学习数据上下文 */

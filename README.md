@@ -43,7 +43,7 @@ src-tauri/        # Rust 后端
 │   ├── main.rs   # Tauri 入口
 │   ├── commands/ # Tauri 命令（records/trips/stats/sync/ocr 等）
 │   └── db/       # SQLite 数据库
-└── prompts/      # AI 系统 Prompt（dispatch.md, record.md）
+└── prompts/      # AI 系统 Prompt（dispatch.md, preferences.md）
 
 docs/             # 设计文档
 ```

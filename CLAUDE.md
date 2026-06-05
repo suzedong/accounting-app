@@ -68,8 +68,7 @@ src-tauri/        # Rust 后端（Tauri 2 + SQLite）
 │   └── ocr_service.py     # PaddleOCR 识别服务
 └── prompts/      # AI 系统 Prompt
     ├── dispatch.md       # 分类识别表、支付方式、账户、类型判断、备注规则、OCR处理、追问规则
-    ├── preferences.md    # 用户个性化偏好（默认账户、支付方式映射等）
-    └── record.md         # 记录备注生成规则（商户名、堂食、外卖、话费等格式）
+    └── preferences.md    # 用户个性化偏好（默认账户、支付方式映射等）
 
 docs/             # 设计文档
 │   ├── 01-project-overview.md     # 需求 + 架构 + UI
@@ -182,7 +181,7 @@ Agent 采用 **LLM Function Calling + 前端 Tool Registry** 的架构：
 | `render_budget` | 渲染预算状态 | 计算预算执行情况 |
 | `ask_follow_up` | 追问补充信息 | 生成 FollowUpCard |
 | `reply_text` | 纯文本回复 | 直接显示文本 |
-| `save_preference` | 保存用户偏好 | 写入 SQLite learning_data |
+| `save_preference` | 保存用户偏好 | 写入 SQLite system_prompts（preferences） |
 | `update_prompt` | 修改系统 dispatch prompt | 更新 system_prompts 表 |
 | `clear_chat` | 清空对话历史 | 清空 chat_history 表 |
 | `query_collection` | 查询任意集合 | 通用查询 |
@@ -204,9 +203,8 @@ SYSTEM_PROMPT 存储在 SQLite `system_prompts` 表中，文件缓存在 `src-ta
 
 | 文件 | 用途 |
 |---|---|
-| `dispatch.md` | 能力清单 + 意图识别规则 + 分类识别表 + 支付方式识别 + 账户识别 + OCR 处理规则 + 追问规则 + 字段来源标注规则 |
+| `dispatch.md` | 能力清单 + 意图识别规则 + 分类识别表 + 支付方式识别 + 账户识别 + 备注规则 + OCR 处理规则 + 追问规则 + 字段来源标注规则 |
 | `preferences.md` | 用户个性化偏好（默认账户、支付方式映射等），优先级高于系统默认 |
-| `record.md` | 备注生成规则：商户名、堂食格式、外卖格式、话费格式等 |
 
 ### AgentEngine 工作流程
 
@@ -223,7 +221,7 @@ SYSTEM_PROMPT 存储在 SQLite `system_prompts` 表中，文件缓存在 `src-ta
 | 函数 | 调用的 Tauri Command |
 |---|---|
 | `getChatHistory(limit)` | `get_chat_history` |
-| `saveChatMessage(role, content, data, skill, confidence)` | `save_chat_message` |
+| `saveChatMessage(sessionId, role, content, data)` | `save_chat_message` |
 | `clearChatHistory()` | `clear_chat_history` |
 | `callLLM(systemMessage, userMessage)` | `call_llm` |
 | `callLLMWithTools(systemMessage, userMessage, toolsJson)` | `call_llm_with_tools` |
@@ -313,6 +311,8 @@ interface PersistedChatData {
 | 推理步骤 | 存储 `_steps` 在 data 字段中，历史加载时恢复 |
 | 支付默认值 | 用户未提及支付方式时默认"现金"，标注 source=default，需用户确认 |
 | 支付字段显示 | 所有卡片（ConfirmCard/RecordCard/CorrectionConfirmCard）始终显示支付 |
+| 智能上下文注入 | 正常记账不带历史，检测到修正意图（"上面"、"改成"、"不对"等）时注入结构化摘要 |
+| 摘要来源 | 优先使用 `lastConfirmedRecordContext`（结构化摘要），降级使用对话历史 |
 
 ## 数据模型
 
@@ -320,7 +320,7 @@ interface PersistedChatData {
 |---|---|---|
 | `records` | 收支记录 | uuid, datetime, type, category, amount, account, note, payment_method, synced, nocobase_id |
 | `business_trip` | 差旅补助 | uuid, trip_id, start_date, end_date, days, trip_allowance, transport_allowance, status |
-| `system_prompts` | AI 提示词 | name (dispatch/record), content, updated_at |
+| `system_prompts` | AI 提示词 | name (dispatch/preferences), content, updated_at |
 | `learning_data` | 学习数据 | uuid, type, key, value(json), count |
 | `chat_history` | 对话历史 | session_id, role, content, data(json: llmMessages/_steps/record/result) |
 | `sync_log` | 同步日志 | direction, collection, status, count, error |

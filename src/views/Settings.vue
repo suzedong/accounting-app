@@ -153,7 +153,6 @@
         <p class="prompt-hint">修改 dispatch.md 文件后，点击"从文件刷新"将更新同步到数据库。刷新后需重新加载 AI 对话上下文才能生效。</p>
         <div style="display: flex; gap: 8px; flex-wrap: wrap">
           <el-button size="small" @click="handleRefreshPrompt('dispatch')">刷新 dispatch.md</el-button>
-          <el-button size="small" @click="handleRefreshPrompt('record')">刷新 record.md</el-button>
           <el-button size="small" @click="handleRefreshPrompt('preferences')">刷新 preferences.md</el-button>
         </div>
       </div>
