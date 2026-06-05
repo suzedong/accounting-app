@@ -1,6 +1,10 @@
 use rusqlite::Connection;
 
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // Migration: rebuild chat_history with session_id (new Agent session architecture)
+    // Must happen BEFORE the batch CREATE TABLE, since IF NOT EXISTS won't recreate
+    let _ = conn.execute("DROP TABLE IF EXISTS chat_history", []);
+
     conn.execute_batch(
         r#"
 -- 记账记录
@@ -72,13 +76,13 @@ CREATE TABLE IF NOT EXISTS learning_data (
 CREATE TABLE IF NOT EXISTS chat_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid TEXT UNIQUE NOT NULL,
+    session_id TEXT NOT NULL,
     role TEXT NOT NULL,
     content TEXT,
     data TEXT,
-    skill TEXT,
-    confidence REAL,
     created_at TEXT DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_chat_history_session ON chat_history(session_id, created_at);
 
 -- 同步日志
 CREATE TABLE IF NOT EXISTS sync_log (

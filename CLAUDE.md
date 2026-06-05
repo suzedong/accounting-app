@@ -257,15 +257,62 @@ SYSTEM_PROMPT 存储在 SQLite `system_prompts` 表中，文件缓存在 `src-ta
 
 | 方法 | 作用 |
 |---|---|
-| `loadHistory()` | 从 API 加载历史消息 |
+| `loadHistory()` | 从 API 加载历史消息，恢复 Agent 上下文（`restoreContext`） |
 | `sendMessage()` | 主流程：调用 `agentEngine.processMessage()`，处理步骤回调，根据 action 路由 |
 | `confirmRecord()` | 确认后执行 `toolRegistry.execute('confirm_...', record)`，触发学习保存 |
 | `cancelRecord()` | 取消创建记录 |
 | `startEditField()` / `applyFieldEdit()` | 字段编辑交互 |
 | `answerFollowUp()` | 回答 AI 追问 |
-| `persistMessage()` | 将消息写入数据库 |
+| `persistMessage()` | 将消息写入数据库（存储 LLM 消息 + 推理步骤 + 操作结果） |
 | `checkDuplicate()` / `saveLearningIfNeeded()` | 去重和学习机制 |
 | `clearHistory()` | 清空本地消息 + 调用后端 + 清空 agentEngine |
+
+## Agent Session 架构
+
+**核心原则：存储事实，UI 状态从事实推导。**
+
+### 数据持久化结构（`chat_history.data`）
+
+```typescript
+interface PersistedChatData {
+  llmMessages?: LLMMessage[];  // 对话上下文，用于刷新后恢复
+  _steps?: Step[];             // 推理步骤，用于历史消息展示思考过程
+  record?: Record<string, unknown>;  // 记录字段（卡片展示）
+  result?: { success: boolean; action?: string; message?: string }; // 操作结果
+  correction?: {...};          // 修正相关数据
+  followUp?: {...};            // 追问相关数据
+}
+```
+
+### 三层记忆架构
+
+```
+┌─────────────────────────────────────────
+│  1. 活跃上下文 (Active Context)           │
+│  - AgentEngine.conversationHistory       │
+│  - 最近 10 轮 LLM 消息                    │
+│  - 刷新时从数据库恢复                     │
+├─────────────────────────────────────────┤
+│  2. 对话归档 (Conversation Archive)       │
+│  - chat_history 表，带 session_id         │
+│  - 完整历史记录                           │
+├─────────────────────────────────────────┤
+│  3. 持久记忆 (Persistent Memory)          │
+│  - learning_data 表                       │
+│  - user preferences                       │
+└─────────────────────────────────────────┘
+```
+
+### 关键设计
+
+| 设计点 | 说明 |
+|---|---|
+| session_id | 应用每次启动生成新的，格式 `session_{timestamp}_{random}` |
+| 上下文恢复 | `loadHistory()` 提取 `llmMessages` → `agentEngine.restoreContext()` |
+| UI 状态推导 | 从 `data.result` 和 `data.record` 推导 `status`（pending/confirmed） |
+| 推理步骤 | 存储 `_steps` 在 data 字段中，历史加载时恢复 |
+| 支付默认值 | 用户未提及支付方式时默认"现金"，标注 source=default，需用户确认 |
+| 支付字段显示 | 所有卡片（ConfirmCard/RecordCard/CorrectionConfirmCard）始终显示支付 |
 
 ## 数据模型
 
@@ -275,7 +322,7 @@ SYSTEM_PROMPT 存储在 SQLite `system_prompts` 表中，文件缓存在 `src-ta
 | `business_trip` | 差旅补助 | uuid, trip_id, start_date, end_date, days, trip_allowance, transport_allowance, status |
 | `system_prompts` | AI 提示词 | name (dispatch/record), content, updated_at |
 | `learning_data` | 学习数据 | uuid, type, key, value(json), count |
-| `chat_history` | 对话历史 | uuid, role, content, data(json), skill, confidence |
+| `chat_history` | 对话历史 | session_id, role, content, data(json: llmMessages/_steps/record/result) |
 | `sync_log` | 同步日志 | direction, collection, status, count, error |
 | `app_config` | 应用配置 | key (ai_services), value(json) |
 

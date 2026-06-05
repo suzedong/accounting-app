@@ -1,6 +1,6 @@
 # 开发计划
 
-> **最后更新：2026-05-27**
+> **最后更新：2026-06-05**
 
 ## 阶段概览
 
@@ -71,6 +71,38 @@
 - [x] AI 引擎层：agent-engine.ts（三阶段流水线：OCR → LLM 意图识别 → 工具执行，含支付方式防编造清洗）
 - [x] Stores：chat.ts（Options API 风格，管理消息/确认/编辑/追问/学习，含 lastConfirmedRecord 修正定位）
 - [x] OCR：智能 Python 探测 + 自动安装依赖 + OCR 识别 + Settings 页管理（`.ps1` 支持 Windows，`.sh` 支持 macOS/Linux）
+
+---
+
+## Phase 3.5：Agent Session 架构重构
+
+> ✅ **已完成（2026-06-05）**
+
+### 目标
+
+实现真正的 Agent 会话机制：刷新页面后对话上下文不丢失，历史消息可展示思考过程，支持"修改上一条"等连贯对话。
+
+### 已完成任务
+
+- [x] `chat_history` 表增加 `session_id`，删除 `skill`/`confidence`
+- [x] 新数据结构：`PersistedChatData`（`llmMessages` / `_steps` / `record` / `result`）
+- [x] `loadHistory()` 恢复 Agent 上下文（`restoreContext`）
+- [x] `persistMessage()` 存储 LLM 消息 + 推理步骤
+- [x] 历史消息恢复思考过程（步骤折叠展示）
+- [x] UI 状态从事实推导（不再存储瞬时状态）
+- [x] 支付字段业务规则：默认"现金"，始终显示，需用户确认
+- [x] 历史消息卡片只读（"已保存"标题，无操作按钮）
+
+### 关键改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/src/db/schema.rs` | `session_id` 字段，重建表 |
+| `src-tauri/src/db/chat_history.rs` | 简化数据结构，新增 `get_sessions` |
+| `src/stores/chat.ts` | 完整重构 `persistMessage` / `loadHistory` |
+| `src/ai/agent-engine.ts` | 新增 `restoreContext()` |
+| `src/ai/tool-registry.ts` | 支付默认"现金" |
+| `src/components/chat/*` | 确认卡只读状态、支付始终显示 |
 
 ---
 

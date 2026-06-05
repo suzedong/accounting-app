@@ -66,6 +66,7 @@ fn main() {
             commands::chat::get_chat_history,
             commands::chat::save_chat_message,
             commands::chat::clear_chat_history,
+            commands::chat::get_chat_sessions,
             // Config
             commands::config::get_config,
             commands::config::set_config,

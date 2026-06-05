@@ -254,17 +254,17 @@ CREATE TABLE learning_data (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
--- 对话历史
+-- 对话历史（Agent Session 架构）
 CREATE TABLE chat_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid TEXT UNIQUE NOT NULL,
-    role TEXT NOT NULL,                 -- user / ai
-    content TEXT,                       -- 文本内容
-    data TEXT,                          -- JSON 附加数据（图片、OCR 等）
-    skill TEXT,                         -- 技能名称
-    confidence REAL,                    -- 置信度
+    session_id TEXT NOT NULL,               -- 会话标识，应用每次启动生成新的
+    role TEXT NOT NULL,                     -- user / ai
+    content TEXT,                           -- 文本内容
+    data TEXT,                              -- JSON：{ llmMessages, record, result, _steps, ... }
     created_at TEXT DEFAULT (datetime('now'))
 );
+CREATE INDEX idx_chat_history_session ON chat_history(session_id, created_at);
 
 -- 同步日志
 CREATE TABLE sync_log (

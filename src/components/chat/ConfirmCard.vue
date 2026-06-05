@@ -1,7 +1,7 @@
 <template>
   <div class="confirm-card" :class="{ editing: isEditing }">
     <div class="card-header">
-      {{ title || '请确认（尚未保存）' }}
+      {{ readonly ? (title || '已保存') : (title || '请确认（尚未保存）') }}
     </div>
     <div class="card-body">
       <!-- Regular record fields -->
@@ -37,10 +37,10 @@
           </el-select>
           <span v-else class="value">{{ fields.account }}</span>
         </div>
-        <div v-if="showField('payment')" class="card-field">
+        <div class="card-field">
           <span class="label">支付</span>
           <el-input v-if="isEditing" v-model="editFields.payment" size="small" style="width: 160px" />
-          <span v-else class="value">{{ fields.payment }}</span>
+          <span v-else class="value">{{ fields.payment || '' }}</span>
         </div>
         <div v-if="showField('datetime')" class="card-field">
           <span class="label">时间</span>
@@ -151,7 +151,8 @@ function cancelEdit() {
 // Show field if it has a value (handle both extracted and edited states)
 function showField(key: string): boolean {
   if (isEditing.value) return key in editFields.value && editFields.value[key] != null;
-  return key in props.fields && props.fields[key] != null;
+  const val = props.fields[key];
+  return key in props.fields && val != null && val !== '';
 }
 
 function formatAmount(val: unknown): string {

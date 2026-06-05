@@ -1,6 +1,6 @@
 <template>
   <div class="correction-card">
-    <div class="card-header">请确认修改（尚未保存）</div>
+    <div class="card-header">{{ readonly ? '已保存' : '请确认修改（尚未保存）' }}</div>
 
     <div class="section-title">目标记录</div>
     <div class="record-summary">
@@ -13,7 +13,7 @@
       </div>
       <div>{{ targetRecord.category || '其他' }} / {{ targetRecord.note || '无备注' }}</div>
       <div>账户：{{ targetRecord.account || '个人' }}</div>
-      <div v-if="targetRecord.payment_method">支付方式：{{ targetRecord.payment_method }}</div>
+      <div>支付方式：{{ targetRecord.payment_method || '未指定' }}</div>
     </div>
 
     <div class="section-title">修改内容</div>
@@ -27,11 +27,18 @@
     </div>
 
     <div v-if="reason" class="reason">原因：{{ reason }}</div>
-    <div class="save-hint">点击“确认修改”后才会更新账本</div>
+    <div v-if="!readonly" class="save-hint">点击"确认修改"后才会更新账本</div>
 
-    <div class="card-actions">
-      <el-button size="small" type="warning" @click="$emit('confirm')">确认修改</el-button>
-      <el-button size="small" type="info" @click="$emit('cancel')">取消</el-button>
+    <div class="card-actions" v-if="!readonly">
+      <el-button size="small" type="success" @click="$emit('confirm')">
+        <el-icon><Check /></el-icon> 确认修改
+      </el-button>
+      <el-button size="small" type="info" @click="$emit('cancel')">
+        <el-icon><Close /></el-icon> 取消
+      </el-button>
+    </div>
+    <div v-else class="status-text" style="color: #909399; font-size: 12px; margin-top: 8px;">
+      已过期
     </div>
   </div>
 </template>
@@ -48,6 +55,7 @@ defineProps<{
   targetRecord: Record<string, unknown>;
   changes: CorrectionChange[];
   reason?: string;
+  readonly?: boolean;
 }>();
 
 defineEmits<{

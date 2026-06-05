@@ -1,7 +1,7 @@
 <template>
   <div class="followup-card">
     <div class="followup-question">{{ question }}</div>
-    <div class="followup-fields">
+    <div class="followup-fields" v-if="!readonly">
       <el-button
         v-for="field in missingFields"
         :key="field"
@@ -11,6 +11,9 @@
         {{ fieldLabels[field] || field }}
       </el-button>
     </div>
+    <div v-else class="status-text" style="color: #909399; font-size: 12px; margin-top: 8px;">
+      已过期
+    </div>
   </div>
 </template>
 
@@ -18,6 +21,7 @@
 defineProps<{
   question: string;
   missingFields: string[];
+  readonly?: boolean;
 }>();
 
 defineEmits<{

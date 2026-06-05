@@ -3,8 +3,32 @@ import { ref, nextTick } from 'vue';
 import { agentEngine } from '@/ai/agent-engine';
 import { toolRegistry } from '@/ai/tool-registry';
 import { getChatHistory, saveChatMessage, clearChatHistory } from '@/api/tauri';
-import type { ChatMessage, Step } from '@/types/chat';
+import type { ChatMessage, Step, PersistedChatData, LLMMessage } from '@/types/chat';
 import type { AccountRecord } from '@/types';
+
+/** 生成 session ID（应用启动时一次） */
+function generateSessionId(): string {
+  return `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+/** 从持久化数据推导 UI 渲染类型 */
+function deriveRenderType(data: PersistedChatData): string {
+  if (data.correction) return 'correctionCard';
+  if (data.followUp) return 'followUp';
+  if (data.record) return 'card';
+  if (data.result?.action === 'render_stats') return 'chart';
+  if (data.result?.action === 'render_budget') return 'budget';
+  return 'text';
+}
+
+/** 从持久化数据推导 UI 状态 */
+function deriveUIStatus(data: PersistedChatData, isLastMessage: boolean): 'pending' | 'confirmed' | 'cancelled' | 'success' | undefined {
+  // 最后一条消息且有待确认记录 → pending
+  if (isLastMessage && data.record && !data.result) return 'pending';
+  // 有结果 → 已完成
+  if (data.result) return data.result.success ? 'success' : 'cancelled';
+  return 'success';
+}
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([]);
@@ -12,6 +36,9 @@ export const useChatStore = defineStore('chat', () => {
   const sending = ref(false);
   const ocrLoading = ref(false);
   let nextId = 1;
+
+  /** 当前会话 ID */
+  let sessionId = generateSessionId();
 
   // 对话状态
   const pendingRecord = ref<Record<string, unknown> | null>(null);
@@ -37,33 +64,110 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * 加载历史消息并恢复 Agent 上下文
+   */
   async function loadHistory(limit = 50) {
     try {
       const res = await getChatHistory(limit);
       const loaded: ChatMessage[] = [];
+      const llmMessages: LLMMessage[] = [];
+
+      // 从后往前遍历（数据库返回是 DESC 排序）
       for (const m of res.data.reverse()) {
-        const parsedData = m.data ? JSON.parse(m.data) : {};
-        const steps: Step[] = parsedData._steps || [];
+        const persistedData: PersistedChatData = m.data ? JSON.parse(m.data) : {};
+
+        // 收集 LLM 消息用于恢复上下文
+        if (persistedData.llmMessages) {
+          llmMessages.push(...persistedData.llmMessages);
+        }
+
+        // 推导 UI 状态
+        const isLast = m.id === res.data[res.data.length - 1].id;
+        const render = deriveRenderType(persistedData);
+        const status = deriveUIStatus(persistedData, isLast);
+
+        // 恢复推理步骤（历史消息展示思考过程）
+        const _steps = (persistedData as unknown as { _steps?: Step[] })._steps;
+
         loaded.push({
           id: genId(),
           role: m.role as 'user' | 'ai',
           content: m.content || '',
-          data: parsedData,
-          render: parsedData._render || 'text',
-          title: parsedData._title,
-          status: parsedData._status || (m.role === 'ai' ? 'success' : undefined),
-          steps,
+          data: persistedData.record || persistedData.result || persistedData.correction || persistedData.followUp,
+          render,
+          status,
+          steps: _steps, // 恢复历史思考过程
         });
+
+        // 恢复最后确认的记录
+        if (persistedData.result?.success && persistedData.result.action === 'confirm_record') {
+          const recordData = persistedData.record;
+          if (recordData && 'id' in recordData) {
+            lastConfirmedRecord.value = recordData as AccountRecord;
+          }
+        }
       }
+
       messages.value = loaded;
 
-      // 恢复 pending 状态
-      const lastPending = [...loaded].reverse().find(m => m.status === 'pending' && m.render === 'card');
-      if (lastPending) {
-        pendingRecord.value = lastPending.data || null;
+      // 恢复 Agent 对话上下文（最近 10 轮）
+      if (llmMessages.length > 0) {
+        agentEngine.restoreContext(llmMessages, 10);
+      }
+
+      // 恢复当前 pending 状态（如果最后一条是 pending）
+      const lastMsg = loaded[loaded.length - 1];
+      if (lastMsg?.status === 'pending' && lastMsg.data) {
+        pendingRecord.value = lastMsg.data as Record<string, unknown>;
+        pendingAction.value = 'create_record';
       }
     } catch {
       // No history
+    }
+  }
+
+  /**
+   * 持久化消息到数据库
+   */
+  async function persistMessage(msg: ChatMessage, llmMessages?: LLMMessage[]) {
+    try {
+      const persistedData: PersistedChatData = {};
+
+      // 存储 LLM 对话消息（用于上下文恢复）
+      if (llmMessages?.length) {
+        persistedData.llmMessages = llmMessages;
+      }
+
+      // 存储推理步骤（用于历史消息展示思考过程）
+      if (msg.steps?.length) {
+        persistedData._steps = msg.steps;
+      }
+
+      // 存储记录数据（用于卡片展示）
+      if (msg.data) {
+        persistedData.record = msg.data as Record<string, unknown>;
+      }
+
+      // 存储操作结果
+      if (msg.status === 'confirmed' || msg.status === 'success') {
+        persistedData.result = {
+          success: true,
+          action: pendingAction.value || undefined,
+          message: msg.content,
+        };
+      } else if (msg.status === 'cancelled') {
+        persistedData.result = {
+          success: false,
+          action: pendingAction.value || undefined,
+          message: msg.content,
+        };
+      }
+
+      const dataStr = Object.keys(persistedData).length > 0 ? JSON.stringify(persistedData) : null;
+      await saveChatMessage(sessionId, msg.role, msg.content || null, dataStr);
+    } catch {
+      // Ignore
     }
   }
 
@@ -88,9 +192,9 @@ export const useChatStore = defineStore('chat', () => {
     };
     messages.value.push(userMsg);
     await scrollToBottom(messagesRef);
-    await persistMessage(userMsg);
+    await persistMessage(userMsg, [{ role: 'user', content: text }]);
 
-    // 添加 AI 消息（loading 状态，等待回调填充步骤）
+    // 添加 AI 消息（loading 状态）
     const aiMsg: ChatMessage = {
       id: genId(),
       role: 'ai',
@@ -99,14 +203,14 @@ export const useChatStore = defineStore('chat', () => {
       steps: [],
     };
 
-    try {
-      // 初始化 AgentEngine
-      await agentEngine.loadContext();
+    // 收集本轮 LLM 消息
+    const currentLlmMessages: LLMMessage[] = [];
 
+    try {
+      await agentEngine.loadContext();
       messages.value.push(aiMsg);
       await scrollToBottom(messagesRef);
 
-      // 处理消息（回调中实时更新 steps，loading 结束后显示）
       const result = await agentEngine.processMessage(text, imageBase64, (step) => {
         const existingStep = aiMsg.steps!.find(s => s.id === step.id);
         if (existingStep) {
@@ -118,27 +222,31 @@ export const useChatStore = defineStore('chat', () => {
         lastConfirmedRecord: lastConfirmedRecord.value,
       });
 
-      // 处理完成，解除 loading，设置最终内容
+      // 收集 LLM 消息
+      const history = agentEngine.getHistory();
+      currentLlmMessages.push(...history.slice(-2)); // 只存本轮的 user + assistant
+
+      // 处理完成
       aiMsg.loading = false;
       aiMsg.content = result.finalReply;
       aiMsg.render = result.toolResult?.render || 'text';
       aiMsg.data = result.toolResult?.data as Record<string, unknown>;
 
-      // 处理确认卡片（create_record 等）
+      // 处理确认卡片
       if (result.action && ['create_record', 'create_trip_record', 'record_trip_payment'].includes(result.action) && result.toolResult?.render === 'card') {
         aiMsg.status = 'pending';
         pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
         pendingAction.value = result.action;
       }
 
-      // 处理高风险修正确认卡
+      // 处理高风险修正
       if (result.action === 'correct_record' && result.toolResult?.render === 'correctionCard') {
         aiMsg.status = 'pending';
         pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
         pendingAction.value = 'confirm_correction';
       }
 
-      // 低风险修正成功后更新最近确认记录
+      // 低风险修正
       if (result.action === 'correct_record' && result.toolResult?.render === 'text') {
         const data = result.toolResult?.data as { updatedRecord?: AccountRecord } | undefined;
         if (data?.updatedRecord) lastConfirmedRecord.value = data.updatedRecord;
@@ -155,16 +263,15 @@ export const useChatStore = defineStore('chat', () => {
           : null;
       }
 
-      await persistMessage(aiMsg);
+      await persistMessage(aiMsg, currentLlmMessages);
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : (typeof e === 'string' ? e : '未知错误');
       console.error('[ChatStore] Error processing message:', errorMsg, e);
-      // 更新现有 AI 气泡为错误信息
       aiMsg.loading = false;
       aiMsg.content = errorMsg;
       aiMsg.render = 'text';
       aiMsg.status = 'success';
-      await persistMessage(aiMsg);
+      await persistMessage(aiMsg, currentLlmMessages);
     } finally {
       sending.value = false;
       await scrollToBottom(messagesRef);
@@ -180,13 +287,11 @@ export const useChatStore = defineStore('chat', () => {
     const record = pendingRecord.value;
     const action = pendingAction.value || 'create_record';
 
-    // 重复检测
     if (action === 'create_record') {
       const isDuplicate = await checkDuplicate(record);
       if (isDuplicate) return;
     }
 
-    // 保存原始解析用于学习
     originalParse.value = { ...record };
 
     try {
@@ -207,6 +312,7 @@ export const useChatStore = defineStore('chat', () => {
       msg.render = toolResult.render || 'text';
       msg.data = toolResult.data as Record<string, unknown>;
       msg.status = 'confirmed';
+      msg.steps = undefined; // 清除思考过程
 
       const confirmedData = toolResult.data as AccountRecord | { updatedRecord?: AccountRecord } | undefined;
       if (toolResult.success && confirmedData) {
@@ -217,7 +323,6 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
-      // 学习
       if (originalParse.value) {
         await saveLearningIfNeeded(originalParse.value, record);
       }
@@ -242,6 +347,7 @@ export const useChatStore = defineStore('chat', () => {
     msg.render = 'text';
     msg.content = '好的，请重新输入你的记账信息。';
     msg.data = undefined;
+    msg.steps = undefined;
     pendingRecord.value = null;
     pendingAction.value = null;
   }
@@ -270,7 +376,6 @@ export const useChatStore = defineStore('chat', () => {
     const followUp = pendingFollowUp.value;
     const missingField = followUp.missingFields[0];
 
-    // 合并字段
     const mergedFields = { ...followUp.originalFields };
     if (missingField === 'amount') {
       const amountMatch = answer.match(/(\d+\.?\d*)/);
@@ -282,28 +387,8 @@ export const useChatStore = defineStore('chat', () => {
     awaitingFollowUp.value = false;
     pendingFollowUp.value = null;
 
-    // 重新发送消息（带合并字段）
     const synthesized = buildSynthesizedInput(mergedFields);
     await sendMessage(synthesized, messagesRef);
-  }
-
-  async function persistMessage(msg: ChatMessage) {
-    try {
-      const dataObj: Record<string, unknown> = { ...msg.data };
-      if (msg.render) dataObj._render = msg.render;
-      if (msg.title) dataObj._title = msg.title;
-      if (msg.status) dataObj._status = msg.status;
-      if (msg.steps?.length) dataObj._steps = msg.steps;
-      await saveChatMessage(
-        msg.role,
-        msg.content,
-        Object.keys(dataObj).length > 0 ? JSON.stringify(dataObj) : null,
-        null,
-        null,
-      );
-    } catch {
-      // Ignore
-    }
   }
 
   async function checkDuplicate(record: Record<string, unknown>): Promise<boolean> {
@@ -372,6 +457,7 @@ export const useChatStore = defineStore('chat', () => {
     editingField.value = null;
     originalParse.value = null;
     lastConfirmedRecord.value = null;
+    sessionId = generateSessionId(); // 清空时生成新 session
   }
 
   async function clearHistory() {

@@ -147,16 +147,20 @@ export async function clearCorrections(): Promise<void> {
 }
 
 // Chat History
-export async function getChatHistory(limit?: number): Promise<{ data: Array<{ id: number; uuid: string; role: string; content: string | null; data: string | null; skill: string | null; confidence: number | null; created_at: string }> }> {
+export async function getChatHistory(limit?: number): Promise<{ data: Array<{ id: number; uuid: string; session_id: string; role: string; content: string | null; data: string | null; created_at: string }> }> {
   return invoke('get_chat_history', { limit: limit || 50 });
 }
 
-export async function saveChatMessage(role: string, content: string | null, data: string | null, skill: string | null, confidence: number | null): Promise<void> {
-  return invoke('save_chat_message', { message: { role, content, data, skill, confidence } });
+export async function saveChatMessage(sessionId: string, role: string, content: string | null, data: string | null): Promise<void> {
+  return invoke('save_chat_message', { message: { session_id: sessionId, role, content, data } });
 }
 
 export async function clearChatHistory(): Promise<void> {
   return invoke('clear_chat_history');
+}
+
+export async function getChatSessions(limit?: number): Promise<{ data: Array<{ session_id: string; message_count: number; started_at: string; last_message_at: string }> }> {
+  return invoke('get_chat_sessions', { limit: limit || 20 });
 }
 
 // LLM (via Rust backend, avoids CORS)

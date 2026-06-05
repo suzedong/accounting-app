@@ -30,9 +30,9 @@
         <span class="label">备注</span>
         <span class="value">{{ record.note }}</span>
       </div>
-      <div v-if="record.payment_method" class="card-field">
+      <div class="card-field">
         <span class="label">支付方式</span>
-        <span class="value">{{ record.payment_method }}</span>
+        <span class="value">{{ record.payment_method || '未指定' }}</span>
       </div>
     </div>
     <div v-if="showActions" class="card-actions">

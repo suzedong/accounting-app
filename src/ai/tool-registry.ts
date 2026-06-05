@@ -468,7 +468,7 @@ toolRegistry.register<CreateRecordArgs>({
         amount: args.amount,
         account: args.account || '个人',
         note: args.note || '',
-        payment: args.payment || '',
+        payment: args.payment || '现金',
       },
     };
   },

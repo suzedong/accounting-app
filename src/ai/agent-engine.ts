@@ -121,13 +121,18 @@ export class AgentEngine {
         trip_id: '申请单号', start_date: '出发日期', end_date: '返程日期',
         days: '出差天数', notes: '备注',
       };
-      intentStep.detail!.fields = Object.entries(fields)
+      // 确保 payment 字段始终存在（业务必填，默认"现金"）
+      const paymentWasProvided = 'payment' in fields;
+      const fieldsWithPayment = { payment: fields.payment || '现金', ...fields };
+      intentStep.detail!.fields = Object.entries(fieldsWithPayment)
         .filter(([k]) => !k.endsWith('_source')) // 跳过 source 元数据键
         .map(([k, v]) => {
-          const filtered = v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'undefined';
+          // payment 字段始终显示，其他字段按原逻辑过滤
+          const filtered = k === 'payment' || (v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'undefined');
           console.log(`[AgentEngine] 字段 ${k}=${JSON.stringify(v)} -> filtered=${filtered}`);
           if (!filtered) return null;
-          const source = this.getFieldSource(k, v, fields);
+          // payment 字段：用户没提则为 default，否则走正常判断
+          const source = k === 'payment' && !paymentWasProvided ? 'default' : this.getFieldSource(k, v, fields);
           console.log(`[AgentEngine] 字段 ${k}=${v} -> source=${source}`);
           return {
             label: fieldLabels[k] || k,
@@ -505,6 +510,17 @@ export class AgentEngine {
   /** 清空对话历史 */
   clearHistory() {
     this.conversationHistory = [];
+  }
+
+  /**
+   * 从持久化历史恢复对话上下文
+   * @param messages - 从数据库加载的 LLM 消息列表
+   * @param maxRounds - 恢复的最大对话轮数（默认 10）
+   */
+  restoreContext(messages: LLMMessage[], maxRounds: number = 10) {
+    // 只保留最近 N 轮对话，避免 token 超限
+    const recentMessages = messages.slice(-maxRounds * 2);
+    this.conversationHistory = recentMessages;
   }
 
   /** 重置上下文（重新加载 prompt） */

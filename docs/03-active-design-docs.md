@@ -1,13 +1,13 @@
 # 进行中的设计文档
 
-> 本文件包含进行中的专项设计：AI Agent 架构重构、OCR Python 管理重设计。
+> 本文件包含进行中的专项设计：AI Agent 架构重构、OCR Python 管理重设计、Agent Session 架构。
 
 ---
 
 ## 1. AI Agent 架构重构
 
-> 最后更新：2026-05-27
-> **状态：✅ 已完成**（2026-06-03 风险分级修正流已实现）
+> 最后更新：2026-06-05
+> **状态：✅ 已完成**（2026-06-03 风险分级修正流已实现，2026-06-05 Session 架构已完成）
 
 ### 1.1 背景与目标
 
@@ -390,6 +390,83 @@ for (const [key, newValue] of Object.entries(args.fields)) {
 | 开发者控制台 | Ctrl+` 打开，显示完整请求/响应 |
 | 多轮对话 | 保持最近 10 轮，旧对话自动截断 |
 | 持久化 | steps[] 存 data 字段 JSON，加载历史消息正常渲染 |
+
+---
+
+## 1.5 Agent Session 架构
+
+> 最后更新：2026-06-05
+> **状态：✅ 已完成**
+
+### 1.5.1 问题
+
+原设计中 `chat_history` 表只存储 UI 渲染数据（`_render`、`_status`、`_steps`），LLM 对话上下文（`conversationHistory`）只存在内存中。导致：
+- 刷新页面后 Agent "失忆"，无法理解"修改上一条"等连贯对话
+- 历史消息的 `pending` 状态恢复错误（已确认的卡片显示"尚未保存"）
+- 思考过程在历史消息中重复显示
+
+### 1.5.2 解决方案：存储事实，UI 状态从事实推导
+
+**数据持久化结构**（`chat_history.data`）：
+
+```typescript
+interface PersistedChatData {
+  llmMessages?: LLMMessage[];   // 用于恢复 Agent 上下文
+  _steps?: Step[];              // 推理步骤，历史消息展示思考过程
+  record?: Record<string, unknown>;  // 记录字段
+  result?: { success: boolean; action?: string; message?: string };
+}
+```
+
+**三层记忆架构**：
+
+```
+活跃上下文 → conversationHistory（内存，刷新时从数据库恢复）
+对话归档   → chat_history 表（带 session_id，持久化）
+持久记忆   → learning_data + preferences
+```
+
+### 1.5.3 关键设计决策
+
+| 决策 | 说明 |
+|---|---|
+| session_id | 应用每次启动生成新 session，格式 `session_{timestamp}_{random}` |
+| 上下文恢复 | `loadHistory()` 提取 `llmMessages` → `agentEngine.restoreContext()` |
+| UI 状态推导 | 从 `data.result` 推导 `status`，不存储瞬时状态 |
+| 历史消息只读 | 历史卡片显示"已保存"，无操作按钮 |
+| 支付默认值 | 用户未提及默认"现金"，标注 source=default，需用户确认 |
+| 支付始终显示 | 所有卡片（ConfirmCard/RecordCard/CorrectionConfirmCard）强制显示 |
+
+### 1.5.4 数据流
+
+```
+用户输入 → AgentEngine 处理 → conversationHistory 追加
+                                    ↓
+                              persistMessage 存入:
+                              { llmMessages, record, result, _steps }
+                                    ↓
+                              刷新页面 → loadHistory()
+                                    ↓
+                              提取 llmMessages → 恢复 Agent 上下文
+                              提取 record/result → 推导 UI 状态
+```
+
+### 1.5.5 数据库变更
+
+```sql
+-- chat_history 新结构
+CREATE TABLE chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid TEXT UNIQUE NOT NULL,
+    session_id TEXT NOT NULL,               -- 新增
+    role TEXT NOT NULL,
+    content TEXT,
+    data TEXT,                              -- 存储 PersistedChatData JSON
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_chat_history_session ON chat_history(session_id, created_at);
+-- 删除字段：skill, confidence
+```
 
 ---
 

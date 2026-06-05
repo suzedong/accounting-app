@@ -87,8 +87,9 @@
 
                     <!-- Confirmation card -->
                     <ConfirmCard
-                      v-if="msg.status === 'pending' && msg.data && msg.render !== 'correctionCard'"
+                      v-if="msg.data && msg.render !== 'correctionCard'"
                       :fields="msg.data"
+                      :readonly="msg.status !== 'pending'"
                       @confirm="handleCardAction(msg, 'confirm')"
                       @cancel="handleCardAction(msg, 'cancel')"
                       @save="handleCardSave(msg, $event)"
@@ -96,7 +97,8 @@
 
                     <!-- Correction confirmation card -->
                     <CorrectionConfirmCard
-                      v-if="msg.status === 'pending' && msg.data && msg.render === 'correctionCard'"
+                      v-if="msg.data && msg.render === 'correctionCard'"
+                      :readonly="msg.status !== 'pending'"
                       :target-record="(msg.data as Record<string, unknown>).targetRecord as Record<string, unknown> || {}"
                       :changes="(msg.data as Record<string, unknown>).changes as Array<{ field: string; label: string; oldValue: unknown; newValue: unknown }> || []"
                       :reason="(msg.data as Record<string, unknown>).reason as string || ''"
@@ -107,6 +109,7 @@
                     <!-- Follow-up card -->
                     <FollowUpCard
                       v-if="msg.render === 'followUp' && msg.data"
+                      :readonly="msg.status !== 'pending'"
                       :question="(msg.data as Record<string, unknown>).question as string || ''"
                       :missing-fields="(msg.data as Record<string, unknown>).missingFields as string[] || []"
                       @select-field="handleFollowUpSelect(msg, $event)"
