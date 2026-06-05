@@ -433,6 +433,9 @@ interface PersistedChatData {
 | session_id | 应用每次启动生成新 session，格式 `session_{timestamp}_{random}` |
 | 上下文恢复 | `loadHistory()` 提取 `llmMessages` → `agentEngine.restoreContext()` |
 | UI 状态推导 | 从 `data.result` 推导 `status`，不存储瞬时状态 |
+| 取消状态持久化 | `cancelRecord` 保存取消状态到数据库，刷新后保持取消状态，不重复显示确认卡片 |
+| 确认卡片折叠 | 卡片头部可点击折叠/展开，复用思考过程的折叠样式，保持视觉一致性 |
+| 卡片标题逻辑 | 根据 `status` 显示：`cancelled`→"已取消"，`confirmed/success`→"已保存"，其他→"记录详情" |
 | 历史消息只读 | 历史卡片显示"已保存"，无操作按钮 |
 | 支付默认值 | 用户未提及默认"现金"，标注 source=default，需用户确认 |
 | 支付始终显示 | 所有卡片（ConfirmCard/RecordCard/CorrectionConfirmCard）强制显示 |

@@ -244,7 +244,7 @@ SYSTEM_PROMPT 存储在 SQLite `system_prompts` 表中，文件缓存在 `src-ta
 | `ChatInput.vue` | 输入框 + 图片上传/粘贴，通过 `@send` 事件发送 `(text, imageBase64, imageFullSrc)` |
 | `ChatMessage.vue` | 消息渲染组件 |
 | `ChatThinking.vue` | 思考中状态指示器 |
-| `ConfirmCard.vue` | 确认卡片：展示 AI 生成的记录/差旅补助，支持确认/修改/取消 |
+| `ConfirmCard.vue` | 确认卡片：展示 AI 生成的记录/差旅补助，支持确认/修改/取消。待确认时显示"请确认（尚未保存）"标题；已确认/已取消时折叠头部显示状态（"已保存"/"已取消"），点击可展开/折叠 |
 | `FollowUpCard.vue` | 追问卡片：AI 缺少必要信息时展示，提供字段按钮供用户选择 |
 | `RecordCard.vue` | 记录卡片：展示已创建的记账记录，含修正/删除按钮 |
 | `CorrectionConfirmCard.vue` | 高风险修正确认卡片：展示目标记录、修改 diff、风险原因 |
