@@ -1,9 +1,8 @@
 use rusqlite::Connection;
 
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
-    // Migration: rebuild chat_history with session_id (new Agent session architecture)
-    // Must happen BEFORE the batch CREATE TABLE, since IF NOT EXISTS won't recreate
-    let _ = conn.execute("DROP TABLE IF EXISTS chat_history", []);
+    // Migration: chat_history table structure change (add session_id, drop skill/confidence)
+    migrate_chat_history(conn)?;
 
     conn.execute_batch(
         r#"
@@ -214,4 +213,140 @@ fn seed_default_config(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
     // ai_services starts as empty array, user configures via Settings
     Ok(())
+}
+
+/// 优雅迁移 chat_history 表结构
+/// 旧结构：id, uuid, session_id(可能不存在), role, content, data, skill, confidence, created_at
+/// 新结构：id, uuid, session_id, role, content, data, created_at
+fn migrate_chat_history(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // 检查表是否存在
+    let table_exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_history'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if table_exists == 0 {
+        // 表不存在，直接创建新结构
+        conn.execute(
+            r#"CREATE TABLE chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT UNIQUE NOT NULL,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                data TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )"#,
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX idx_chat_history_session ON chat_history(session_id, created_at)",
+            [],
+        )?;
+        return Ok(());
+    }
+
+    // 检查是否已经有 session_id 字段（判断是否已迁移）
+    let has_session_id = column_exists(conn, "chat_history", "session_id");
+    let has_skill = column_exists(conn, "chat_history", "skill");
+    let has_confidence = column_exists(conn, "chat_history", "confidence");
+
+    // 如果已经是新结构，不需要迁移
+    if has_session_id && !has_skill && !has_confidence {
+        return Ok(());
+    }
+
+    eprintln!("[Migration] Migrating chat_history table structure...");
+
+    // 1. 备份旧数据到新表
+    conn.execute_batch(
+        r#"
+        CREATE TABLE chat_history_backup (
+            id INTEGER PRIMARY KEY,
+            uuid TEXT,
+            role TEXT,
+            content TEXT,
+            data TEXT,
+            created_at TEXT
+        );
+        
+        INSERT INTO chat_history_backup (id, uuid, role, content, data, created_at)
+        SELECT id, uuid, role, content, data, created_at FROM chat_history;
+        "#,
+    )?;
+
+    let backup_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM chat_history_backup",
+        [],
+        |row| row.get(0),
+    )?;
+    eprintln!("[Migration] Backed up {} chat messages", backup_count);
+
+    // 2. 删除旧表
+    conn.execute("DROP TABLE chat_history", [])?;
+
+    // 3. 创建新表
+    conn.execute(
+        r#"CREATE TABLE chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uuid TEXT UNIQUE NOT NULL,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT,
+            data TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )"#,
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX idx_chat_history_session ON chat_history(session_id, created_at)",
+        [],
+    )?;
+
+    // 4. 恢复数据，为新 session_id 生成默认值
+    let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S");
+    let default_session = format!("migrated_session_{}", timestamp);
+
+    if backup_count > 0 {
+        conn.execute(
+            &format!(
+                "INSERT INTO chat_history (id, uuid, session_id, role, content, data, created_at)
+                 SELECT id, 
+                        COALESCE(uuid, lower(hex(randomblob(16)))), 
+                        '{}',
+                        COALESCE(role, 'user'),
+                        content,
+                        data,
+                        created_at
+                 FROM chat_history_backup
+                 WHERE role IS NOT NULL",
+                default_session
+            ),
+            [],
+        )?;
+    }
+
+    let restored_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM chat_history",
+        [],
+        |row| row.get(0),
+    )?;
+    eprintln!("[Migration] Restored {} chat messages to new structure", restored_count);
+
+    // 5. 删除备份表
+    conn.execute("DROP TABLE chat_history_backup", [])?;
+
+    Ok(())
+}
+
+/// 检查表是否存在指定列
+fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+    let query = format!(
+        "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'",
+        table, column
+    );
+    conn.query_row(&query, [], |row| row.get::<_, i64>(0))
+        .map(|count| count > 0)
+        .unwrap_or(false)
 }

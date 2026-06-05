@@ -1,7 +1,7 @@
 <template>
   <div class="confirm-card" :class="{ editing: isEditing }">
-    <div class="card-header">
-      {{ readonly ? (title || '已保存') : (title || '请确认（尚未保存）') }}
+    <div v-if="!readonly" class="card-header">
+      {{ title || '请确认（尚未保存）' }}
     </div>
     <div class="card-body">
       <!-- Regular record fields -->
@@ -40,7 +40,7 @@
         <div class="card-field">
           <span class="label">支付</span>
           <el-input v-if="isEditing" v-model="editFields.payment" size="small" style="width: 160px" />
-          <span v-else class="value">{{ fields.payment || '' }}</span>
+          <span v-else class="value">{{ fields.payment || fields.payment_method || '' }}</span>
         </div>
         <div v-if="showField('datetime')" class="card-field">
           <span class="label">时间</span>

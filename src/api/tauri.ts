@@ -152,7 +152,7 @@ export async function getChatHistory(limit?: number): Promise<{ data: Array<{ id
 }
 
 export async function saveChatMessage(sessionId: string, role: string, content: string | null, data: string | null): Promise<void> {
-  return invoke('save_chat_message', { message: { session_id: sessionId, role, content, data } });
+  return invoke('save_chat_message', { message: { sessionId, role, content, data } });
 }
 
 export async function clearChatHistory(): Promise<void> {

@@ -27,6 +27,8 @@ export interface PersistedResult {
 export interface PersistedChatData {
   /** LLM 对话消息（用于恢复 Agent 上下文） */
   llmMessages?: LLMMessage[];
+  /** 推理步骤（用于历史消息展示思考过程） */
+  _steps?: Step[];
   /** 工具调用（用于学习引擎分析） */
   toolCall?: PersistedToolCall;
   /** 操作结果 */

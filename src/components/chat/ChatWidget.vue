@@ -85,15 +85,31 @@
                     <!-- 最终回复文本 -->
                     <p v-if="msg.content" class="ai-text">{{ msg.content }}</p>
 
+                    <!-- 已取消标记 -->
+                    <div v-if="msg.status === 'cancelled'" class="status-tag cancelled">
+                      <el-icon><CircleClose /></el-icon> 已取消
+                    </div>
+
                     <!-- Confirmation card -->
-                    <ConfirmCard
-                      v-if="msg.data && msg.render !== 'correctionCard'"
-                      :fields="msg.data"
-                      :readonly="msg.status !== 'pending'"
-                      @confirm="handleCardAction(msg, 'confirm')"
-                      @cancel="handleCardAction(msg, 'cancel')"
-                      @save="handleCardSave(msg, $event)"
-                    />
+                    <div v-if="msg.data && msg.render !== 'correctionCard'" class="thinking-section">
+                      <div class="thinking-header" @click="toggleCardExpand(msg.id)">
+                        <el-icon class="thinking-chevron" :class="{ rotated: cardExpanded[msg.id] !== false }">
+                          <ArrowDown />
+                        </el-icon>
+                        <span class="thinking-label">
+                          {{ getCardStatusLabel(msg) }}
+                        </span>
+                      </div>
+                      <div v-show="cardExpanded[msg.id] !== false" class="thinking-body">
+                        <ConfirmCard
+                          :fields="msg.data"
+                          :readonly="msg.status !== 'pending'"
+                          @confirm="handleCardAction(msg, 'confirm')"
+                          @cancel="handleCardAction(msg, 'cancel')"
+                          @save="handleCardSave(msg, $event)"
+                        />
+                      </div>
+                    </div>
 
                     <!-- Correction confirmation card -->
                     <CorrectionConfirmCard
@@ -155,7 +171,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch, reactive } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { ChatDotRound, Close, Delete, Setting, Monitor, ArrowDown } from '@element-plus/icons-vue';
+import { ChatDotRound, Close, Delete, Setting, Monitor, ArrowDown, CircleClose } from '@element-plus/icons-vue';
 import { storeToRefs } from 'pinia';
 import ChatInput from './ChatInput.vue';
 import ConfirmCard from './ConfirmCard.vue';
@@ -173,9 +189,24 @@ const messagesRef = ref<HTMLElement | null>(null);
 
 // 思考过程折叠状态
 const thinkingExpanded = reactive<Record<number, boolean>>({});
+// 卡片折叠状态
+const cardExpanded = reactive<Record<number, boolean>>({});
 
 function toggleThinking(msgId: number) {
   thinkingExpanded[msgId] = !thinkingExpanded[msgId];
+}
+
+function toggleCardExpand(msgId: number) {
+  // 默认展开，点击后折叠；再次点击展开
+  cardExpanded[msgId] = cardExpanded[msgId] === undefined ? false : !cardExpanded[msgId];
+}
+
+function getCardStatusLabel(msg: { status?: string }): string {
+  console.log('getCardStatusLabel called, msg.status:', msg.status);
+  if (msg.status === 'cancelled') return '已取消';
+  // 已确认的记录在加载历史时 status 为 'success'
+  if (msg.status === 'confirmed' || msg.status === 'success') return '已保存';
+  return '记录详情';
 }
 
 function formatThinkingLabel(steps: Step[]): string {
@@ -254,11 +285,11 @@ function sendQuick(text: string) {
   chat.sendMessage(text, messagesRef.value);
 }
 
-function handleCardAction(msg: typeof messages.value[0], action: 'confirm' | 'cancel') {
+async function handleCardAction(msg: typeof messages.value[0], action: 'confirm' | 'cancel') {
   if (action === 'confirm') {
-    chat.confirmRecord(msg);
+    await chat.confirmRecord(msg);
   } else if (action === 'cancel') {
-    chat.cancelRecord(msg);
+    await chat.cancelRecord(msg);
   }
 }
 
@@ -551,6 +582,21 @@ async function handleClearHistory() {
 
 .ai-text {
   margin: 4px 0 0;
+}
+
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-top: 8px;
+
+  &.cancelled {
+    background: #f5f5f5;
+    color: #909399;
+  }
 }
 
 /* Thinking indicator (loading state) */

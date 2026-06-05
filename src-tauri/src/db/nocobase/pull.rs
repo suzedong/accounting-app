@@ -108,9 +108,16 @@ struct LocalRecordInfo {
 fn get_last_sync_time(db: &Database) -> Result<Option<serde_json::Value>, String> {
     let conn = db.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
+    // 过滤掉无效的 nocobase_updated_at（如旧 push 逻辑存储的 "now"）
+    // 只接受 ISO 8601 格式的时间戳
     let max_time: Option<String> = guard
-        .query_row("SELECT MAX(nocobase_updated_at) FROM records WHERE nocobase_updated_at IS NOT NULL", [], |r| r.get(0))
-        .optional()
+        .query_row(
+            "SELECT MAX(nocobase_updated_at) FROM records 
+             WHERE nocobase_updated_at IS NOT NULL 
+             AND nocobase_updated_at LIKE '____-__-__T%'",
+            [],
+            |r| r.get::<_, Option<String>>(0),
+        )
         .map_err(|e| e.to_string())?;
 
     if let Some(time) = max_time {

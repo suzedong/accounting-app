@@ -1,3 +1,4 @@
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
 use super::connection::Database;
@@ -14,6 +15,7 @@ pub struct ChatMessageRow {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatMessageInput {
     pub session_id: String,
     pub role: String,
@@ -52,6 +54,30 @@ pub fn get_history(state: &Database, limit: u32) -> Result<Vec<ChatMessageRow>, 
 pub fn save_message(state: &Database, input: ChatMessageInput) -> Result<(), String> {
     let conn = state.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
+    
+    // 检查是否已存在相同 session 和 role 的消息（用于更新）
+    let existing: Option<(String, String)> = guard
+        .query_row(
+            "SELECT uuid, data FROM chat_history WHERE session_id = ? AND role = ? ORDER BY created_at DESC LIMIT 1",
+            [&input.session_id, &input.role],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    if let Some((uuid, _existing_data)) = existing {
+        // 如果 data 中包含 _cancelled，说明是取消操作，更新原消息
+        if input.data.as_deref().map(|d| d.contains("_cancelled")).unwrap_or(false) {
+            guard.execute(
+                "UPDATE chat_history SET role = ?, content = ?, data = ? WHERE uuid = ?",
+                (&input.role, &input.content, &input.data, &uuid),
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+
+    // 否则插入新消息
     let uuid = uuid::Uuid::new_v4().to_string();
     guard.execute(
         "INSERT INTO chat_history (uuid, session_id, role, content, data) VALUES (?, ?, ?, ?, ?)",

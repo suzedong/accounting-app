@@ -375,7 +375,6 @@ import { agentEngine } from '@/ai/agent-engine';
 import type { AiService } from '@/types';
 
 // Types for OCR
-import { syncFull, syncPush, syncPull } from '@/api/tauri';
 interface SystemPython {
   path: string;
   version: string;

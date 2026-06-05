@@ -3,7 +3,7 @@ import { ref, nextTick } from 'vue';
 import { agentEngine } from '@/ai/agent-engine';
 import { toolRegistry } from '@/ai/tool-registry';
 import { getChatHistory, saveChatMessage, clearChatHistory } from '@/api/tauri';
-import type { ChatMessage, Step, PersistedChatData, LLMMessage } from '@/types/chat';
+import type { ChatMessage, PersistedChatData, LLMMessage } from '@/types/chat';
 import type { AccountRecord } from '@/types';
 
 /** 生成 session ID（应用启动时一次） */
@@ -15,7 +15,8 @@ function generateSessionId(): string {
 function deriveRenderType(data: PersistedChatData): string {
   if (data.correction) return 'correctionCard';
   if (data.followUp) return 'followUp';
-  if (data.record) return 'card';
+  // 已取消的记录不显示卡片
+  if (data.record && !data.result && !data.record?._cancelled) return 'card';
   if (data.result?.action === 'render_stats') return 'chart';
   if (data.result?.action === 'render_budget') return 'budget';
   return 'text';
@@ -27,6 +28,8 @@ function deriveUIStatus(data: PersistedChatData, isLastMessage: boolean): 'pendi
   if (isLastMessage && data.record && !data.result) return 'pending';
   // 有结果 → 已完成
   if (data.result) return data.result.success ? 'success' : 'cancelled';
+  // 非最后一条且无 result → 不显示状态标签
+  if (!isLastMessage) return undefined;
   return 'success';
 }
 
@@ -70,6 +73,7 @@ export const useChatStore = defineStore('chat', () => {
   async function loadHistory(limit = 50) {
     try {
       const res = await getChatHistory(limit);
+      console.log(`[ChatStore] Loaded ${res.data.length} messages from history`);
       const loaded: ChatMessage[] = [];
       const llmMessages: LLMMessage[] = [];
 
@@ -87,24 +91,21 @@ export const useChatStore = defineStore('chat', () => {
         const render = deriveRenderType(persistedData);
         const status = deriveUIStatus(persistedData, isLast);
 
-        // 恢复推理步骤（历史消息展示思考过程）
-        const _steps = (persistedData as unknown as { _steps?: Step[] })._steps;
-
         loaded.push({
           id: genId(),
           role: m.role as 'user' | 'ai',
           content: m.content || '',
-          data: persistedData.record || persistedData.result || persistedData.correction || persistedData.followUp,
+          data: (persistedData.record || persistedData.correction || persistedData.followUp) as Record<string, unknown> | undefined,
           render,
           status,
-          steps: _steps, // 恢复历史思考过程
+          steps: persistedData._steps,
         });
 
         // 恢复最后确认的记录
         if (persistedData.result?.success && persistedData.result.action === 'confirm_record') {
           const recordData = persistedData.record;
           if (recordData && 'id' in recordData) {
-            lastConfirmedRecord.value = recordData as AccountRecord;
+            lastConfirmedRecord.value = recordData as unknown as AccountRecord;
           }
         }
       }
@@ -166,8 +167,8 @@ export const useChatStore = defineStore('chat', () => {
 
       const dataStr = Object.keys(persistedData).length > 0 ? JSON.stringify(persistedData) : null;
       await saveChatMessage(sessionId, msg.role, msg.content || null, dataStr);
-    } catch {
-      // Ignore
+    } catch (e) {
+      console.error('[ChatStore] Failed to persist message:', e);
     }
   }
 
@@ -342,14 +343,21 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 取消记录
    */
-  function cancelRecord(msg: ChatMessage): void {
+  async function cancelRecord(msg: ChatMessage): Promise<void> {
+    // 修改原消息为取消状态
     msg.status = 'cancelled';
     msg.render = 'text';
     msg.content = '好的，请重新输入你的记账信息。';
-    msg.data = undefined;
+    // 标记原消息已被取消（用于历史加载时跳过卡片）
+    if (msg.data) {
+      msg.data._cancelled = true;
+    }
     msg.steps = undefined;
     pendingRecord.value = null;
     pendingAction.value = null;
+
+    // 保存取消状态到数据库（更新原消息）
+    await persistMessage(msg, []);
   }
 
   /**

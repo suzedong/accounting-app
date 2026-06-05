@@ -66,12 +66,11 @@ async fn push_single_record(
     // 如果 NocoBase 已有此记录（nocobase_id 不为空），则更新
     if let Some(nocobase_id) = record.nocobase_id {
         let result = client.update_record("records", nocobase_id, data).await?;
-        // 更新成功，更新本地 nocobase_updated_at
-        if let Some(obj) = result.as_object() {
-            if let Some(updated_at) = obj.get("updatedAt") {
-                update_record_synced_status(db, &record.uuid, Some(nocobase_id), updated_at.as_str().map(|s| s.to_string()).or_else(|| Some("now".to_string())))?;
-            }
-        }
+        // 更新成功，使用 NocoBase 返回的 updatedAt
+        let updated_at = result.get("updatedAt")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        update_record_synced_status(db, &record.uuid, Some(nocobase_id), updated_at)?;
     } else {
         // 创建新记录
         let result = client.create_record("records", data).await?;
