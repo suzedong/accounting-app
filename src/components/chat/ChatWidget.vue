@@ -202,7 +202,6 @@ function toggleCardExpand(msgId: number) {
 }
 
 function getCardStatusLabel(msg: { status?: string }): string {
-  console.log('getCardStatusLabel called, msg.status:', msg.status);
   if (msg.status === 'cancelled') return '已取消';
   // 已确认的记录在加载历史时 status 为 'success'
   if (msg.status === 'confirmed' || msg.status === 'success') return '已保存';

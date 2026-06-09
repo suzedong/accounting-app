@@ -313,7 +313,6 @@ export const useChatStore = defineStore('chat', () => {
       msg.render = toolResult.render || 'text';
       msg.data = toolResult.data as Record<string, unknown>;
       msg.status = 'confirmed';
-      msg.steps = undefined; // 清除思考过程
 
       const confirmedData = toolResult.data as AccountRecord | { updatedRecord?: AccountRecord } | undefined;
       if (toolResult.success && confirmedData) {

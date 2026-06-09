@@ -241,14 +241,14 @@ SYSTEM_PROMPT 存储在 SQLite `system_prompts` 表中，文件缓存在 `src-ta
 | 组件 | 作用 |
 |---|---|
 | `ChatWidget.vue` | 主容器：悬浮按钮 + 面板 + 欢迎页 + 消息列表 + 设置对话框 |
-| `ChatInput.vue` | 输入框 + 图片上传/粘贴，通过 `@send` 事件发送 `(text, imageBase64, imageFullSrc)` |
+| `ChatInput.vue` | 输入框 + 图片上传/粘贴，通过 `@send` 事件发送 `(text, imageBase64, imageFullSrc)`；点击发送后立即进入本地处理态，禁用发送按钮，覆盖图片转码、OCR 检测和识别全过程 |
 | `ChatMessage.vue` | 消息渲染组件 |
 | `ChatThinking.vue` | 思考中状态指示器 |
 | `ConfirmCard.vue` | 确认卡片：展示 AI 生成的记录/差旅补助，支持确认/修改/取消。待确认时显示"请确认（尚未保存）"标题；已确认/已取消时折叠头部显示状态（"已保存"/"已取消"），点击可展开/折叠 |
 | `FollowUpCard.vue` | 追问卡片：AI 缺少必要信息时展示，提供字段按钮供用户选择 |
 | `RecordCard.vue` | 记录卡片：展示已创建的记账记录，含修正/删除按钮 |
 | `CorrectionConfirmCard.vue` | 高风险修正确认卡片：展示目标记录、修改 diff、风险原因 |
-| `StepList.vue` | 推理链：逐步展示 OCR 识别→意图识别→字段提取→执行过程 |
+| `StepList.vue` | 推理链：逐步展示 OCR 识别→意图识别→字段提取→执行过程；确认记录后仍保留意图气泡，不因保存成功隐藏 |
 | `ImagePreview.vue` | 图片预览：支持截图/上传预览，可移除和 OCR 加载状态覆盖 |
 | `SettingsPanel.vue` | 设置面板：4 个 Tab（Dispatch Prompt 编辑、偏好编辑、学习数据表格、系统诊断） |
 | `DevConsole.vue` | 开发者控制台：3 个 Tab（IPC 调用日志、LLM 请求日志、Rust 端日志） |

@@ -452,7 +452,7 @@ Rust 后端                  百炼 API              NocoBase
 
 #### 图片粘贴（剪贴板）
 
-ChatInput 支持剪贴板图片粘贴（Cmd+V / Ctrl+V），自动读取为 File 对象，走与文件选择相同的图片加载流程。
+ChatInput 支持剪贴板图片粘贴（Cmd+V / Ctrl+V），自动读取为 File 对象，走与文件选择相同的图片加载流程。点击发送后立即进入本地处理态，禁用发送按钮并显示 loading，覆盖图片转码、OCR 可用性检测和 OCR 识别全过程。
 
 #### OCR 管理（Settings 页）
 

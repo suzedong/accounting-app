@@ -38,8 +38,8 @@
       <!-- Send button -->
       <el-button 
         @click="handleSend" 
-        :loading="sending || ocrLoading" 
-        :disabled="sending || ocrLoading"
+        :loading="sending || ocrLoading || isProcessing" 
+        :disabled="sending || ocrLoading || isProcessing"
         type="primary"
       >
         <el-icon><Promotion /></el-icon>
@@ -64,6 +64,7 @@ const imageSrc = ref<string | null>(null);
 const imageBase64 = ref<string | null>(null);
 const sending = defineModel<boolean>('sending', { default: false });
 const ocrLoading = defineModel<boolean>('ocrLoading', { default: false });
+const isProcessing = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
 function triggerFileInput() {
@@ -127,6 +128,7 @@ function removeImage() {
 async function handleSend() {
   if (!text.value.trim() && !imageBase64.value) return;
 
+  isProcessing.value = true;
   const hasImage = !!imageBase64.value;
   const mergedText = text.value.trim();
 
@@ -135,6 +137,7 @@ async function handleSend() {
     const status = await checkOcrStatusFast();
     if (!status.available) {
       ElMessage.error('OCR 识别未就绪，请前往设置页安装 PaddleOCR');
+      isProcessing.value = false;
       return;
     }
 
@@ -147,6 +150,8 @@ async function handleSend() {
       const isEmptyResult = ocrText === '未识别到文字' || ocrText.trim() === '';
       if (isEmptyResult && !mergedText) {
         ElMessage.warning('图片中未识别到文字，请上传包含文字的图片');
+        ocrLoading.value = false;
+        isProcessing.value = false;
         return;
       }
       
@@ -159,10 +164,12 @@ async function handleSend() {
       ElMessage.error('OCR 识别失败：' + (e instanceof Error ? e.message : String(e)));
     } finally {
       ocrLoading.value = false;
+      isProcessing.value = false;
     }
   } else {
     // 无图片，直接发送
     emit('send', mergedText);
+    isProcessing.value = false;
   }
 
   text.value = '';

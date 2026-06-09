@@ -43,13 +43,25 @@ def get_engine():
     with _suppress_paddle_output():
         from paddleocr import PaddleOCR
         
-        # PaddleOCR 2.7.0 使用 use_gpu=False 强制 CPU 模式
-        _engine = PaddleOCR(
-            use_angle_cls=True, 
-            lang='ch', 
-            use_gpu=False,
-            det_db_score_mode='fast'
-        )
+        # PaddleOCR 3.x 使用新的参数
+        # use_gpu 参数已移除（默认自动检测），使用 device 参数指定设备
+        # use_angle_cls 已弃用，改用 use_textline_orientation
+        # det_db_score_mode 参数已移除
+        try:
+            # PaddleOCR 3.x 版本
+            _engine = PaddleOCR(
+                lang='ch',
+                use_textline_orientation=True,
+                device='cpu'  # 强制使用 CPU
+            )
+        except TypeError:
+            # PaddleOCR 2.x 版本回退
+            _engine = PaddleOCR(
+                use_angle_cls=True, 
+                lang='ch', 
+                use_gpu=False,
+                det_db_score_mode='fast'
+            )
     
     _log('PaddleOCR 模型加载完成 (CPU 模式)')
     return _engine
@@ -125,24 +137,55 @@ def recognize_image(base64_str):
 
         # 获取引擎并识别
         engine = get_engine()
-        result = engine.ocr(img_array, cls=True)
+        
+        # PaddleOCR 3.x 不再支持 cls 参数
+        try:
+            result = engine.ocr(img_array)
+        except TypeError:
+            # PaddleOCR 2.x 版本回退
+            result = engine.ocr(img_array, cls=True)
+        
         lines = []
         
-        # PaddleOCR 2.7.0 返回格式: [[[[bbox], (text, score)], ...], ...]
+        # PaddleOCR 返回格式处理
         if result and len(result) > 0:
-            for page in result:
-                if isinstance(page, list):
-                    for item in page:
+            first_item = result[0]
+            
+            # PaddleOCR 3.x 格式：返回 OCRResult 对象，包含 rec_texts 和 rec_scores 字段
+            # 通过字典方式访问
+            if isinstance(first_item, dict) or hasattr(first_item, 'get'):
+                for page in result:
+                    if hasattr(page, 'get'):
+                        texts = page.get('rec_texts', [])
+                        scores = page.get('rec_scores', [])
+                        for i, text in enumerate(texts):
+                            score = float(scores[i]) if i < len(scores) else 1.0
+                            if score > 0.3 and text and text.strip():
+                                lines.append(text.strip())
+            
+            # PaddleOCR 2.x 格式：[[[[bbox], (text, score)], ...], ...]
+            elif isinstance(first_item, list) and len(first_item) > 0:
+                second_item = first_item[0]
+                if isinstance(second_item, list) and len(second_item) >= 2:
+                    # 四层嵌套：[[[[bbox], (text, score)], ...], ...]
+                    for page in result:
+                        if isinstance(page, list):
+                            for item in page:
+                                if isinstance(item, list) and len(item) >= 2:
+                                    text_info = item[1]
+                                    if isinstance(text_info, tuple) and len(text_info) >= 2:
+                                        text, score = text_info[0], float(text_info[1])
+                                        if score > 0.3 and text and text.strip():
+                                            lines.append(text.strip())
+                else:
+                    # 三层嵌套：[[[bbox], (text, score)], ...]
+                    for item in result:
                         if isinstance(item, list) and len(item) >= 2:
                             text_info = item[1]
                             if isinstance(text_info, tuple) and len(text_info) >= 2:
                                 text, score = text_info[0], float(text_info[1])
                                 if score > 0.3 and text and text.strip():
                                     lines.append(text.strip())
-                        elif isinstance(item, tuple) and len(item) >= 2:
-                            text, score = item[0], float(item[1])
-                            if score > 0.3 and text and text.strip():
-                                lines.append(text.strip())
 
         full_text = '\n'.join(lines)
         _log(f'识别完成，共 {len(lines)} 行，文本长度: {len(full_text)}')
