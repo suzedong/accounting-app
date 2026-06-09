@@ -1,6 +1,6 @@
 # 开发计划
 
-> **最后更新：2026-06-05**
+> **最后更新：2026-06-09**
 
 ## 阶段概览
 
@@ -108,24 +108,37 @@
 
 ## Phase 4：同步层 + 清理
 
+> ✅ **已完成（2026-06-09）**
+
 ### 目标
 
 实现本地 SQLite ↔ NocoBase 双向同步，清理旧架构残留代码。
 
-### 任务
+### 已完成任务
 
 #### 4.1 NocoBase 同步
 
-- [ ] 实现 `reqwest` HTTP 客户端封装
-- [ ] `sync_push()` — 推送本地未同步记录到 NocoBase
-- [ ] `sync_pull()` — 拉取 NocoBase 更新数据到本地
-- [ ] 冲突检测与 last-write-wins 处理
-- [ ] `import_from_nocobase()` — 从 NocoBase 全量导入
+- [x] 实现 `reqwest` HTTP 客户端封装（`src-tauri/src/db/nocobase/client.rs`）
+- [x] `sync_push()` — 推送本地未同步记录到 NocoBase（`src-tauri/src/db/nocobase/push.rs`）
+- [x] `sync_pull()` — 拉取 NocoBase 更新数据到本地（`src-tauri/src/db/nocobase/pull.rs`）
+- [x] 冲突检测与 last-write-wins 处理（比较 `local_updated_at` 和 `nocobase_updated_at`）
+- [x] `sync_full()` — 完整同步（先拉取再推送）
+- [x] `get_sync_logs()` — 获取同步日志
+
+**说明**：`sync_pull()` 在首次同步时会自动全量拉取所有记录（当本地无 `nocobase_updated_at` 时），因此不需要单独的 `import_from_nocobase()` 函数。
 
 #### 4.2 桌面增强
 
 - [ ] `tauri-plugin-notification` — 系统通知
-- [ ] Settings 页同步操作入口
+- [x] Settings 页同步操作入口（`src/views/Settings.vue`）
+
+**已实现的同步 UI 功能**：
+- NocoBase 配置表单（URL + Token）
+- 测试连接功能
+- 三个同步按钮：双向同步、推送本地、拉取远程
+- 同步结果展示（推送/拉取数量 + 错误列表）
+- 按钮禁用状态（未配置时禁用）
+- 加载状态显示
 
 #### 4.3 AI Agent 后续增强
 
@@ -144,13 +157,13 @@
 - [x] 删除 `scripts/` 目录（dev.mjs、import_from_nocobase.py 等旧迁移脚本）
 - [x] 删除 `.env`（AI/NocoBase 配置已存入 SQLite）
 - [x] 删除 `vite.config.js.bak`
-- [ ] 精简 `vite.config.js`
+- [x] 精简 `vite.config.ts`（删除默认配置项）
 - [x] 更新 `CLAUDE.md` 文档
 
 #### 4.5 构建测试
 
 - [ ] `npm run tauri build` 生成 macOS .dmg
-- [ ] `npm run tauri build` 生成 Windows .exe/nsis
+- [x] `npm run tauri build` 生成 Windows .exe/nsis（已完成）
 - [ ] 测试离线运行（断网启动 → 确认所有功能可用）
 - [ ] 测试同步功能（连接 NocoBase → 同步 → 确认数据一致）
 

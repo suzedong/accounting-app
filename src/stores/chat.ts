@@ -331,7 +331,7 @@ export const useChatStore = defineStore('chat', () => {
           agentEngine.setLastConfirmedRecordContext(confirmedData.updatedRecord);
         } else if ('id' in confirmedData) {
           lastConfirmedRecord.value = confirmedData as AccountRecord;
-          agentEngine.setLastConfirmedRecordContext(confirmedData as Record<string, unknown>);
+          agentEngine.setLastConfirmedRecordContext(confirmedData);
         }
       }
 

@@ -369,7 +369,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { Loading, Download, InfoFilled } from '@element-plus/icons-vue';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, syncFull, syncPush, syncPull, importFromNocobase } from '@/api/tauri';
+import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, syncFull, syncPush, syncPull } from '@/api/tauri';
 import { agentEngine } from '@/ai/agent-engine';
 import type { AiService } from '@/types';
 

@@ -478,19 +478,20 @@ export class AgentEngine {
    * 设置上一条确认记录的上下文摘要
    * 在确认记录后调用，用于后续修正意图的快速上下文注入
    */
-  setLastConfirmedRecordContext(record: Record<string, unknown> | null) {
-    if (!record) {
+  setLastConfirmedRecordContext(record: unknown) {
+    if (!record || typeof record !== 'object') {
       this.lastConfirmedRecordContext = '';
       return;
     }
+    const r = record as Record<string, unknown>;
     const lines: string[] = [];
-    if (record.amount) lines.push(`金额：${record.amount}元`);
-    if (record.type) lines.push(`类型：${record.type}`);
-    if (record.category) lines.push(`分类：${record.category}`);
-    if (record.account) lines.push(`账户：${record.account}`);
-    if (record.payment) lines.push(`支付：${record.payment}`);
-    if (record.note) lines.push(`备注：${record.note}`);
-    if (record.datetime) lines.push(`时间：${record.datetime}`);
+    if (r.amount) lines.push(`金额：${r.amount}元`);
+    if (r.type) lines.push(`类型：${r.type}`);
+    if (r.category) lines.push(`分类：${r.category}`);
+    if (r.account) lines.push(`账户：${r.account}`);
+    if (r.payment) lines.push(`支付：${r.payment}`);
+    if (r.note) lines.push(`备注：${r.note}`);
+    if (r.datetime) lines.push(`时间：${r.datetime}`);
     this.lastConfirmedRecordContext = lines.join('\n');
   }
 
