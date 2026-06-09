@@ -182,6 +182,9 @@ CREATE TABLE IF NOT EXISTS app_config (
         [],
     );
 
+    // Cleanup: remove deprecated 'record' prompt (merged into dispatch.md)
+    let _ = conn.execute("DELETE FROM system_prompts WHERE name = 'record'", []);
+
     Ok(())
 }
 
@@ -189,10 +192,6 @@ fn seed_prompts(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO system_prompts (name, content) VALUES (?, ?)",
         ["dispatch", include_str!("../../prompts/dispatch.md")],
-    )?;
-    conn.execute(
-        "INSERT INTO system_prompts (name, content) VALUES (?, ?)",
-        ["record", include_str!("../../prompts/record.md")],
     )?;
     conn.execute(
         "INSERT INTO system_prompts (name, content) VALUES (?, ?)",

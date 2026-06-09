@@ -106,6 +106,7 @@ export const useChatStore = defineStore('chat', () => {
           const recordData = persistedData.record;
           if (recordData && 'id' in recordData) {
             lastConfirmedRecord.value = recordData as unknown as AccountRecord;
+            agentEngine.setLastConfirmedRecordContext(recordData);
           }
         }
       }
@@ -250,7 +251,10 @@ export const useChatStore = defineStore('chat', () => {
       // 低风险修正
       if (result.action === 'correct_record' && result.toolResult?.render === 'text') {
         const data = result.toolResult?.data as { updatedRecord?: AccountRecord } | undefined;
-        if (data?.updatedRecord) lastConfirmedRecord.value = data.updatedRecord;
+        if (data?.updatedRecord) {
+          lastConfirmedRecord.value = data.updatedRecord;
+          agentEngine.setLastConfirmedRecordContext(data.updatedRecord);
+        }
       }
 
       // 处理追问
@@ -314,12 +318,20 @@ export const useChatStore = defineStore('chat', () => {
       msg.data = toolResult.data as Record<string, unknown>;
       msg.status = 'confirmed';
 
+      // 存储确认对话的 LLM 消息（用于上下文恢复）
+      const confirmLlmMessages: LLMMessage[] = [
+        { role: 'user', content: '确认' },
+        { role: 'assistant', content: msg.content },
+      ];
+
       const confirmedData = toolResult.data as AccountRecord | { updatedRecord?: AccountRecord } | undefined;
       if (toolResult.success && confirmedData) {
         if ('updatedRecord' in confirmedData && confirmedData.updatedRecord) {
           lastConfirmedRecord.value = confirmedData.updatedRecord;
+          agentEngine.setLastConfirmedRecordContext(confirmedData.updatedRecord);
         } else if ('id' in confirmedData) {
           lastConfirmedRecord.value = confirmedData as AccountRecord;
+          agentEngine.setLastConfirmedRecordContext(confirmedData as Record<string, unknown>);
         }
       }
 
@@ -331,11 +343,11 @@ export const useChatStore = defineStore('chat', () => {
       pendingAction.value = null;
       originalParse.value = null;
 
-      await persistMessage(msg);
+      await persistMessage(msg, confirmLlmMessages);
     } catch (e: unknown) {
       msg.content = e instanceof Error ? e.message : '确认失败';
       msg.render = 'text';
-      await persistMessage(msg);
+      await persistMessage(msg, [{ role: 'assistant', content: msg.content }]);
     }
   }
 
@@ -473,6 +485,7 @@ export const useChatStore = defineStore('chat', () => {
       clearMessages();
       agentEngine.clearHistory();
       agentEngine.clearLLMLogs();
+      agentEngine.setLastConfirmedRecordContext(null);
     } catch {
       // Ignore
     }

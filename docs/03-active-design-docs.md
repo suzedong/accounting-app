@@ -157,7 +157,7 @@ interface LLMMessage {
 | 上下文窗口 | 固定 10 轮对话窗口 |
 | 思考过程展示 | 始终可见，确认记录后仍保留；折叠后透明度 0.7 作为历史痕迹保留 |
 | 消息持久化 | 保持现有 `chat_history` 表，steps[] 存 data 字段 JSON |
-| Prompt 管理 | Settings 页面独立卡片，分 dispatch / record / preferences 三个刷新按钮，运行时从 .md 文件读取覆盖数据库 |
+| Prompt 管理 | Settings 页面独立卡片，分 dispatch / preferences 两个刷新按钮，运行时从 .md 文件读取覆盖数据库 |
 | 类型安全 | zod 方案：一个定义同时生成 JSON Schema + TypeScript 类型 + 运行时校验 |
 | 流式输出 | 先不加，后续再加 |
 | 学习引擎 | LLM 检测纠正意图，Agent 自动对比原始字段和修正字段存入 learning_data |
@@ -290,7 +290,7 @@ Prompt 管理
 修改 dispatch.md 文件后，点击"从文件刷新"将更新同步到数据库。
 刷新后需重新加载 AI 对话上下文才能生效。
 
-[ 刷新 dispatch.md ]  [ 刷新 record.md ]  [ 刷新 preferences.md ]
+[ 刷新 dispatch.md ]  [ 刷新 preferences.md ]
 ```
 
 **实现**：
@@ -441,6 +441,52 @@ interface PersistedChatData {
 | 历史消息只读 | 历史卡片显示"已保存"，无操作按钮 |
 | 支付默认值 | 用户未提及默认"现金"，标注 source=default，需用户确认 |
 | 支付始终显示 | 所有卡片（ConfirmCard/RecordCard/CorrectionConfirmCard）强制显示 |
+
+### 1.5.3.1 智能上下文注入
+
+**核心原则**：正常记账不带历史，检测到修正意图时注入上下文。
+
+**触发条件检测**（`needsHistoryContext`）：
+
+| 触发类型 | 关键词 | 例子 |
+|---|---|---|
+| 显式引用 | `上面`、`前面`、`上一条`、`刚才`、`上条`、`之前` | "上面说的不对" |
+| 修正动作 | `改成`、`改为`、`改一下`、`修正`、`纠正`、`更新`、`修改` | "改成家庭支出" |
+| 否定判断 | `不对`、`错了`、`不是`、`有误`、`错误` | "金额不对" |
+| 省略主语 | `应该是`、`应为`、`应是` | "应该是餐饮" |
+
+**注入策略**：
+
+| 场景 | 注入内容 |
+|---|---|
+| 无修正意图 | 不注入任何历史（正常记账省 token） |
+| 检测到修正意图 + 有 lastConfirmedRecord | 注入结构化摘要（金额/分类/账户/支付/备注/时间） |
+| 检测到修正意图 + 无 lastConfirmedRecord | 降级注入最近 3 轮对话摘要 |
+
+**上下文摘要格式**：
+```
+## 上一条记录
+金额：285.86 元
+类型：支出
+分类：购物
+账户：个人
+支付：招商银行信用卡 (7502)
+备注：深州信誉楼百货
+时间：2026-06-01 18:36
+```
+
+**数据流**：
+```
+确认记录 → agentEngine.setLastConfirmedRecordContext(record)
+                                   ↓
+                          lastConfirmedRecordContext = 结构化摘要
+                                   ↓
+用户输入"改成 50 元" → needsHistoryContext() = true
+                                   ↓
+                          注入: "## 上一条记录\n金额：285.86元..."
+                                   ↓
+                          LLM 知道修改目标，直接返回修正工具调用
+```
 
 ### 1.5.4 数据流
 
