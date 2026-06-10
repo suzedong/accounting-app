@@ -66,8 +66,8 @@ async fn push_single_record(
     // 如果 NocoBase 已有此记录（nocobase_id 不为空），则更新
     if let Some(nocobase_id) = record.nocobase_id {
         let result = client.update_record("records", nocobase_id, data).await?;
-        // 更新成功，使用 NocoBase 返回的 updatedAt
-        let updated_at = result.get("updatedAt")
+        // 更新成功，使用 NocoBase 返回的 updated_at
+        let updated_at = result.get("updated_at")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         update_record_synced_status(db, &record.uuid, Some(nocobase_id), updated_at)?;
@@ -77,7 +77,7 @@ async fn push_single_record(
         // 获取 NocoBase 返回的 ID
         if let Some(obj) = result.as_object() {
             let nocobase_id = obj.get("id").and_then(|v| v.as_i64());
-            let updated_at = obj.get("updatedAt").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let updated_at = obj.get("updated_at").and_then(|v| v.as_str()).map(|s| s.to_string());
             update_record_synced_status(db, &record.uuid, nocobase_id, updated_at)?;
         }
     }

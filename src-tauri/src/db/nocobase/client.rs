@@ -51,26 +51,26 @@ impl NocoBaseClient {
         page: u32,
         page_size: u32,
     ) -> Result<NocoBaseListResponse, String> {
-        // 构建查询参数
-        let params = vec![
-            format!("page={}", page),
-            format!("pageSize={}", page_size),
-        ];
+        let url = format!("{}/api/{}:list", self.base_url, collection);
         
-        // 如果有 filter，添加到 URL 参数中
-        let url = if let Some(f) = filter {
-            let filter_str = serde_json::to_string(&f).unwrap_or_default();
-            let encoded_filter = urlencoding::encode(&filter_str);
-            format!("{}/api/{}:list?{}&filter={}", self.base_url, collection, params.join("&"), encoded_filter)
-        } else {
-            format!("{}/api/{}:list?{}", self.base_url, collection, params.join("&"))
-        };
+        // 构建请求体
+        let mut body = serde_json::json!({
+            "page": page,
+            "pageSize": page_size,
+        });
+        
+        // 如果有 filter，添加到请求体中
+        if let Some(f) = filter {
+            body.as_object_mut().unwrap().insert("filter".to_string(), f);
+        }
 
-        // 使用 GET 请求
+        // 使用 POST 请求，filter 通过 body 传递
         let resp = self
             .http
-            .get(&url)
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.token))
+            .header("Content-Type", "application/json")
+            .json(&body)
             .send()
             .await
             .map_err(|e| format!("HTTP 请求失败: {}", e))?;

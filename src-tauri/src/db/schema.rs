@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS business_trip (
     paid_transport_allowance REAL DEFAULT 0,
     paid_date TEXT,
     notes TEXT,
+    local_updated_at TEXT DEFAULT (datetime('now')),
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
     nocobase_updated_at TEXT,
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS learning_data (
     key TEXT,
     value TEXT,
     count INTEGER DEFAULT 1,
+    local_updated_at TEXT DEFAULT (datetime('now')),
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
     nocobase_updated_at TEXT,
@@ -124,6 +126,12 @@ CREATE TABLE IF NOT EXISTS app_config (
         seed_default_config(conn)?;
     }
 
+    // Migration: add local_updated_at column to business_trip for sync support
+    let _ = conn.execute("ALTER TABLE business_trip ADD COLUMN local_updated_at TEXT DEFAULT (datetime('now'))", []);
+    
+    // Migration: add local_updated_at column to learning_data for sync support
+    let _ = conn.execute("ALTER TABLE learning_data ADD COLUMN local_updated_at TEXT DEFAULT (datetime('now'))", []);
+    
     // Migration: drop deprecated columns from business_trip
     let _ = conn.execute("ALTER TABLE business_trip DROP COLUMN destination", []);
     let _ = conn.execute("ALTER TABLE business_trip DROP COLUMN employee_name", []);

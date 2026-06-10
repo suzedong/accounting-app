@@ -70,7 +70,7 @@ async fn pull_single_record(
     };
 
     let nocobase_id = item.get("id").and_then(|v| v.as_i64());
-    let nocobase_updated_at = item.get("updatedAt")
+    let nocobase_updated_at = item.get("updated_at")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
@@ -80,7 +80,7 @@ async fn pull_single_record(
     if let Some(local) = local_record {
         // 本地已有，比较更新时间
         let local_updated = local.local_updated_at.clone();
-        let nocobase_updated = item.get("updatedAt")
+        let nocobase_updated = item.get("updated_at")
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
@@ -121,9 +121,10 @@ fn get_last_sync_time(db: &Database) -> Result<Option<serde_json::Value>, String
         .map_err(|e| e.to_string())?;
 
     if let Some(time) = max_time {
-        // 使用 NocoBase filter: updatedAt > time
+        // 使用 NocoBase filter: updated_at > time
+        // 注意：filter 查询时需要使用数据库列名格式（下划线），而非 API 返回的驼峰格式
         Ok(Some(serde_json::json!({
-            "updatedAt": { "$gt": time }
+            "updated_at": { "$gt": time }
         })))
     } else {
         // 首次同步，无过滤

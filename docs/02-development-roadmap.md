@@ -119,13 +119,16 @@
 #### 4.1 NocoBase 同步
 
 - [x] 实现 `reqwest` HTTP 客户端封装（`src-tauri/src/db/nocobase/client.rs`）
-- [x] `sync_push()` — 推送本地未同步记录到 NocoBase（`src-tauri/src/db/nocobase/push.rs`）
-- [x] `sync_pull()` — 拉取 NocoBase 更新数据到本地（`src-tauri/src/db/nocobase/pull.rs`）
+- [x] `sync_push()` — 推送本地未同步记录到 NocoBase（支持 records / business_trip / learning_data 三表）
+- [x] `sync_pull()` — 拉取 NocoBase 更新数据到本地（支持 records / business_trip / learning_data 三表）
 - [x] 冲突检测与 last-write-wins 处理（比较 `local_updated_at` 和 `nocobase_updated_at`）
-- [x] `sync_full()` — 完整同步（先拉取再推送）
+- [x] `sync_full()` — 完整同步（先拉取再推送，返回各表同步统计）
 - [x] `get_sync_logs()` — 获取同步日志
 
-**说明**：`sync_pull()` 在首次同步时会自动全量拉取所有记录（当本地无 `nocobase_updated_at` 时），因此不需要单独的 `import_from_nocobase()` 函数。
+**说明**：
+- 同步范围：`records` ↔ `records`（记账记录）、`business_trip` ↔ `business_trip`（差旅补助）、`learning_data` ↔ `learning_data`（学习数据）
+- `sync_pull()` 在首次同步时会自动全量拉取所有记录（当本地无 `nocobase_updated_at` 时），因此不需要单独的 `import_from_nocobase()` 函数
+- 同步结果包含各表的推送/拉取数量统计，前端 Settings 页分三组展示
 
 #### 4.2 桌面增强
 

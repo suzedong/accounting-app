@@ -1,0 +1,325 @@
+use crate::db::connection::Database;
+use crate::db::sync_log::log_sync;
+use crate::db::nocobase::client::NocoBaseClient;
+use rusqlite::params;
+use rusqlite::OptionalExtension;
+
+/// 从 NocoBase 拉取学习数据到本地
+pub async fn pull_learning(
+    db: &Database,
+    client: &NocoBaseClient,
+) -> Result<(i32, Vec<String>), String> {
+    let mut pulled = 0;
+    let mut errors = Vec::new();
+
+    // 查询本地最大的 nocobase_updated_at，作为增量过滤条件
+    let filter = get_last_learning_sync_time(db)?;
+
+    let mut page = 1;
+    let page_size = 100;
+
+    loop {
+        let list_resp = match client.list_records("learning_data", filter.clone(), page, page_size).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                errors.push(format!("拉取学习数据第 {} 页失败: {}", page, e));
+                break;
+            }
+        };
+
+        if list_resp.data.is_empty() {
+            break;
+        }
+
+        // 逐条处理
+        for item in list_resp.data {
+            match pull_single_learning(db, &item).await {
+                Ok(true) => pulled += 1,
+                Ok(false) => {} // 跳过
+                Err(e) => errors.push(format!("[pull_learning] {}", e)),
+            }
+        }
+
+        if page >= list_resp.meta.total_page {
+            break;
+        }
+        page += 1;
+    }
+
+    // 记录同步日志
+    let status = if errors.is_empty() { "success" } else { "partial" };
+    log_sync(db, "pull", "learning_data", status, pulled, errors.first().map(|s| s.as_str()))?;
+
+    Ok((pulled, errors))
+}
+
+/// 推送本地未同步的学习数据到 NocoBase
+pub async fn push_learning(
+    db: &Database,
+    client: &NocoBaseClient,
+) -> Result<(i32, Vec<String>), String> {
+    let mut pushed = 0;
+    let mut errors = Vec::new();
+
+    // 查询所有未同步的本地记录
+    let unsynced = get_unsynced_learning(db)?;
+
+    if unsynced.is_empty() {
+        log_sync(db, "push", "learning_data", "success", 0, None)?;
+        return Ok((0, Vec::new()));
+    }
+
+    // 逐条推送到 NocoBase
+    for record in unsynced {
+        match push_single_learning(db, client, &record).await {
+            Ok(_) => pushed += 1,
+            Err(e) => errors.push(format!("[{}] {}", record.uuid, e)),
+        }
+    }
+
+    // 记录同步日志
+    let status = if errors.is_empty() { "success" } else { "partial" };
+    log_sync(db, "push", "learning_data", status, pushed, errors.first().map(|s| s.as_str()))?;
+
+    Ok((pushed, errors))
+}
+
+/// 查询本地最大的 nocobase_updated_at
+fn get_last_learning_sync_time(db: &Database) -> Result<Option<serde_json::Value>, String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let max_time: Option<String> = guard
+        .query_row(
+            "SELECT MAX(nocobase_updated_at) FROM learning_data 
+             WHERE nocobase_updated_at IS NOT NULL 
+             AND nocobase_updated_at LIKE '____-__-__T%'",
+            [],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if let Some(time) = max_time {
+        Ok(Some(serde_json::json!({
+            "updated_at": { "$gt": time }
+        })))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 拉取单条学习数据到本地
+async fn pull_single_learning(
+    db: &Database,
+    item: &serde_json::Value,
+) -> Result<bool, String> {
+    let uuid = item.get("uuid")
+        .and_then(|v| v.as_str());
+    
+    let uuid = match uuid {
+        Some(u) if !u.is_empty() => u,
+        _ => return Ok(false),
+    };
+
+    let nocobase_id = item.get("id").and_then(|v| v.as_i64());
+    let nocobase_updated_at = item.get("updated_at")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // 检查本地是否已有此记录
+    let local_record = get_local_learning_by_uuid(db, uuid)?;
+
+    if let Some(local) = local_record {
+        // 本地已有，比较更新时间
+        let local_updated = local.local_updated_at.clone();
+        let nocobase_updated = item.get("updated_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // 如果本地更新，跳过
+        if local_updated.as_str() > nocobase_updated {
+            return Ok(false);
+        }
+
+        // NocoBase 更新，更新本地
+        update_local_learning(db, uuid, item, nocobase_id, nocobase_updated_at)?;
+    } else {
+        // 本地没有，创建新记录
+        insert_local_learning(db, uuid, item, nocobase_id, nocobase_updated_at)?;
+    }
+
+    Ok(true)
+}
+
+/// 根据 uuid 查询本地学习数据记录
+fn get_local_learning_by_uuid(db: &Database, uuid: &str) -> Result<Option<LearningRecordInfo>, String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let record = guard
+        .query_row(
+            "SELECT created_at FROM learning_data WHERE uuid = ?",
+            [uuid],
+            |row| Ok(LearningRecordInfo {
+                local_updated_at: row.get(0)?,
+            }),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(record)
+}
+
+/// 本地学习数据记录信息
+struct LearningRecordInfo {
+    local_updated_at: String,
+}
+
+/// 插入新的学习数据记录
+fn insert_local_learning(
+    db: &Database,
+    uuid: &str,
+    item: &serde_json::Value,
+    nocobase_id: Option<i64>,
+    nocobase_updated_at: Option<String>,
+) -> Result<(), String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    
+    let r#type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let key = item.get("key").and_then(|v| v.as_str());
+    let value = item.get("value").and_then(|v| v.as_str());
+    let count = item.get("count").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+
+    guard
+        .execute(
+            "INSERT INTO learning_data 
+            (uuid, type, key, value, count, synced, nocobase_id, nocobase_updated_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+            params![uuid, r#type, key, value, count, nocobase_id, nocobase_updated_at],
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// 更新本地学习数据记录
+fn update_local_learning(
+    db: &Database,
+    uuid: &str,
+    item: &serde_json::Value,
+    nocobase_id: Option<i64>,
+    nocobase_updated_at: Option<String>,
+) -> Result<(), String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    
+    let r#type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let key = item.get("key").and_then(|v| v.as_str());
+    let value = item.get("value").and_then(|v| v.as_str());
+    let count = item.get("count").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+
+    guard
+        .execute(
+            "UPDATE learning_data SET 
+             type = ?, key = ?, value = ?, count = ?, synced = 1, 
+             nocobase_id = ?, nocobase_updated_at = ?
+             WHERE uuid = ?",
+            params![r#type, key, value, count, nocobase_id, nocobase_updated_at, uuid],
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// 查询未同步的学习数据记录
+fn get_unsynced_learning(db: &Database) -> Result<Vec<UnsyncedLearning>, String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = guard
+        .prepare("SELECT uuid, type, key, value, count FROM learning_data WHERE synced = 0")
+        .map_err(|e| e.to_string())?;
+
+    let learning = stmt
+        .query_map([], |row| {
+            Ok(UnsyncedLearning {
+                uuid: row.get(0)?,
+                r#type: row.get(1)?,
+                key: row.get(2)?,
+                value: row.get(3)?,
+                count: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(learning)
+}
+
+/// 未同步学习数据记录结构
+struct UnsyncedLearning {
+    uuid: String,
+    r#type: String,
+    key: Option<String>,
+    value: Option<String>,
+    count: i32,
+}
+
+/// 推送单条学习数据到 NocoBase
+async fn push_single_learning(
+    db: &Database,
+    client: &NocoBaseClient,
+    record: &UnsyncedLearning,
+) -> Result<(), String> {
+    let data = serde_json::json!({
+        "uuid": record.uuid,
+        "type": record.r#type,
+        "key": record.key,
+        "value": record.value,
+        "count": record.count,
+    });
+
+    // 查询 nocobase_id（在 await 前释放锁）
+    let nocobase_id: Option<i64> = {
+        let conn = db.get_conn();
+        let guard = conn.lock().map_err(|e| e.to_string())?;
+        guard
+            .query_row("SELECT nocobase_id FROM learning_data WHERE uuid = ?", [&record.uuid], |r| r.get(0))
+            .optional()
+            .map_err(|e| e.to_string())?
+    };
+
+    // 异步操作（锁已释放）
+    if let Some(nocobase_id) = nocobase_id {
+        let result = client.update_record("learning_data", nocobase_id, data).await?;
+        let updated_at = result.get("updated_at")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        update_learning_synced_status(db, &record.uuid, Some(nocobase_id), updated_at)?;
+    } else {
+        let result = client.create_record("learning_data", data).await?;
+        if let Some(obj) = result.as_object() {
+            let nocobase_id = obj.get("id").and_then(|v| v.as_i64());
+            let updated_at = obj.get("updated_at").and_then(|v| v.as_str()).map(|s| s.to_string());
+            update_learning_synced_status(db, &record.uuid, nocobase_id, updated_at)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// 更新学习数据记录的同步状态
+fn update_learning_synced_status(
+    db: &Database,
+    uuid: &str,
+    nocobase_id: Option<i64>,
+    updated_at: Option<String>,
+) -> Result<(), String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    guard
+        .execute(
+            "UPDATE learning_data SET synced = 1, nocobase_id = ?, nocobase_updated_at = ? WHERE uuid = ?",
+            params![nocobase_id, updated_at, uuid],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}

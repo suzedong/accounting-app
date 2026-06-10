@@ -104,8 +104,14 @@
         <!-- 同步结果 -->
         <div v-if="syncResult" class="sync-result">
           <el-descriptions :column="2" border size="small">
-            <el-descriptions-item label="推送记录">{{ syncResult.pushed }} 条</el-descriptions-item>
-            <el-descriptions-item label="拉取记录">{{ syncResult.pulled }} 条</el-descriptions-item>
+            <el-descriptions-item label="记账记录-推送">{{ syncResult.records_pushed }} 条</el-descriptions-item>
+            <el-descriptions-item label="记账记录-拉取">{{ syncResult.records_pulled }} 条</el-descriptions-item>
+            <el-descriptions-item label="差旅补助-推送">{{ syncResult.trips_pushed }} 条</el-descriptions-item>
+            <el-descriptions-item label="差旅补助-拉取">{{ syncResult.trips_pulled }} 条</el-descriptions-item>
+            <el-descriptions-item label="学习数据-推送">{{ syncResult.learning_pushed }} 条</el-descriptions-item>
+            <el-descriptions-item label="学习数据-拉取">{{ syncResult.learning_pulled }} 条</el-descriptions-item>
+            <el-descriptions-item label="合计-推送">{{ syncResult.total_pushed }} 条</el-descriptions-item>
+            <el-descriptions-item label="合计-拉取">{{ syncResult.total_pulled }} 条</el-descriptions-item>
           </el-descriptions>
           <div v-if="syncResult.errors.length > 0" class="sync-errors">
             <el-alert
@@ -420,7 +426,13 @@ const syncConfigured = computed(() => syncForm.value.nocobase_url && syncForm.va
 // Sync state
 const syncing = ref(false);
 const testingSync = ref(false);
-const syncResult = ref<{ pushed: number; pulled: number; errors: string[] } | null>(null);
+const syncResult = ref<{ 
+  records_pushed: number; records_pulled: number;
+  trips_pushed: number; trips_pulled: number;
+  learning_pushed: number; learning_pulled: number;
+  total_pushed: number; total_pulled: number;
+  errors: string[] 
+} | null>(null);
 const showSyncTerminal = ref(false);
 const syncTerminalLines = ref<string[]>([]);
 const syncTerminalBodyRef = ref<HTMLElement | null>(null);
@@ -741,7 +753,7 @@ async function handleSyncFull() {
     if (result.errors.length > 0) {
       ElMessage.warning(`同步完成，但有 ${result.errors.length} 个错误`);
     } else {
-      ElMessage.success(`同步完成：推送 ${result.pushed} 条，拉取 ${result.pulled} 条`);
+      ElMessage.success(`同步完成：推送 ${result.total_pushed} 条，拉取 ${result.total_pulled} 条`);
     }
   } catch (e: unknown) {
     ElMessage.error(`同步失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -759,7 +771,7 @@ async function handleSyncPush() {
     if (result.errors.length > 0) {
       ElMessage.warning(`推送完成，但有 ${result.errors.length} 个错误`);
     } else {
-      ElMessage.success(`推送完成：${result.pushed} 条`);
+      ElMessage.success(`推送完成：${result.total_pushed} 条`);
     }
   } catch (e: unknown) {
     ElMessage.error(`推送失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -777,7 +789,7 @@ async function handleSyncPull() {
     if (result.errors.length > 0) {
       ElMessage.warning(`拉取完成，但有 ${result.errors.length} 个错误`);
     } else {
-      ElMessage.success(`拉取完成：${result.pulled} 条`);
+      ElMessage.success(`拉取完成：${result.total_pulled} 条`);
     }
   } catch (e: unknown) {
     ElMessage.error(`拉取失败: ${e instanceof Error ? e.message : String(e)}`);
