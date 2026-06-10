@@ -165,7 +165,7 @@
 
 #### 4.5 构建测试
 
-- [ ] `npm run tauri build` 生成 macOS .dmg
+- [x] `npm run tauri build` 生成 macOS .dmg（已完成）
 - [x] `npm run tauri build` 生成 Windows .exe/nsis（已完成）
 - [ ] 测试离线运行（断网启动 → 确认所有功能可用）
 - [ ] 测试同步功能（连接 NocoBase → 同步 → 确认数据一致）

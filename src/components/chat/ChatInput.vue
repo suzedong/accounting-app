@@ -67,6 +67,10 @@ const ocrLoading = defineModel<boolean>('ocrLoading', { default: false });
 const isProcessing = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+// OCR 状态缓存（避免每次上传都检查）
+const ocrStatusCache = ref<{ available: boolean; timestamp: number } | null>(null);
+const OCR_STATUS_CACHE_DURATION = 5 * 60 * 1000; // 5分钟缓存
+
 function triggerFileInput() {
   fileInput.value?.click();
 }
@@ -133,9 +137,24 @@ async function handleSend() {
   const mergedText = text.value.trim();
 
   if (hasImage) {
-    // OCR 预处理：检查可用性
-    const status = await checkOcrStatusFast();
-    if (!status.available) {
+    // OCR 预处理：检查可用性（使用缓存）
+    const now = Date.now();
+    let isOcrAvailable = false;
+    
+    // 检查缓存是否有效
+    if (ocrStatusCache.value && now - ocrStatusCache.value.timestamp < OCR_STATUS_CACHE_DURATION) {
+      isOcrAvailable = ocrStatusCache.value.available;
+      console.log('[OCR] 使用缓存状态:', isOcrAvailable);
+    } else {
+      // 缓存失效，重新检查
+      console.log('[OCR] 缓存失效，重新检查状态');
+      const status = await checkOcrStatusFast();
+      isOcrAvailable = status.available;
+      // 更新缓存
+      ocrStatusCache.value = { available: isOcrAvailable, timestamp: now };
+    }
+    
+    if (!isOcrAvailable) {
       ElMessage.error('OCR 识别未就绪，请前往设置页安装 PaddleOCR');
       isProcessing.value = false;
       return;
@@ -162,6 +181,8 @@ async function handleSend() {
       emit('send', finalText, imageBase64.value!, imageSrc.value!);
     } catch (e) {
       ElMessage.error('OCR 识别失败：' + (e instanceof Error ? e.message : String(e)));
+      // OCR 失败，清除缓存以便下次重新检查
+      ocrStatusCache.value = null;
     } finally {
       ocrLoading.value = false;
       isProcessing.value = false;

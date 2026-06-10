@@ -426,13 +426,7 @@ const syncConfigured = computed(() => syncForm.value.nocobase_url && syncForm.va
 // Sync state
 const syncing = ref(false);
 const testingSync = ref(false);
-const syncResult = ref<{ 
-  records_pushed: number; records_pulled: number;
-  trips_pushed: number; trips_pulled: number;
-  learning_pushed: number; learning_pulled: number;
-  total_pushed: number; total_pulled: number;
-  errors: string[] 
-} | null>(null);
+const syncResult = ref<any>(null);
 const showSyncTerminal = ref(false);
 const syncTerminalLines = ref<string[]>([]);
 const syncTerminalBodyRef = ref<HTMLElement | null>(null);

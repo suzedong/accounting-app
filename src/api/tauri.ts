@@ -269,15 +269,33 @@ export async function setOcrEnabled(enabled: boolean): Promise<void> {
 }
 
 // 同步相关
-export async function syncFull(): Promise<{ pushed: number; pulled: number; errors: string[] }> {
+export async function syncFull(): Promise<{ 
+  records_pushed: number; records_pulled: number;
+  trips_pushed: number; trips_pulled: number;
+  learning_pushed: number; learning_pulled: number;
+  total_pushed: number; total_pulled: number;
+  errors: string[] 
+}> {
   return invoke('sync_full');
 }
 
-export async function syncPush(): Promise<{ pushed: number; pulled: number; errors: string[] }> {
+export async function syncPush(): Promise<{ 
+  records_pushed: number; records_pulled: number;
+  trips_pushed: number; trips_pulled: number;
+  learning_pushed: number; learning_pulled: number;
+  total_pushed: number; total_pulled: number;
+  errors: string[] 
+}> {
   return invoke('sync_push');
 }
 
-export async function syncPull(): Promise<{ pushed: number; pulled: number; errors: string[] }> {
+export async function syncPull(): Promise<{ 
+  records_pushed: number; records_pulled: number;
+  trips_pushed: number; trips_pulled: number;
+  learning_pushed: number; learning_pulled: number;
+  total_pushed: number; total_pulled: number;
+  errors: string[] 
+}> {
   return invoke('sync_pull');
 }
 

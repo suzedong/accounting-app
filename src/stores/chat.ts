@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, nextTick } from 'vue';
+import { ElMessage } from 'element-plus';
 import { agentEngine } from '@/ai/agent-engine';
 import { toolRegistry } from '@/ai/tool-registry';
 import { getChatHistory, saveChatMessage, clearChatHistory } from '@/api/tauri';
@@ -55,6 +56,9 @@ export const useChatStore = defineStore('chat', () => {
   } | null>(null);
   const editingField = ref<string | null>(null);
   const originalParse = ref<Record<string, unknown> | null>(null);
+  
+  // 记录更新通知（用于通知其他页面刷新）
+  const recordUpdated = ref(0);
 
   function genId() {
     return nextId++;
@@ -293,8 +297,13 @@ export const useChatStore = defineStore('chat', () => {
     const action = pendingAction.value || 'create_record';
 
     if (action === 'create_record') {
+      // 检查重复记录
       const isDuplicate = await checkDuplicate(record);
-      if (isDuplicate) return;
+      if (isDuplicate) {
+        // 发现重复记录，提示用户
+        ElMessage.warning('发现重复记录，请确认是否已录入');
+        return;
+      }
     }
 
     originalParse.value = { ...record };
@@ -333,6 +342,8 @@ export const useChatStore = defineStore('chat', () => {
           lastConfirmedRecord.value = confirmedData as AccountRecord;
           agentEngine.setLastConfirmedRecordContext(confirmedData);
         }
+        // 通知其他页面记录已更新
+        recordUpdated.value++;
       }
 
       if (originalParse.value) {
@@ -413,27 +424,34 @@ export const useChatStore = defineStore('chat', () => {
   async function checkDuplicate(record: Record<string, unknown>): Promise<boolean> {
     try {
       const { getRecords } = await import('@/api/tauri');
-      const dateStr = (record.datetime as string || '').substring(0, 10) || new Date().toISOString().substring(0, 10);
+      const datetime = (record.datetime as string) || new Date().toISOString().replace('T', ' ').substring(0, 19);
+      
+      // 精确到秒的重复检查：比较完整的时间戳（年月日时分秒）
       const records = await getRecords({
         page: 1,
         pageSize: 100,
-        datetimeGte: `${dateStr} 00:00:00`,
-        datetimeLte: `${dateStr} 23:59:59`,
       });
 
       const amount = typeof record.amount === 'number' ? record.amount : parseFloat(String(record.amount));
+      const recordType = record.type;
+      const recordDatetime = datetime;
 
       for (const r of records.data) {
         const sameAmount = Math.abs((r.amount || 0) - amount) < 0.01;
-        const sameType = r.type === record.type;
-        const sameDate = r.datetime && r.datetime.substring(0, 10) === dateStr;
+        const sameType = r.type === recordType;
+        // 精确到秒的比较（完整时间戳）
+        const sameDatetime = r.datetime && r.datetime.substring(0, 19) === recordDatetime.substring(0, 19);
 
-        if (sameAmount && sameType && sameDate) {
+        if (sameAmount && sameType && sameDatetime) {
+          // 发现重复记录
+          console.log('[重复检查] 发现重复:', { amount, datetime: recordDatetime, type: recordType });
           return true;
         }
       }
       return false;
-    } catch {
+    } catch (e) {
+      console.error('[重复检查] 失败:', e);
+      // 检查失败时，不阻止用户确认（返回 false 允许继续）
       return false;
     }
   }
@@ -494,6 +512,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages, isOpen, sending, ocrLoading,
     pendingRecord, pendingAction, lastConfirmedRecord, awaitingFollowUp, pendingFollowUp, editingField,
+    recordUpdated,
     genId, loadHistory, sendMessage, confirmRecord, cancelRecord,
     startEditField, applyFieldEdit, answerFollowUp, clearMessages, clearHistory,
   };

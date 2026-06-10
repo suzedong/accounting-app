@@ -2,7 +2,12 @@
   <div class="records-page">
     <div class="page-header">
       <h2>记账记录</h2>
-      <el-button type="primary" @click="showCreateDialog">新增记录</el-button>
+      <div class="page-actions">
+        <el-button @click="store.fetchRecords" :loading="store.loading">
+          <el-icon><Refresh /></el-icon> 刷新
+        </el-button>
+        <el-button type="primary" @click="showCreateDialog">新增记录</el-button>
+      </div>
     </div>
 
     <!-- Filters -->
@@ -129,13 +134,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { ElMessageBox, ElMessage } from 'element-plus';
+import { Refresh } from '@element-plus/icons-vue';
 import { useRecordsStore } from '@/stores/records';
+import { useChatStore } from '@/stores/chat';
 import { formatMoney, formatDatetime } from '@/utils/formatters';
 import type { RecordInput } from '@/types';
 
 const store = useRecordsStore();
+const chat = useChatStore();
 const dialogVisible = ref(false);
 const editMode = ref(false);
 const editingId = ref<number | null>(null);
@@ -156,6 +164,11 @@ const form = ref<RecordInput>({ ...defaultForm });
 
 onMounted(() => {
   store.fetchRecords();
+  
+  // 监听 AI 对话确认记录的更新，自动刷新页面
+  watch(() => chat.recordUpdated, () => {
+    store.fetchRecords();
+  });
 });
 
 function showCreateDialog() {
@@ -249,6 +262,11 @@ function resetFilters() {
 .page-header h2 {
   font-size: 1.5em;
   color: #333;
+}
+
+.page-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .filters {

@@ -246,12 +246,28 @@ const learningData = ref<Array<{ id: number; keyword: string; field: string; val
 
 onMounted(async () => {
   await chat.loadHistory(50);
+  await scrollToBottom();
 });
 
 async function scrollToBottom() {
+  // 等待 DOM 更新
   await nextTick();
-  if (messagesRef.value) {
-    messagesRef.value.scrollTop = messagesRef.value.scrollHeight;
+  
+  // 尝试多次滚动，确保滚动到底部
+  const maxAttempts = 5;
+  const delay = 50; // 每次尝试间隔 50ms
+  
+  for (let i = 0; i < maxAttempts; i++) {
+    if (messagesRef.value) {
+      messagesRef.value.scrollTop = messagesRef.value.scrollHeight;
+      // 检查是否已经滚动到底部
+      const isAtBottom = messagesRef.value.scrollHeight - messagesRef.value.scrollTop <= messagesRef.value.clientHeight + 10;
+      if (isAtBottom) {
+        break;
+      }
+    }
+    // 等待一段时间后重试
+    await new Promise(resolve => setTimeout(resolve, delay));
   }
 }
 
