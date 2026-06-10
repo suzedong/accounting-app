@@ -51,32 +51,33 @@ impl NocoBaseClient {
         page: u32,
         page_size: u32,
     ) -> Result<NocoBaseListResponse, String> {
-        let url = format!("{}/api/{}:list", self.base_url, collection);
+        // 使用 GET 请求，参数通过 URL 查询字符串传递
+        let mut url = format!("{}/api/{}:list?page={}&pageSize={}", self.base_url, collection, page, page_size);
         
-        // 构建请求体
-        let mut body = serde_json::json!({
-            "page": page,
-            "pageSize": page_size,
-        });
-        
-        // 如果有 filter，添加到请求体中
+        // 如果有 filter，作为 URL 查询参数添加
         if let Some(f) = filter {
-            body.as_object_mut().unwrap().insert("filter".to_string(), f);
+            let filter_str = f.to_string();
+            // URL 编码 filter
+            let encoded_filter = urlencoding::encode(&filter_str);
+            url = format!("{}&filter={}", url, encoded_filter);
         }
-
-        // 使用 POST 请求，filter 通过 body 传递
+        
+        println!("[DEBUG] NocoBase 请求 - URL: {}", url);
+        
         let resp = self
             .http
-            .post(&url)
+            .get(&url)
             .header("Authorization", format!("Bearer {}", self.token))
             .header("Content-Type", "application/json")
-            .json(&body)
             .send()
             .await
             .map_err(|e| format!("HTTP 请求失败: {}", e))?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
+        
+        println!("[DEBUG] NocoBase 响应 - Status: {}, 响应长度: {} 字符", status, text.len());
+        
         if !status.is_success() {
             return Err(format!("HTTP {} {}", status.as_u16(), text));
         }

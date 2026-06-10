@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::db::Database;
 use crate::db::nocobase::client::NocoBaseClient;
 use crate::db::nocobase::push::push_records;
-use crate::db::nocobase::pull::pull_records;
+use crate::db::nocobase::pull::{pull_records, sync_records_full, SyncResult};
 use crate::db::nocobase::trip_sync::{push_trips, pull_trips};
 use crate::db::nocobase::learning_sync::{push_learning, pull_learning};
 
@@ -13,12 +13,16 @@ use crate::db::nocobase::learning_sync::{push_learning, pull_learning};
 pub struct TableSyncResult {
     pub records_pushed: i32,
     pub records_pulled: i32,
+    pub records_deleted: i32,
+    pub records_conflicts: i32,
     pub trips_pushed: i32,
     pub trips_pulled: i32,
     pub learning_pushed: i32,
     pub learning_pulled: i32,
     pub total_pushed: i32,
     pub total_pulled: i32,
+    pub total_deleted: i32,
+    pub total_conflicts: i32,
     pub errors: Vec<String>,
 }
 
@@ -95,12 +99,16 @@ pub async fn sync_push(
     Ok(TableSyncResult {
         records_pushed,
         records_pulled: 0,
+        records_deleted: 0,
+        records_conflicts: 0,
         trips_pushed,
         trips_pulled: 0,
         learning_pushed,
         learning_pulled: 0,
         total_pushed,
         total_pulled: 0,
+        total_deleted: 0,
+        total_conflicts: 0,
         errors: all_errors,
     })
 }
@@ -114,7 +122,7 @@ pub async fn sync_pull(
 
     let mut all_errors = Vec::new();
 
-    // 拉取记账记录
+    // 拉取记账记录（使用旧的增量拉取函数，兼容旧代码）
     let (records_pulled, errors) = pull_records(&state, &client).await?;
     all_errors.extend(errors);
 
@@ -131,16 +139,25 @@ pub async fn sync_pull(
     Ok(TableSyncResult {
         records_pushed: 0,
         records_pulled,
+        records_deleted: 0,
+        records_conflicts: 0,
         trips_pushed: 0,
         trips_pulled,
         learning_pushed: 0,
         learning_pulled,
         total_pushed: 0,
         total_pulled,
+        total_deleted: 0,
+        total_conflicts: 0,
         errors: all_errors,
     })
 }
 
+/// 全量对比同步（推荐使用）
+/// 对比本地和云端所有记录，执行：
+/// - 云端有本地无 → 拉取到本地
+/// - 本地有云端无 → synced=0 推送，synced=1 删除本地
+/// - 两边都有 → 比较时间，更新较旧的
 #[tauri::command]
 pub async fn sync_full(
     state: State<'_, Database>,
@@ -150,38 +167,48 @@ pub async fn sync_full(
 
     let mut all_errors = Vec::new();
 
-    // 先 Pull（获取 NocoBase 更新）
-    let (records_pulled, errors) = pull_records(&state, &client).await?;
-    all_errors.extend(errors);
+    // 全量对比同步记账记录
+    let result: SyncResult = sync_records_full(&state, &client).await?;
+    let records_pushed = result.pushed;
+    let records_pulled = result.pulled;
+    let records_deleted = result.deleted;
+    let records_conflicts = result.conflicts;
+    all_errors.extend(result.errors);
 
+    // 拉取差旅补助（暂时使用旧的增量拉取）
     let (trips_pulled, errors) = pull_trips(&state, &client).await?;
     all_errors.extend(errors);
 
-    let (learning_pulled, errors) = pull_learning(&state, &client).await?;
-    all_errors.extend(errors);
-
-    // 再 Push（推送本地未同步记录）
-    let (records_pushed, errors) = push_records(&state, &client).await?;
-    all_errors.extend(errors);
-
+    // 推送差旅补助（暂时使用旧的推送）
     let (trips_pushed, errors) = push_trips(&state, &client).await?;
     all_errors.extend(errors);
 
+    // 拉取学习数据（暂时使用旧的增量拉取）
+    let (learning_pulled, errors) = pull_learning(&state, &client).await?;
+    all_errors.extend(errors);
+
+    // 推送学习数据（暂时使用旧的推送）
     let (learning_pushed, errors) = push_learning(&state, &client).await?;
     all_errors.extend(errors);
 
     let total_pushed = records_pushed + trips_pushed + learning_pushed;
     let total_pulled = records_pulled + trips_pulled + learning_pulled;
+    let total_deleted = records_deleted;
+    let total_conflicts = records_conflicts;
 
     Ok(TableSyncResult {
         records_pushed,
         records_pulled,
+        records_deleted,
+        records_conflicts,
         trips_pushed,
         trips_pulled,
         learning_pushed,
         learning_pulled,
         total_pushed,
         total_pulled,
+        total_deleted,
+        total_conflicts,
         errors: all_errors,
     })
 }

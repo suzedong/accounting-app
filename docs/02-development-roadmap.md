@@ -1,6 +1,6 @@
 # 开发计划
 
-> **最后更新：2026-06-09**
+> **最后更新：2026-06-10**
 
 ## 阶段概览
 
@@ -119,16 +119,21 @@
 #### 4.1 NocoBase 同步
 
 - [x] 实现 `reqwest` HTTP 客户端封装（`src-tauri/src/db/nocobase/client.rs`）
+- [x] `sync_full()` — 全量对比同步（推荐使用）
+  - 获取云端所有记录（UUID + updated_at）
+  - 获取本地所有记录（UUID + local_updated_at + synced）
+  - 对比差异：云端有本地无 → 拉取；本地有云端无 → synced=0 推送，synced=1 删除本地；两边都有 → 比较时间更新较旧的
 - [x] `sync_push()` — 推送本地未同步记录到 NocoBase（支持 records / business_trip / learning_data 三表）
 - [x] `sync_pull()` — 拉取 NocoBase 更新数据到本地（支持 records / business_trip / learning_data 三表）
 - [x] 冲突检测与 last-write-wins 处理（比较 `local_updated_at` 和 `nocobase_updated_at`）
-- [x] `sync_full()` — 完整同步（先拉取再推送，返回各表同步统计）
 - [x] `get_sync_logs()` — 获取同步日志
 
 **说明**：
 - 同步范围：`records` ↔ `records`（记账记录）、`business_trip` ↔ `business_trip`（差旅补助）、`learning_data` ↔ `learning_data`（学习数据）
-- `sync_pull()` 在首次同步时会自动全量拉取所有记录（当本地无 `nocobase_updated_at` 时），因此不需要单独的 `import_from_nocobase()` 函数
-- 同步结果包含各表的推送/拉取数量统计，前端 Settings 页分三组展示
+- **推荐使用 `sync_full()`**：全量对比同步，确保数据完整性，处理删除操作和条数不一致的情况
+- 删除策略：`synced=0` 的记录推送（本地新增未同步），`synced=1` 的记录删除本地（云端已删除）
+- 时间阈值：5 分钟阈值，避免微小时间差异导致的误判
+- 同步结果包含各表的推送/拉取/删除/冲突数量统计，前端 Settings 页分三组展示
 
 #### 4.2 桌面增强
 
@@ -441,5 +446,5 @@ pub struct AiService {
 | M1: 基础可用 | Phase 1 完成，记录 CRUD 在桌面端工作 | 第 2 周末 | ✅ 已达成 |
 | M2: 功能完整 | Phase 2 完成，所有业务页面可用 | 第 4 周末 | ✅ 已达成 |
 | M3: AI 可用 | Phase 3 完成，AI 对话 + OCR 均可用 | 第 6 周末 | ✅ 已达成 |
-| M4: 同步可用 | Phase 4 完成，可导入并双向同步 | 第 8 周末 | ❌ 待达成 |
+| M4: 同步可用 | Phase 4 完成，全量对比同步可用 | 第 8 周末 | ✅ 已达成 |
 | M5: 本地 LLM 可用 | Phase 5 完成，本地模型可完成记账 dispatch | 第 10 周末 | 📝 待达成 |

@@ -78,6 +78,16 @@
         </el-form-item>
       </el-form>
 
+      <!-- 本地数据库信息 -->
+      <el-form label-width="120px" style="max-width: 600px; margin-top: 12px">
+        <el-form-item label="本地数据库">
+          <div style="display: flex; align-items: center; gap: 8px; width: 100%">
+            <el-input :value="localDbPath" readonly size="small" style="flex: 1" />
+            <el-button size="small" @click="openDbFolder">打开文件夹</el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+
       <el-divider />
 
       <!-- 同步操作区 -->
@@ -422,6 +432,19 @@ const syncForm = ref({
   nocobase_token: '',
 });
 const syncConfigured = computed(() => syncForm.value.nocobase_url && syncForm.value.nocobase_token);
+
+// 本地数据库路径
+const localDbPath = 'D:\\Code\\accounting-app\\database\\app_data.db';
+
+// 打开数据库文件夹
+async function openDbFolder() {
+  try {
+    await invoke('open_folder', { path: 'D:\\Code\\accounting-app\\database' });
+  } catch (e) {
+    console.error('打开文件夹失败:', e);
+    ElMessage.error('无法打开文件夹');
+  }
+}
 
 // Sync state
 const syncing = ref(false);

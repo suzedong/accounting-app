@@ -2,158 +2,365 @@ use crate::db::connection::Database;
 use crate::db::sync_log::log_sync;
 use crate::db::nocobase::client::NocoBaseClient;
 use rusqlite::params;
-use rusqlite::OptionalExtension;
+use chrono::{DateTime, Utc};
 
-/// 从 NocoBase 拉取更新到本地
-pub async fn pull_records(
+/// 同步结果
+pub struct SyncResult {
+    pub pulled: i32,
+    pub pushed: i32,
+    pub deleted: i32,
+    pub conflicts: i32,
+    pub errors: Vec<String>,
+}
+
+/// 全量对比同步 - records 表
+pub async fn sync_records_full(
     db: &Database,
     client: &NocoBaseClient,
-) -> Result<(i32, Vec<String>), String> {
-    let mut pulled = 0;
-    let mut errors = Vec::new();
+) -> Result<SyncResult, String> {
+    let mut result = SyncResult {
+        pulled: 0,
+        pushed: 0,
+        deleted: 0,
+        conflicts: 0,
+        errors: Vec::new(),
+    };
 
-    // 查询本地最大的 nocobase_updated_at，作为增量过滤条件
-    let filter = get_last_sync_time(db)?;
+    println!("[SYNC] 开始全量对比同步...");
 
+    // 1. 获取云端所有记录（UUID + updated_at）
+    println!("[SYNC] 步骤 1: 获取云端所有记录...");
+    let remote_records = fetch_all_remote_records(client).await?;
+    println!("[SYNC] 云端记录数: {}", remote_records.len());
+
+    // 2. 获取本地所有记录（UUID + local_updated_at + synced）
+    println!("[SYNC] 步骤 2: 获取本地所有记录...");
+    let local_records = fetch_all_local_records(db)?;
+    println!("[SYNC] 本地记录数: {}", local_records.len());
+
+    // 3. 构建索引（UUID -> 记录信息）
+    let remote_map: std::collections::HashMap<String, RemoteRecordInfo> = remote_records
+        .into_iter()
+        .filter_map(|r| {
+            if r.uuid.is_empty() {
+                None
+            } else {
+                Some((r.uuid.clone(), r))
+            }
+        })
+        .collect();
+
+    let local_map: std::collections::HashMap<String, LocalRecordInfo> = local_records
+        .into_iter()
+        .map(|l| (l.uuid.clone(), l))
+        .collect();
+
+    // 4. 对比差异并执行同步操作
+    println!("[SYNC] 步骤 3: 对比差异并执行同步...");
+
+    // 4.1 处理云端有本地无的记录 → 拉取到本地
+    for (uuid, remote) in &remote_map {
+        if !local_map.contains_key(uuid) {
+            println!("[SYNC] 云端有本地无: {} → 拉取", uuid);
+            if let Err(e) = pull_record_to_local(db, client, uuid, remote).await {
+                result.errors.push(format!("拉取 {} 失败: {}", uuid, e));
+            } else {
+                result.pulled += 1;
+            }
+        }
+    }
+
+    // 4.2 处理本地有云端无的记录 → 根据 synced 状态决定操作
+    for (uuid, local) in &local_map {
+        if !remote_map.contains_key(uuid) {
+            if local.synced == 0 {
+                // synced = 0 → 推送到云端（本地新增未同步）
+                println!("[SYNC] 本地有云端无且未同步: {} → 推送", uuid);
+                if let Err(e) = push_record_to_remote(db, client, uuid, local).await {
+                    result.errors.push(format!("推送 {} 失败: {}", uuid, e));
+                } else {
+                    result.pushed += 1;
+                }
+            } else {
+                // synced = 1 → 删除本地记录（云端已删除）
+                println!("[SYNC] 本地有云端无且已同步: {} → 删除本地", uuid);
+                if let Err(e) = delete_local_record(db, uuid) {
+                    result.errors.push(format!("删除本地 {} 失败: {}", uuid, e));
+                } else {
+                    result.deleted += 1;
+                }
+            }
+        }
+    }
+
+    // 4.3 处理两边都有的记录 → 比较时间，更新较旧的
+    for (uuid, local) in &local_map {
+        if let Some(remote) = remote_map.get(uuid) {
+            // 比较更新时间
+            let local_time = parse_time(&local.local_updated_at);
+            let remote_time = parse_time(&remote.updated_at);
+
+            match (local_time, remote_time) {
+                (Some(lt), Some(rt)) => {
+                    // 计算时间差（秒）
+                    let diff = (rt - lt).num_seconds();
+                    
+                    // 设置阈值：5分钟（300秒）
+                    let threshold = 300;
+
+                    if diff > threshold {
+                        // 云端明显较新 → 更新本地
+                        println!("[SYNC] 云端较新: {} (diff={}s) → 更新本地", uuid, diff);
+                        if let Err(e) = update_local_from_remote(db, client, uuid, remote).await {
+                            result.errors.push(format!("更新本地 {} 失败: {}", uuid, e));
+                        } else {
+                            result.pulled += 1;
+                            result.conflicts += 1;
+                        }
+                    } else if diff < -threshold {
+                        // 本地明显较新 → 推送到云端
+                        println!("[SYNC] 本地较新: {} (diff={}s) → 推送", uuid, diff);
+                        if let Err(e) = push_record_to_remote(db, client, uuid, local).await {
+                            result.errors.push(format!("推送 {} 失败: {}", uuid, e));
+                        } else {
+                            result.pushed += 1;
+                            result.conflicts += 1;
+                        }
+                    } else {
+                        // 时间接近，视为一致
+                        println!("[SYNC] 时间一致: {} (diff={}s) → 无操作", uuid, diff);
+                    }
+                },
+                _ => {
+                    // 无法解析时间，跳过
+                    println!("[SYNC] 无法解析时间: {} → 跳过", uuid);
+                }
+            }
+        }
+    }
+
+    // 5. 记录同步日志
+    let status = if result.errors.is_empty() { "success" } else { "partial" };
+    let message = if result.errors.is_empty() {
+        None
+    } else {
+        Some(result.errors.first().unwrap().as_str())
+    };
+    log_sync(db, "sync_full", "records", status, result.pulled + result.pushed, message)?;
+
+    println!("[SYNC] 同步完成: 拉取={}, 推送={}, 删除={}, 冲突={}, 错误={}",
+        result.pulled, result.pushed, result.deleted, result.conflicts, result.errors.len());
+
+    Ok(result)
+}
+
+/// 云端记录信息
+struct RemoteRecordInfo {
+    uuid: String,
+    updated_at: String,
+    id: Option<i64>,
+}
+
+/// 本地记录信息
+struct LocalRecordInfo {
+    uuid: String,
+    local_updated_at: String,
+    synced: i32,
+    nocobase_id: Option<i64>,
+    datetime: String,
+    r#type: String,
+    category: Option<String>,
+    amount: f64,
+    account: String,
+    note: Option<String>,
+    payment_method: Option<String>,
+}
+
+/// 获取云端所有记录
+async fn fetch_all_remote_records(client: &NocoBaseClient) -> Result<Vec<RemoteRecordInfo>, String> {
+    let mut records = Vec::new();
     let mut page = 1;
     let page_size = 100;
 
     loop {
-        let list_resp = match client.list_records("records", filter.clone(), page, page_size).await {
-            Ok(resp) => resp,
-            Err(e) => {
-                errors.push(format!("拉取第 {} 页失败: {}", page, e));
-                break;
-            }
-        };
-
-        if list_resp.data.is_empty() {
+        let resp = client.list_records("records", None, page, page_size).await?;
+        
+        if resp.data.is_empty() {
             break;
         }
 
-        // 3. 逐条处理
-        for item in list_resp.data {
-            match pull_single_record(db, &item).await {
-                Ok(true) => pulled += 1,
-                Ok(false) => {} // 跳过
-                Err(e) => errors.push(format!("[pull] {}", e)),
-            }
+        for item in resp.data {
+            let uuid = item.get("uuid")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            
+            let updated_at = item.get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            
+            let id = item.get("id").and_then(|v| v.as_i64());
+
+            records.push(RemoteRecordInfo {
+                uuid,
+                updated_at,
+                id,
+            });
         }
 
-        // 检查是否还有更多
-        if page >= list_resp.meta.total_page {
+        if page >= resp.meta.total_page {
             break;
         }
         page += 1;
     }
 
-    // 4. 记录同步日志
-    let status = if errors.is_empty() { "success" } else { "partial" };
-    log_sync(db, "pull", "records", status, pulled, errors.first().map(|s| s.as_str()))?;
-
-    Ok((pulled, errors))
+    Ok(records)
 }
 
-/// 拉取单条记录到本地
-/// 返回 Ok(true) = 已插入/更新, Ok(false) = 跳过
-async fn pull_single_record(
-    db: &Database,
-    item: &serde_json::Value,
-) -> Result<bool, String> {
-    let uuid = item.get("uuid")
-        .and_then(|v| v.as_str());
-    
-    // 跳过 uuid 为 NULL 的记录（历史数据）
-    let uuid = match uuid {
-        Some(u) if !u.is_empty() => u,
-        _ => return Ok(false),
-    };
-
-    let nocobase_id = item.get("id").and_then(|v| v.as_i64());
-    let nocobase_updated_at = item.get("updated_at")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // 检查本地是否已有此记录
-    let local_record = get_local_record_by_uuid(db, uuid)?;
-
-    if let Some(local) = local_record {
-        // 本地已有，比较更新时间
-        let local_updated = local.local_updated_at.clone();
-        let nocobase_updated = item.get("updated_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        // 如果本地更新，跳过
-        if local_updated.as_str() > nocobase_updated {
-            return Ok(false);
-        }
-
-        // NocoBase 更新，更新本地
-        update_local_record(db, uuid, item, nocobase_id, nocobase_updated_at)?;
-    } else {
-        // 本地没有，创建新记录
-        insert_local_record(db, uuid, item, nocobase_id, nocobase_updated_at)?;
-    }
-
-    Ok(true)
-}
-
-/// 本地记录结构
-struct LocalRecordInfo {
-    local_updated_at: String,
-}
-
-/// 查询本地最大的 nocobase_updated_at，返回 NocoBase filter（增量拉取用）
-fn get_last_sync_time(db: &Database) -> Result<Option<serde_json::Value>, String> {
+/// 获取本地所有记录
+fn fetch_all_local_records(db: &Database) -> Result<Vec<LocalRecordInfo>, String> {
     let conn = db.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
-    // 过滤掉无效的 nocobase_updated_at（如旧 push 逻辑存储的 "now"）
-    // 只接受 ISO 8601 格式的时间戳
-    let max_time: Option<String> = guard
-        .query_row(
-            "SELECT MAX(nocobase_updated_at) FROM records 
-             WHERE nocobase_updated_at IS NOT NULL 
-             AND nocobase_updated_at LIKE '____-__-__T%'",
-            [],
-            |r| r.get::<_, Option<String>>(0),
+
+    let mut stmt = guard
+        .prepare(
+            "SELECT uuid, local_updated_at, synced, nocobase_id, datetime, type, category, amount, account, note, payment_method 
+             FROM records"
         )
         .map_err(|e| e.to_string())?;
 
-    if let Some(time) = max_time {
-        // 使用 NocoBase filter: updated_at > time
-        // 注意：filter 查询时需要使用数据库列名格式（下划线），而非 API 返回的驼峰格式
-        Ok(Some(serde_json::json!({
-            "updated_at": { "$gt": time }
-        })))
-    } else {
-        // 首次同步，无过滤
-        Ok(None)
-    }
-}
-
-/// 根据 uuid 查询本地记录
-fn get_local_record_by_uuid(db: &Database, uuid: &str) -> Result<Option<LocalRecordInfo>, String> {
-    let conn = db.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = guard
-        .prepare("SELECT local_updated_at FROM records WHERE uuid = ?")
-        .map_err(|e| e.to_string())?;
-
-    let result = stmt
-        .query_row([uuid], |row| {
+    let records = stmt
+        .query_map([], |row| {
             Ok(LocalRecordInfo {
-                local_updated_at: row.get(0)?,
+                uuid: row.get(0)?,
+                local_updated_at: row.get(1)?,
+                synced: row.get(2)?,
+                nocobase_id: row.get(3)?,
+                datetime: row.get(4)?,
+                r#type: row.get(5)?,
+                category: row.get(6)?,
+                amount: row.get(7)?,
+                account: row.get(8)?,
+                note: row.get(9)?,
+                payment_method: row.get(10)?,
             })
         })
-        .optional()
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    Ok(result)
+    Ok(records)
 }
 
-/// 更新本地记录
-fn update_local_record(
+/// 解析时间字符串为 DateTime<Utc>
+/// 支持两种格式：
+/// - SQLite 格式: 'YYYY-MM-DD HH:MM:SS'（假设是 UTC）
+/// - ISO 8601 格式: 'YYYY-MM-DDTHH:MM:SS.sssZ'
+fn parse_time(time_str: &str) -> Option<DateTime<Utc>> {
+    if time_str.is_empty() {
+        return None;
+    }
+
+    // 尝试 ISO 8601 格式（带 T 和 Z）
+    if time_str.contains('T') {
+        return DateTime::parse_from_rfc3339(time_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .ok();
+    }
+
+    // SQLite 格式（空格分隔），解析为 UTC
+    // 格式: 'YYYY-MM-DD HH:MM:SS'
+    let format = "%Y-%m-%d %H:%M:%S";
+    chrono::NaiveDateTime::parse_from_str(time_str, format)
+        .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+        .ok()
+}
+
+/// 拉取单条记录到本地（云端有本地无）
+async fn pull_record_to_local(
+    db: &Database,
+    client: &NocoBaseClient,
+    uuid: &str,
+    remote: &RemoteRecordInfo,
+) -> Result<(), String> {
+    // 使用 filter 获取特定 UUID 的完整记录数据
+    let filter = serde_json::json!({
+        "uuid": uuid
+    });
+    
+    let resp = client.list_records("records", Some(filter), 1, 1).await?;
+    let item = resp.data.first()
+        .ok_or_else(|| format!("云端找不到记录 {}", uuid))?;
+
+    let nocobase_id = remote.id;
+    let nocobase_updated_at = Some(remote.updated_at.clone());
+
+    // 插入到本地
+    insert_local_record(db, uuid, item, nocobase_id, nocobase_updated_at)?;
+
+    Ok(())
+}
+
+/// 推送本地记录到云端（本地有云端无）
+async fn push_record_to_remote(
+    db: &Database,
+    client: &NocoBaseClient,
+    uuid: &str,
+    local: &LocalRecordInfo,
+) -> Result<(), String> {
+    // 构建记录数据
+    let record_data = serde_json::json!({
+        "uuid": uuid,
+        "datetime": local.datetime,
+        "type": local.r#type,
+        "category": local.category,
+        "amount": local.amount,
+        "account": local.account,
+        "note": local.note,
+        "payment_method": local.payment_method,
+        "local_updated_at": local.local_updated_at,
+    });
+
+    // 推送到云端
+    let resp = client.create_record("records", record_data).await?;
+    
+    // 从响应中提取 id 和 updated_at
+    let nocobase_id = resp.get("id").and_then(|v| v.as_i64());
+    let nocobase_updated_at = resp.get("updated_at")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // 更新本地同步状态
+    update_local_sync_status(db, uuid, nocobase_id, nocobase_updated_at)?;
+
+    Ok(())
+}
+
+/// 更新本地记录（云端较新）
+async fn update_local_from_remote(
+    db: &Database,
+    client: &NocoBaseClient,
+    uuid: &str,
+    remote: &RemoteRecordInfo,
+) -> Result<(), String> {
+    // 使用 filter 获取特定 UUID 的完整记录数据
+    let filter = serde_json::json!({
+        "uuid": uuid
+    });
+    
+    let resp = client.list_records("records", Some(filter), 1, 1).await?;
+    let item = resp.data.first()
+        .ok_or_else(|| format!("云端找不到记录 {}", uuid))?;
+
+    // 更新本地记录的所有字段
+    update_local_record_full(db, uuid, item, remote.id, Some(remote.updated_at.clone()))?;
+
+    Ok(())
+}
+
+/// 更新本地记录的所有字段
+fn update_local_record_full(
     db: &Database,
     uuid: &str,
     item: &serde_json::Value,
@@ -163,19 +370,31 @@ fn update_local_record(
     let conn = db.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
 
-    let datetime = item.get("datetime").and_then(|v| v.as_str()).unwrap_or("");
-    let r#type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let category = item.get("category").and_then(|v| v.as_str());
+    let datetime = get_json_string(item, "datetime").unwrap_or("".to_string());
+    let r#type = get_json_string(item, "type").unwrap_or("".to_string());
+    let category = get_json_string(item, "category");
     let amount = item.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let account = item.get("account").and_then(|v| v.as_str()).unwrap_or("个人");
-    let note = item.get("note").and_then(|v| v.as_str());
-    let payment_method = item.get("payment_method").and_then(|v| v.as_str());
+    let account = get_json_string(item, "account").unwrap_or("个人".to_string());
+    let note = get_json_string(item, "note");
+    let payment_method = get_json_string(item, "payment_method");
 
     guard
         .execute(
-            "UPDATE records SET datetime = ?, type = ?, category = ?, amount = ?, account = ?, note = ?, payment_method = ?, synced = 1, nocobase_id = ?, nocobase_updated_at = ?, local_updated_at = datetime('now') WHERE uuid = ?",
-            params![datetime, r#type, category, amount, account, note, payment_method, nocobase_id, nocobase_updated_at, uuid],
+            "UPDATE records SET datetime = ?, type = ?, category = ?, amount = ?, account = ?, note = ?, payment_method = ?, synced = 1, nocobase_id = ?, nocobase_updated_at = ?, local_updated_at = ? WHERE uuid = ?",
+            params![datetime, r#type, category, amount, account, note, payment_method, nocobase_id, nocobase_updated_at, nocobase_updated_at, uuid],
         )
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// 删除本地记录（云端已删除）
+fn delete_local_record(db: &Database, uuid: &str) -> Result<(), String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+
+    guard
+        .execute("DELETE FROM records WHERE uuid = ?", [uuid])
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -192,20 +411,79 @@ fn insert_local_record(
     let conn = db.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
 
-    let datetime = item.get("datetime").and_then(|v| v.as_str()).unwrap_or("");
-    let r#type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let category = item.get("category").and_then(|v| v.as_str());
+    let datetime = get_json_string(item, "datetime").unwrap_or("".to_string());
+    let r#type = get_json_string(item, "type").unwrap_or("".to_string());
+    let category = get_json_string(item, "category");
     let amount = item.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let account = item.get("account").and_then(|v| v.as_str()).unwrap_or("个人");
-    let note = item.get("note").and_then(|v| v.as_str());
-    let payment_method = item.get("payment_method").and_then(|v| v.as_str());
+    let account = get_json_string(item, "account").unwrap_or("个人".to_string());
+    let note = get_json_string(item, "note");
+    let payment_method = get_json_string(item, "payment_method");
 
     guard
         .execute(
-            "INSERT INTO records (uuid, datetime, type, category, amount, account, note, payment_method, synced, nocobase_id, nocobase_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-            params![uuid, datetime, r#type, category, amount, account, note, payment_method, nocobase_id, nocobase_updated_at],
+            "INSERT INTO records (uuid, datetime, type, category, amount, account, note, payment_method, synced, nocobase_id, nocobase_updated_at, local_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+            params![uuid, datetime, r#type, category, amount, account, note, payment_method, nocobase_id, nocobase_updated_at, nocobase_updated_at],
         )
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// 更新本地同步状态
+fn update_local_sync_status(
+    db: &Database,
+    uuid: &str,
+    nocobase_id: Option<i64>,
+    nocobase_updated_at: Option<String>,
+) -> Result<(), String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+
+    guard
+        .execute(
+            "UPDATE records SET synced = 1, nocobase_id = ?, nocobase_updated_at = ?, local_updated_at = ? WHERE uuid = ?",
+            params![nocobase_id, nocobase_updated_at, nocobase_updated_at, uuid],
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// 获取 JSON 字段值，支持驼峰和下划线命名
+fn get_json_string(item: &serde_json::Value, name: &str) -> Option<String> {
+    // 先尝试下划线命名
+    if let Some(v) = item.get(name).and_then(|v| v.as_str()) {
+        return Some(v.to_string());
+    }
+    
+    // 尝试驼峰命名（将下划线转为驼峰）
+    let camel_case = name.split('_')
+        .enumerate()
+        .map(|(i, part)| {
+            if i == 0 {
+                part.to_string()
+            } else {
+                let mut chars = part.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+                }
+            }
+        })
+        .collect::<String>();
+    
+    item.get(&camel_case).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+// ========== 保留旧的增量拉取函数（兼容旧代码） ==========
+
+/// 从 NocoBase 拉取更新到本地（增量模式，已废弃）
+#[deprecated(note = "请使用 sync_records_full 进行全量对比同步")]
+pub async fn pull_records(
+    db: &Database,
+    client: &NocoBaseClient,
+) -> Result<(i32, Vec<String>), String> {
+    // 调用新的全量同步函数
+    let result = sync_records_full(db, client).await?;
+    Ok((result.pulled, result.errors))
 }

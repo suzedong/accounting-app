@@ -77,6 +77,7 @@ fn main() {
             commands::config::get_ai_services,
             commands::config::save_ai_services,
             commands::config::activate_ai_service,
+            commands::config::open_folder,
             // Sync
             commands::sync::nocobase_test_connection,
             commands::sync::sync_push,

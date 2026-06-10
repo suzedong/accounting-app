@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Tauri 骨架 + SQLite | ✅ 完成 | 数据库（7 张表）、CRUD、前端基础 |
 | 业务逻辑 | ✅ 完成 | Rust commands 齐全（记录/差旅/统计），Vue 6 个页面 |
 | AI 聊天 + Agent | ✅ 完成 | 百炼 API 直连、LLM dispatch、action handlers、ChatWidget、学习引擎、对话历史、OCR |
-| NocoBase 同步 | ✅ 完成 | 双向同步（push/pull）、增量拉取 |
+| NocoBase 同步 | ✅ 完成 | 全量对比同步（sync_full）、双向同步（push/pull）、删除策略、时间阈值 |
 
 ### 目录结构
 

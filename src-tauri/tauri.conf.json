@@ -31,5 +31,10 @@
       "icons/icon.png",
       "icons/icon.icns"
     ]
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
   }
 }
