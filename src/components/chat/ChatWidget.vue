@@ -246,8 +246,12 @@ const learningData = ref<Array<{ id: number; keyword: string; field: string; val
 
 onMounted(async () => {
   await chat.loadHistory(50);
-  await scrollToBottom();
 });
+
+// 监听消息变化，自动滚动到底部
+watch(messages, async () => {
+  await scrollToBottom();
+}, { deep: true });
 
 async function scrollToBottom() {
   // 等待 DOM 更新
