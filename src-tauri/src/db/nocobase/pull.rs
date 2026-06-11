@@ -166,7 +166,6 @@ struct LocalRecordInfo {
     uuid: String,
     local_updated_at: String,
     synced: i32,
-    nocobase_id: Option<i64>,
     datetime: String,
     r#type: String,
     category: Option<String>,
@@ -225,7 +224,7 @@ fn fetch_all_local_records(db: &Database) -> Result<Vec<LocalRecordInfo>, String
 
     let mut stmt = guard
         .prepare(
-            "SELECT uuid, local_updated_at, synced, nocobase_id, datetime, type, category, amount, account, note, payment_method 
+            "SELECT uuid, local_updated_at, synced, datetime, type, category, amount, account, note, payment_method 
              FROM records"
         )
         .map_err(|e| e.to_string())?;
@@ -236,14 +235,13 @@ fn fetch_all_local_records(db: &Database) -> Result<Vec<LocalRecordInfo>, String
                 uuid: row.get(0)?,
                 local_updated_at: row.get(1)?,
                 synced: row.get(2)?,
-                nocobase_id: row.get(3)?,
-                datetime: row.get(4)?,
-                r#type: row.get(5)?,
-                category: row.get(6)?,
-                amount: row.get(7)?,
-                account: row.get(8)?,
-                note: row.get(9)?,
-                payment_method: row.get(10)?,
+                datetime: row.get(3)?,
+                r#type: row.get(4)?,
+                category: row.get(5)?,
+                amount: row.get(6)?,
+                account: row.get(7)?,
+                note: row.get(8)?,
+                payment_method: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -475,15 +473,84 @@ fn get_json_string(item: &serde_json::Value, name: &str) -> Option<String> {
     item.get(&camel_case).and_then(|v| v.as_str()).map(|s| s.to_string())
 }
 
-// ========== 保留旧的增量拉取函数（兼容旧代码） ==========
-
-/// 从 NocoBase 拉取更新到本地（增量模式，已废弃）
-#[deprecated(note = "请使用 sync_records_full 进行全量对比同步")]
-pub async fn pull_records(
+/// 仅从云端拉取记录到本地（不执行推送）
+pub async fn pull_records_only(
     db: &Database,
     client: &NocoBaseClient,
 ) -> Result<(i32, Vec<String>), String> {
-    // 调用新的全量同步函数
-    let result = sync_records_full(db, client).await?;
-    Ok((result.pulled, result.errors))
+    let mut pulled = 0;
+    let mut errors = Vec::new();
+
+    println!("[SYNC] 开始仅拉取同步...");
+
+    // 1. 获取云端所有记录（UUID + updated_at）
+    println!("[SYNC] 步骤 1: 获取云端所有记录...");
+    let remote_records = fetch_all_remote_records(client).await?;
+    println!("[SYNC] 云端记录数: {}", remote_records.len());
+
+    // 2. 获取本地所有记录（UUID + local_updated_at + synced）
+    println!("[SYNC] 步骤 2: 获取本地所有记录...");
+    let local_records = fetch_all_local_records(db)?;
+    println!("[SYNC] 本地记录数: {}", local_records.len());
+
+    // 3. 构建索引
+    let remote_map: std::collections::HashMap<String, RemoteRecordInfo> = remote_records
+        .into_iter()
+        .filter_map(|r| {
+            if r.uuid.is_empty() {
+                None
+            } else {
+                Some((r.uuid.clone(), r))
+            }
+        })
+        .collect();
+
+    let local_map: std::collections::HashMap<String, LocalRecordInfo> = local_records
+        .into_iter()
+        .map(|l| (l.uuid.clone(), l))
+        .collect();
+
+    // 4. 仅处理云端有本地无的记录 → 拉取到本地
+    println!("[SYNC] 步骤 3: 拉取云端有本地无的记录...");
+    for (uuid, remote) in &remote_map {
+        if !local_map.contains_key(uuid) {
+            println!("[SYNC] 云端有本地无: {} → 拉取", uuid);
+            if let Err(e) = pull_record_to_local(db, client, uuid, remote).await {
+                errors.push(format!("拉取 {} 失败: {}", uuid, e));
+            } else {
+                pulled += 1;
+            }
+        }
+    }
+
+    // 5. 处理两边都有的记录 → 仅更新本地（云端较新时）
+    println!("[SYNC] 步骤 4: 更新本地较旧的记录...");
+    for (uuid, local) in &local_map {
+        if let Some(remote) = remote_map.get(uuid) {
+            let local_time = parse_time(&local.local_updated_at);
+            let remote_time = parse_time(&remote.updated_at);
+
+            match (local_time, remote_time) {
+                (Some(lt), Some(rt)) => {
+                    let diff = (rt - lt).num_seconds();
+                    let threshold = 300; // 5分钟
+
+                    if diff > threshold {
+                        // 云端较新 → 更新本地
+                        println!("[SYNC] 云端较新: {} (diff={}s) → 更新本地", uuid, diff);
+                        if let Err(e) = update_local_from_remote(db, client, uuid, remote).await {
+                            errors.push(format!("更新本地 {} 失败: {}", uuid, e));
+                        } else {
+                            pulled += 1;
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+
+    println!("[SYNC] 仅拉取完成: 拉取={}, 错误={}", pulled, errors.len());
+
+    Ok((pulled, errors))
 }

@@ -229,6 +229,10 @@ watch(isOpen, (val) => {
 function handleFabClick() {
   isOpen.value = true;
   document.body.style.overflow = 'hidden';
+  // 打开时滚动到底部
+  nextTick(() => {
+    scrollToBottom();
+  });
 }
 
 function closeDrawer() {
@@ -246,6 +250,11 @@ const learningData = ref<Array<{ id: number; keyword: string; field: string; val
 
 onMounted(async () => {
   await chat.loadHistory(50);
+  // 等待 DOM 完全渲染后再滚动
+  await nextTick();
+  setTimeout(() => {
+    scrollToBottom();
+  }, 100);
 });
 
 // 监听消息变化，自动滚动到底部
@@ -257,22 +266,27 @@ async function scrollToBottom() {
   // 等待 DOM 更新
   await nextTick();
   
-  // 尝试多次滚动，确保滚动到底部
-  const maxAttempts = 5;
-  const delay = 50; // 每次尝试间隔 50ms
-  
-  for (let i = 0; i < maxAttempts; i++) {
-    if (messagesRef.value) {
-      messagesRef.value.scrollTop = messagesRef.value.scrollHeight;
-      // 检查是否已经滚动到底部
-      const isAtBottom = messagesRef.value.scrollHeight - messagesRef.value.scrollTop <= messagesRef.value.clientHeight + 10;
-      if (isAtBottom) {
-        break;
+  // 使用 requestAnimationFrame 确保在浏览器渲染后执行
+  return new Promise<void>((resolve) => {
+    const tryScroll = () => {
+      if (messagesRef.value) {
+        const container = messagesRef.value;
+        container.scrollTop = container.scrollHeight;
+        
+        // 检查是否成功滚动到底部
+        const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 20;
+        if (isAtBottom) {
+          resolve();
+          return;
+        }
       }
-    }
-    // 等待一段时间后重试
-    await new Promise(resolve => setTimeout(resolve, delay));
-  }
+      
+      // 继续尝试，最多尝试 20 次（约 1 秒）
+      requestAnimationFrame(tryScroll);
+    };
+    
+    requestAnimationFrame(tryScroll);
+  });
 }
 
 async function onSend(text: string, imageBase64?: string, imageFullSrc?: string) {

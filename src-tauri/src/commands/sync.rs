@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::db::Database;
 use crate::db::nocobase::client::NocoBaseClient;
 use crate::db::nocobase::push::push_records;
-use crate::db::nocobase::pull::{pull_records, sync_records_full, SyncResult};
+use crate::db::nocobase::pull::{pull_records_only, sync_records_full, SyncResult};
 use crate::db::nocobase::trip_sync::{push_trips, pull_trips};
 use crate::db::nocobase::learning_sync::{push_learning, pull_learning};
 
@@ -122,8 +122,8 @@ pub async fn sync_pull(
 
     let mut all_errors = Vec::new();
 
-    // 拉取记账记录（使用旧的增量拉取函数，兼容旧代码）
-    let (records_pulled, errors) = pull_records(&state, &client).await?;
+    // 拉取记账记录（仅拉取，不推送）
+    let (records_pulled, errors) = pull_records_only(&state, &client).await?;
     all_errors.extend(errors);
 
     // 拉取差旅补助
