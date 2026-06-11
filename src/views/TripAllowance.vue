@@ -52,11 +52,11 @@
 
     <!-- Table -->
     <el-table :data="trips" v-loading="loading" stripe size="small">
-      <el-table-column prop="trip_id" label="申请单号" width="150" />
-      <el-table-column prop="start_date" label="开始日期" width="110" />
-      <el-table-column prop="end_date" label="结束日期" width="110" />
-      <el-table-column prop="days" label="天数" width="60" />
-      <el-table-column label="补助" width="130">
+      <el-table-column prop="trip_id" label="申请单号" width="110" />
+      <el-table-column prop="start_date" label="开始日期" width="80" />
+      <el-table-column prop="end_date" label="结束日期" width="80" />
+      <el-table-column prop="days" label="天数" width="40" />
+      <el-table-column label="补助" width="80">
         <template #default="{ row }">
           <div class="nowrap">
             <span class="text-allowance">{{ formatIntMoney(row.trip_allowance) }}</span>
@@ -64,17 +64,17 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="total" label="合计" width="90">
+      <el-table-column prop="total" label="合计" width="60">
         <template #default="{ row }">
           <span class="text-total nowrap">{{ formatIntMoney(row.total) }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="status" label="状态" width="100">
+      <el-table-column prop="status" label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="已发" width="90">
+      <el-table-column label="已发" width="60">
         <template #default="{ row }">
           <span class="nowrap">
             <template v-if="row.paid_trip_allowance || row.paid_transport_allowance">
@@ -87,7 +87,7 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="paid_date" label="发放日期" width="110">
+      <el-table-column prop="paid_date" label="发放日期" width="140">
         <template #default="{ row }">
           <span class="nowrap">
             <template v-if="row.paid_date">{{ row.paid_date }}</template>
@@ -342,6 +342,11 @@ function statusTag(status: string): 'info' | 'success' | 'warning' {
 .page-header h2 {
   font-size: 1.5em;
   color: #333;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
 }
 
 .filters {

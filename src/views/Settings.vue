@@ -1,6 +1,8 @@
 <template>
   <div class="settings-page">
-    <h2>设置</h2>
+    <!-- Tab 导航 -->
+    <el-tabs v-model="activeTab" class="settings-tabs">
+      <el-tab-pane label="AI 服务" name="ai">
 
     <!-- AI 服务管理 -->
     <el-card class="section">
@@ -62,6 +64,20 @@
       </div>
     </el-card>
 
+    <!-- Prompt 管理 -->
+    <el-card class="section">
+      <template #header>Prompt 管理</template>
+      <div style="max-width: 700px">
+        <p class="prompt-hint">修改 dispatch.md 文件后，点击"从文件刷新"将更新同步到数据库。刷新后需重新加载 AI 对话上下文才能生效。</p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+          <el-button size="small" @click="handleRefreshPrompt('dispatch')">刷新 dispatch.md</el-button>
+          <el-button size="small" @click="handleRefreshPrompt('preferences')">刷新 preferences.md</el-button>
+        </div>
+      </div>
+    </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="数据同步" name="sync">
     <!-- NocoBase 同步设置 -->
     <el-card class="section">
       <template #header>NocoBase 同步</template>
@@ -147,7 +163,9 @@
         </div>
       </div>
     </el-card>
+      </el-tab-pane>
 
+      <el-tab-pane label="预算设置" name="budget">
     <!-- 预算设置 -->
     <el-card class="section">
       <template #header>预算设置</template>
@@ -161,19 +179,9 @@
         </el-form-item>
       </el-form>
     </el-card>
+      </el-tab-pane>
 
-    <!-- Prompt 管理 -->
-    <el-card class="section">
-      <template #header>Prompt 管理</template>
-      <div style="max-width: 700px">
-        <p class="prompt-hint">修改 dispatch.md 文件后，点击"从文件刷新"将更新同步到数据库。刷新后需重新加载 AI 对话上下文才能生效。</p>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap">
-          <el-button size="small" @click="handleRefreshPrompt('dispatch')">刷新 dispatch.md</el-button>
-          <el-button size="small" @click="handleRefreshPrompt('preferences')">刷新 preferences.md</el-button>
-        </div>
-      </div>
-    </el-card>
-
+      <el-tab-pane label="OCR 识别" name="ocr">
     <!-- OCR 识别 -->
     <el-card class="section">
       <template #header>
@@ -376,6 +384,8 @@
         </div>
       </div>
     </el-card>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
@@ -411,6 +421,7 @@ interface ActivePython {
 
 const saving = ref(false);
 const testing = ref(false);
+const activeTab = ref('ai');
 
 // AI services
 const services = ref<AiService[]>([]);
@@ -1009,6 +1020,10 @@ function openPythonDownload() {
 </script>
 
 <style scoped>
+.settings-tabs {
+  margin-bottom: 20px;
+}
+
 .settings-page h2 {
   font-size: 1.5em;
   margin-bottom: 20px;

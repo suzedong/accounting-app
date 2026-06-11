@@ -82,7 +82,7 @@
         </template>
       </el-table-column>
       <el-table-column prop="account" label="账户" width="80" />
-      <el-table-column prop="payment_method" label="支付方式" min-width="120" />
+      <el-table-column prop="payment_method" label="支付方式" min-width="80" />
       <el-table-column prop="note" label="备注" min-width="140" />
       <el-table-column label="操作" width="100" fixed="right" align="center">
         <template #default="{ row }">

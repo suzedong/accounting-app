@@ -94,26 +94,9 @@ pub async fn set_config(
 
 #[tauri::command]
 pub async fn get_all_config(
-    state: State<'_, Database>,
     app_config: State<'_, AppConfig>,
 ) -> Result<AllConfig, String> {
-    let conn = state.get_conn();
-    let rows: Vec<(String, String)> = {
-        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        conn_guard
-            .prepare("SELECT key, value FROM app_config")
-            .and_then(|mut stmt| {
-                stmt.query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-            })
-            .map_err(|e| e.to_string())?
-    };
-    let mut guard = app_config.data.lock().map_err(|e| e.to_string())?;
-    for (k, v) in rows {
-        guard.insert(k, v);
-    }
+    let guard = app_config.data.lock().map_err(|e| e.to_string())?;
     Ok(AllConfig {
         nocobase_url: guard.get("nocobase_url").cloned().unwrap_or_default(),
         nocobase_token: guard.get("nocobase_token").cloned().unwrap_or_default(),

@@ -440,9 +440,16 @@ ChatInput 支持剪贴板图片粘贴（Cmd+V / Ctrl+V），自动读取为 File
 
 列出系统中所有 Python 版本及兼容性，选择活跃 Python，安装/卸载 PaddleOCR 依赖，内置 Python 生命周期管理，安装日志实时显示。
 
-#### 设置页面（SettingsPanel + Settings.vue）
+#### 设置页面（Settings.vue）
 
-包含 AI 服务管理（单选列表、添加/编辑/删除、测试连接）、NocoBase 同步配置、预算设置、OCR 管理、Dispatch Prompt 编辑器、用户偏好编辑器、学习数据表格（可删除条目）、系统诊断（检查数据库/AI 服务/OCR 状态）。
+设置页面采用 Tab 页布局，分为四个主要板块：
+
+| Tab | 内容 |
+|---|---|
+| **AI 服务** | AI 服务管理（单选列表、添加/编辑/删除、测试连接）、Prompt 管理（刷新 dispatch.md/preferences.md） |
+| **数据同步** | NocoBase 同步配置、本地数据库信息、同步操作（双向同步/推送本地/拉取远程）、同步结果展示 |
+| **预算设置** | 月度预算配置 |
+| **OCR 识别** | OCR 启用开关、Python 环境管理（系统 Python 列表、安装/卸载依赖、内置 Python 生命周期）、安装日志 |
 
 **NocoBase 同步 UI**：
 - 三个同步按钮：双向同步、推送本地、拉取远程
