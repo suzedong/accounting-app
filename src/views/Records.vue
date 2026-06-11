@@ -43,8 +43,14 @@
     </el-card>
 
     <!-- Table -->
-    <el-table :data="store.records" v-loading="store.loading" stripe size="small">
-      <el-table-column prop="datetime" label="时间" width="170">
+    <el-table
+      :data="store.records"
+      v-loading="store.loading"
+      stripe
+      size="small"
+      :row-class-name="getRowClassName"
+    >
+      <el-table-column prop="datetime" label="时间" width="200">
         <template #default="{ row }">
           <span 
             class="nowrap sync-status"
@@ -141,7 +147,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { ElMessageBox, ElMessage } from 'element-plus';
 import { Refresh } from '@element-plus/icons-vue';
 import { useRecordsStore } from '@/stores/records';
@@ -169,13 +175,40 @@ const defaultForm: RecordInput = {
 
 const form = ref<RecordInput>({ ...defaultForm });
 
+// 高亮闪烁的记录 ID
+const highlightedRowId = ref<number | null>(null);
+let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getRowClassName({ row }: { row: AccountRecord }): string {
+  return highlightedRowId.value === row.id ? 'duplicate-highlight' : '';
+}
+
+function handleHighlightDuplicate(e: Event) {
+  const detail = (e as CustomEvent<{ id: number }>).detail;
+  if (!detail || detail.id == null) return;
+  highlightedRowId.value = detail.id;
+  if (highlightTimer) clearTimeout(highlightTimer);
+  // 2 秒后清除高亮（动画约 1.5 秒，3 次闪烁）
+  highlightTimer = setTimeout(() => {
+    highlightedRowId.value = null;
+  }, 2000);
+}
+
 onMounted(() => {
   store.fetchRecords();
-  
+
   // 监听 AI 对话确认记录的更新，自动刷新页面
   watch(() => chat.recordUpdated, () => {
     store.fetchRecords();
   });
+
+  // 监听 AI 对话发现重复记录的事件，闪烁对应行
+  window.addEventListener('records:highlight-duplicate', handleHighlightDuplicate);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('records:highlight-duplicate', handleHighlightDuplicate);
+  if (highlightTimer) clearTimeout(highlightTimer);
 });
 
 function showCreateDialog() {
@@ -442,5 +475,23 @@ function getSyncStatusTooltip(row: AccountRecord): string {
 
 .sync-remote_newer {
   color: #1890ff;
+}
+
+/* 重复记录闪烁高亮：3 次黄色闪烁 */
+:deep(.el-table__row.duplicate-highlight) {
+  animation: duplicate-blink 0.5s ease-in-out 3;
+}
+
+:deep(.el-table__row.duplicate-highlight td) {
+  background-color: transparent !important;
+}
+
+@keyframes duplicate-blink {
+  0%, 100% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: #ffe58f;
+  }
 }
 </style>

@@ -217,16 +217,13 @@ function refresh() {
 }
 
 function clearActiveTab() {
-  if (activeTab.value === 'ipc') {
-    clearIpcLogs();
-    ipcLogs.value = [];
-  } else if (activeTab.value === 'llm') {
-    agentEngine.clearLLMLogs();
-    llmLogs.value = [];
-  } else {
-    rustLogs.value = [];
-  }
-  ElMessage.success('日志已清空');
+  // 清空所有三个 tab 的日志
+  clearIpcLogs();
+  ipcLogs.value = [];
+  agentEngine.clearLLMLogs();
+  llmLogs.value = [];
+  rustLogs.value = [];
+  ElMessage.success('所有日志已清空');
 }
 
 function copyActiveTab() {

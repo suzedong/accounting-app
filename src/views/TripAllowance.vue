@@ -87,6 +87,14 @@
           </span>
         </template>
       </el-table-column>
+      <el-table-column prop="paid_date" label="发放日期" width="110">
+        <template #default="{ row }">
+          <span class="nowrap">
+            <template v-if="row.paid_date">{{ row.paid_date }}</template>
+            <span v-else class="text-muted">—</span>
+          </span>
+        </template>
+      </el-table-column>
       <el-table-column prop="notes" label="备注" />
       <el-table-column label="操作" width="100" fixed="right" align="center">
         <template #default="{ row }">

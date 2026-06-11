@@ -8,7 +8,13 @@ export function formatIntMoney(amount: number): string {
 
 export function formatDatetime(datetime: string): string {
   if (!datetime) return '';
-  return datetime.replace(/T/, ' ').substring(0, 19);
+  
+  const dt = datetime.replace('T', ' ').substring(0, 19);
+  const date = new Date(datetime.replace('T', ' '));
+  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const weekday = weekdays[date.getDay()];
+  
+  return `${dt} ${weekday}`;
 }
 
 export function formatDate(date: Date): string {

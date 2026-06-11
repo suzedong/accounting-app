@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus';
 import { agentEngine } from '@/ai/agent-engine';
 import { toolRegistry } from '@/ai/tool-registry';
 import { getChatHistory, saveChatMessage, clearChatHistory } from '@/api/tauri';
+import { clearIpcLogs } from '@/utils/invoke-logger';
 import type { ChatMessage, PersistedChatData, LLMMessage } from '@/types/chat';
 import type { AccountRecord } from '@/types';
 
@@ -298,10 +299,11 @@ export const useChatStore = defineStore('chat', () => {
 
     if (action === 'create_record') {
       // 检查重复记录
-      const isDuplicate = await checkDuplicate(record);
-      if (isDuplicate) {
-        // 发现重复记录，提示用户
+      const duplicateId = await checkDuplicate(record);
+      if (duplicateId != null) {
+        // 发现重复记录，提示用户并触发列表闪烁
         ElMessage.warning('发现重复记录，请确认是否已录入');
+        window.dispatchEvent(new CustomEvent('records:highlight-duplicate', { detail: { id: duplicateId } }));
         return;
       }
     }
@@ -421,7 +423,7 @@ export const useChatStore = defineStore('chat', () => {
     await sendMessage(synthesized, messagesRef);
   }
 
-  async function checkDuplicate(record: Record<string, unknown>): Promise<boolean> {
+  async function checkDuplicate(record: Record<string, unknown>): Promise<number | null> {
     try {
       const { getRecords } = await import('@/api/tauri');
       const datetime = (record.datetime as string) || new Date().toISOString().replace('T', ' ').substring(0, 19);
@@ -444,15 +446,15 @@ export const useChatStore = defineStore('chat', () => {
 
         if (sameAmount && sameType && sameDatetime) {
           // 发现重复记录
-          console.log('[重复检查] 发现重复:', { amount, datetime: recordDatetime, type: recordType });
-          return true;
+          console.log('[重复检查] 发现重复:', { id: r.id, amount, datetime: recordDatetime, type: recordType });
+          return r.id ?? null;
         }
       }
-      return false;
+      return null;
     } catch (e) {
       console.error('[重复检查] 失败:', e);
-      // 检查失败时，不阻止用户确认（返回 false 允许继续）
-      return false;
+      // 检查失败时，不阻止用户确认（返回 null 允许继续）
+      return null;
     }
   }
 
@@ -504,6 +506,8 @@ export const useChatStore = defineStore('chat', () => {
       agentEngine.clearHistory();
       agentEngine.clearLLMLogs();
       agentEngine.setLastConfirmedRecordContext(null);
+      // 清空调试控制台的所有日志
+      clearIpcLogs();
     } catch {
       // Ignore
     }
