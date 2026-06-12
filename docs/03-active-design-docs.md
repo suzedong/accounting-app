@@ -40,6 +40,31 @@
 └─────────────────────────────────────────────────┘
 ```
 
+**Mermaid 版本：**
+
+```mermaid
+graph TB
+    subgraph UI["UI 层"]
+        A["ChatWidget.vue<br/>~300 行"]
+    end
+
+    subgraph State["状态层"]
+        B["ChatStore<br/>~200 行"]
+    end
+
+    subgraph Logic["逻辑层"]
+        C["AgentEngine<br/>~150 行"]
+    end
+
+    subgraph Tool["工具层"]
+        D["ToolRegistry<br/>~50 行"]
+    end
+
+    A -->|"sendMessage()"| B
+    B -->|"callLLM() / executeTool()"| C
+    C -->|"zod schema"| D
+```
+
 ### 1.3 数据流
 
 #### 输入预处理（ChatWidget.vue → onSend）
@@ -75,6 +100,35 @@
 │  分支C: 正常流程（F9）                         │
 │    chat.sendMessage() → AgentEngine           │
 ──────────────────────────────────────────────┘
+```
+
+**Mermaid 流程图版本：**
+
+```mermaid
+flowchart TD
+    A["F5. ChatInput @send<br/>文本 + 可选图片"] --> B{是否有图片?}
+
+    B -->|无| C[文本通道 F5-a<br/>直接传递用户文字]
+    B -->|有| D[图片通道 F5-b]
+
+    D --> D1[F5-b0 本地处理态<br/>禁用发送按钮]
+    D1 --> D2[F5-b1 OCR 可用性检测]
+    D2 --> D3[F5-b2 OCR 识别]
+    D3 --> D4[F5-b3 合并文本<br/>OCR文字 + 用户文字]
+
+    C --> E[F6. onSend 统一路由]
+    D4 --> E
+
+    E --> F{editingField?}
+    F -->|是| G[F7 分支A<br/>applyFieldEdit<br/>直接更新 pendingRecord]
+    G --> G1["AI 回复『已更新字段』<br/>不进 LLM"]
+
+    F -->|否| H{awaitingFollowUp?}
+    H -->|是| I[F8 分支B<br/>answerFollowUp<br/>合并缺失字段]
+    I --> I1[重新调用 sendMessage<br/>走 LLM]
+
+    H -->|否| J[F9 分支C<br/>chat.sendMessage<br/>正常流程]
+    J --> K[AgentEngine]
 ```
 
 **onSend() 路由逻辑**（ChatWidget.vue）：
@@ -119,6 +173,46 @@ async function onSend(text: string, imageBase64?: string) {
     └─ reply_text → 纯文本回复
   → F12: UI 渲染（loading→spinner / steps→推理链 / content→文本 / pending→ConfirmCard）
   → 持久化到 SQLite
+```
+
+**Mermaid 流程图版本：**
+
+```mermaid
+flowchart TD
+    A["用户消息<br/>text, imageBase64"] --> B["ChatStore.sendMessage"]
+
+    B --> B1["F10: 创建 userMsg<br/>持久化 SQLite"]
+    B --> B2["F11: 创建 aiMsg<br/>loading=true, steps=[]"]
+
+    B2 --> C["AgentEngine.processMessage"]
+
+    C --> C1["加载上下文<br/>dispatch + preferences + learning"]
+    C1 --> C2["构建 SystemMessage"]
+    C2 --> C3["调用 LLM<br/>Function Calling"]
+    C3 --> C4{"返回类型"}
+
+    C4 -->|"toolCall"| C5["ToolRegistry 执行工具"]
+    C4 -->|"text"| C6["直接返回文本"]
+
+    C5 --> C7["返回 ToolResult"]
+    C6 --> C8["返回 finalReply"]
+
+    C7 --> D["onStep 回调<br/>实时更新推理链"]
+    C8 --> D
+
+    D --> E["aiMsg.loading = false<br/>content = finalReply"]
+
+    E --> F{"action 类型"}
+
+    F -->|"create_record"| G["status='pending'<br/>显示 ConfirmCard"]
+    F -->|"ask_follow_up"| H["render='followUp'<br/>显示 FollowUpCard"]
+    F -->|"reply_text"| I["纯文本回复"]
+
+    G --> J["F12: UI 渲染"]
+    H --> J
+    I --> J
+
+    J --> K["持久化 SQLite<br/>完成"]
 ```
 
 > **注**：OCR 在 ChatWidget.onSend 中预处理（F5-b 图片通道），AgentEngine 收到的 text 已是合并后的完整文本。
@@ -329,6 +423,27 @@ for (const [key, newValue] of Object.entries(args.fields)) {
     await saveCorrection(key, String(original[key]), String(newValue));
   }
 }
+```
+
+**Mermaid 流程图版本：**
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant LLM as LLM
+    participant A as Agent
+    participant DB as SQLite
+
+    U->>LLM: "今天吃饭花了35元"
+    LLM-->>A: create_record(category: 餐饮, amount: 35)
+    A->>DB: 保存记录
+    Note over U: 确认卡片
+
+    U->>LLM: "不对，是交通"
+    LLM-->>A: correct_record(category: 交通)
+    A->>DB: updateRecord(category: 交通)
+    A->>DB: saveCorrection(category, 餐饮, 交通)
+    Note over DB: learning_data 表存储修正记录
 ```
 
 ### 1.7 文件变更清单
