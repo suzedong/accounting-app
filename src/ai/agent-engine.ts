@@ -122,18 +122,32 @@ export class AgentEngine {
         trip_id: '申请单号', start_date: '出发日期', end_date: '返程日期',
         days: '出差天数', notes: '备注',
       };
-      // 确保 payment 字段始终存在（业务必填，默认"现金"）
+
+      // 按工具类型限定意图识别面板可显示的字段，避免 LLM 多余字段污染面板
+      const TOOL_VISIBLE_FIELDS: Record<string, Set<string>> = {
+        record_trip_payment: new Set(['amount', 'datetime']),
+        confirm_trip_payment: new Set(['tripId', 'amount', 'datetime', 'matchType']),
+        create_trip_record: new Set(['trip_id', 'start_date', 'end_date', 'days', 'notes']),
+        confirm_trip_record: new Set(['trip_id', 'start_date', 'end_date', 'days', 'notes']),
+      };
+      const allowedFields = TOOL_VISIBLE_FIELDS[parsed.action];
+
+      // 仅对普通记账类意图（create_record / update_record 等）注入默认 payment
+      const isRecordIntent = !allowedFields && (parsed.action === 'create_record' || parsed.action === 'update_record' || parsed.action === 'correct_record');
       const paymentWasProvided = 'payment' in fields;
-      const fieldsWithPayment = { payment: fields.payment || '现金', ...fields };
-      intentStep.detail!.fields = Object.entries(fieldsWithPayment)
+      const fieldsForDisplay = isRecordIntent ? { payment: fields.payment || '现金', ...fields } : fields;
+
+      intentStep.detail!.fields = Object.entries(fieldsForDisplay)
         .filter(([k]) => !k.endsWith('_source')) // 跳过 source 元数据键
+        .filter(([k]) => !allowedFields || allowedFields.has(k)) // 工具白名单过滤
         .map(([k, v]) => {
-          // payment 字段始终显示，其他字段按原逻辑过滤
-          const filtered = k === 'payment' || (v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'undefined');
+          // payment 字段（仅记账意图下）始终显示，其他字段按原逻辑过滤
+          const isInjectedPayment = isRecordIntent && k === 'payment';
+          const filtered = isInjectedPayment || (v !== undefined && v !== null && v !== '' && v !== 'null' && v !== 'undefined');
           console.log(`[AgentEngine] 字段 ${k}=${JSON.stringify(v)} -> filtered=${filtered}`);
           if (!filtered) return null;
           // payment 字段：用户没提则为 default，否则走正常判断
-          const source = k === 'payment' && !paymentWasProvided ? 'default' : this.getFieldSource(k, v, fields);
+          const source = isInjectedPayment && !paymentWasProvided ? 'default' : this.getFieldSource(k, v, fields);
           console.log(`[AgentEngine] 字段 ${k}=${v} -> source=${source}`);
           return {
             label: fieldLabels[k] || k,

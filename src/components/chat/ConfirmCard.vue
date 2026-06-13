@@ -4,8 +4,32 @@
       {{ title || '请确认（尚未保存）' }}
     </div>
     <div class="card-body">
+      <!-- Trip payment fields (差旅补助发放确认) -->
+      <template v-if="isTripPayment">
+        <div v-if="fields.label" class="card-field">
+          <span class="label">发放类型</span>
+          <el-tag type="success" size="small">{{ fields.label }}</el-tag>
+        </div>
+        <div v-if="fields.tripId_str" class="card-field">
+          <span class="label">申请单号</span>
+          <span class="value">{{ fields.tripId_str }}</span>
+        </div>
+        <div v-if="fields.dateRange" class="card-field">
+          <span class="label">出差日期</span>
+          <span class="value">{{ fields.dateRange }}</span>
+        </div>
+        <div v-if="fields.amount != null" class="card-field">
+          <span class="label">金额</span>
+          <span class="value amount text-success">¥{{ formatAmount(fields.amount) }}</span>
+        </div>
+        <div v-if="fields.datetime" class="card-field">
+          <span class="label">发放时间</span>
+          <span class="value">{{ formatDateTime(fields.datetime) }}</span>
+        </div>
+      </template>
+
       <!-- Regular record fields -->
-      <template v-if="!isTripRecord">
+      <template v-else-if="!isTripRecord">
         <div v-if="showField('type')" class="card-field">
           <span class="label">类型</span>
           <el-select v-if="isEditing" v-model="editFields.type" size="small" style="width: 100px">
@@ -37,7 +61,7 @@
           </el-select>
           <span v-else class="value">{{ fields.account }}</span>
         </div>
-        <div class="card-field">
+        <div v-if="isEditing || showField('payment') || showField('payment_method')" class="card-field">
           <span class="label">支付</span>
           <el-input v-if="isEditing" v-model="editFields.payment" size="small" style="width: 160px" />
           <span v-else class="value">{{ fields.payment || fields.payment_method || '' }}</span>
@@ -133,6 +157,8 @@ defineEmits<{
 }>();
 
 const isTripRecord = computed(() => 'trip_id' in props.fields);
+// 差旅补助发放确认：record_trip_payment 返回的卡片，特征是含 tripId（数字 ID）但不含 trip_allowance
+const isTripPayment = computed(() => 'tripId' in props.fields && !('trip_allowance' in props.fields));
 
 // Edit mode state
 const isEditing = ref(false);

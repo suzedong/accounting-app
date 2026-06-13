@@ -814,11 +814,23 @@ toolRegistry.register<RecordTripPaymentArgs>({
       return { success: true, render: 'text', message: '当前没有待发放补助的出差记录。' };
     }
 
+    // 业务规则：发放日期 ≥ end_date + 10 天
+    // 优先在该窗口内匹配；若窗口内无候选，回退到所有待发放记录（保证不漏匹配）
+    const txDate = args.datetime ? new Date(args.datetime) : new Date();
+    const eligibleByWindow = pendingTrips.filter(trip => {
+      if (!trip.end_date) return true; // end_date 缺失时不参与窗口过滤
+      const endDate = new Date(trip.end_date);
+      if (Number.isNaN(endDate.getTime())) return true;
+      const earliest = new Date(endDate.getTime() + 10 * 24 * 60 * 60 * 1000);
+      return txDate.getTime() >= earliest.getTime();
+    });
+    const candidatePool = eligibleByWindow.length > 0 ? eligibleByWindow : pendingTrips;
+
     // Match by amount
     interface MatchedTrip { trip: typeof pendingTrips[0]; type: string; label: string; }
     const matchedTrips: MatchedTrip[] = [];
 
-    for (const trip of pendingTrips) {
+    for (const trip of candidatePool) {
       const days = trip.days || 0;
       const tripAllowanceTotal = days * 100;
       const transportAllowanceTotal = days * 30;
@@ -840,12 +852,14 @@ toolRegistry.register<RecordTripPaymentArgs>({
 
     let best: MatchedTrip;
     if (matchedTrips.length === 0) {
-      const sorted = [...pendingTrips].sort((a, b) => (a.start_date || '').localeCompare(b.start_date || ''));
+      // 回退：候选池中按 end_date 升序取最早一条（手动金额）
+      const sorted = [...candidatePool].sort((a, b) => (a.end_date || '').localeCompare(b.end_date || ''));
       const first = sorted[0];
       const total = (first.days || 0) * 130;
       best = { trip: first, type: 'manual', label: `补助（¥${total}）` };
     } else {
-      matchedTrips.sort((a, b) => (a.trip.start_date || '').localeCompare(b.trip.start_date || ''));
+      // 同金额多条命中时，按 end_date 升序优先（最早结束的优先发放）
+      matchedTrips.sort((a, b) => (a.trip.end_date || '').localeCompare(b.trip.end_date || ''));
       best = matchedTrips[0];
     }
 

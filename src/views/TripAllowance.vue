@@ -52,9 +52,9 @@
 
     <!-- Table -->
     <el-table :data="trips" v-loading="loading" stripe size="small">
-      <el-table-column prop="trip_id" label="申请单号" width="110" />
-      <el-table-column prop="start_date" label="开始日期" width="80" />
-      <el-table-column prop="end_date" label="结束日期" width="80" />
+      <el-table-column prop="trip_id" label="申请单号" width="130" />
+      <el-table-column prop="start_date" label="开始日期" width="90" />
+      <el-table-column prop="end_date" label="结束日期" width="90" />
       <el-table-column prop="days" label="天数" width="40" />
       <el-table-column label="补助" width="80">
         <template #default="{ row }">
@@ -87,7 +87,7 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="paid_date" label="发放日期" width="140">
+      <el-table-column prop="paid_date" label="发放日期" width="150">
         <template #default="{ row }">
           <span class="nowrap">
             <template v-if="row.paid_date">{{ row.paid_date }}</template>
