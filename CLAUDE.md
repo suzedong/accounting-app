@@ -38,8 +38,6 @@ src/              # Vue 3 前端（TypeScript + Element Plus + Pinia）
     ├── chat/                   # AI 对话组件
     │   ├── ChatWidget.vue      # 悬浮对话面板（主容器）
     │   ├── ChatInput.vue       # 输入框 + 图片上传/粘贴
-    │   ├── ChatMessage.vue     # 消息渲染
-    │   ├── ChatThinking.vue    # 思考中状态
     │   ├── ConfirmCard.vue     # AI 返回的记录/差旅确认卡片
     │   ├── FollowUpCard.vue    # AI 追问补充信息卡片
     │   ├── RecordCard.vue      # 已创建记录卡片（含修正/删除按钮）
@@ -240,8 +238,6 @@ SYSTEM_PROMPT 存储在 SQLite `system_prompts` 表中，文件缓存在 `src-ta
 |---|---|
 | `ChatWidget.vue` | 主容器：悬浮按钮 + 面板 + 欢迎页 + 消息列表 + 设置对话框 |
 | `ChatInput.vue` | 输入框 + 图片上传/粘贴，通过 `@send` 事件发送 `(text, imageBase64, imageFullSrc)`；点击发送后立即进入本地处理态，禁用发送按钮，覆盖图片转码、OCR 检测和识别全过程 |
-| `ChatMessage.vue` | 消息渲染组件 |
-| `ChatThinking.vue` | 思考中状态指示器 |
 | `ConfirmCard.vue` | 确认卡片：展示 AI 生成的记录/差旅补助，支持确认/修改/取消。待确认时显示"请确认（尚未保存）"标题；已确认/已取消时折叠头部显示状态（"已保存"/"已取消"），点击可展开/折叠 |
 | `FollowUpCard.vue` | 追问卡片：AI 缺少必要信息时展示，提供字段按钮供用户选择 |
 | `RecordCard.vue` | 记录卡片：展示已创建的记账记录，含修正/删除按钮 |

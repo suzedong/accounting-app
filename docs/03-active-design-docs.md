@@ -264,13 +264,14 @@ interface LLMMessage {
 import { z } from 'zod';
 
 const CreateRecordSchema = z.object({
-  amount: z.number().positive(),
-  type: z.enum(['收入', '支出']),
-  category: z.string().optional(),
   datetime: z.string().optional(),
+  type: z.enum(['收入', '支出']).transform(s => s.trim()),
+  category: z.string().optional(),
+  // OCR 可能提取负数（如 -8.00），自动取绝对值
+  amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0'),
   account: z.string().optional(),
   note: z.string().optional(),
-  payment_method: z.string().optional(),
+  payment: z.string().optional(),
 });
 
 type CreateRecordArgs = z.infer<typeof CreateRecordSchema>;

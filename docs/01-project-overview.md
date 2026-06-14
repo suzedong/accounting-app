@@ -44,7 +44,7 @@
 |---|---|
 | 账户管理 | 硬编码预置 |
 | 分类/支付方式 | 自由文本，无需独立表 |
-| 偏好管理 | SQLite 存储 |
+| 偏好管理 | 存储在 system_prompts 表的 preferences.md 文档中（KV 模型已废弃） |
 | Prompt 管理 | dispatch.md / preferences.md 数据库存储 |
 
 ### 1.4 非功能需求
@@ -215,11 +215,12 @@ CREATE TABLE business_trip (
     trip_allowance REAL DEFAULT 0,      -- 差旅补助（100元/天）
     transport_allowance REAL DEFAULT 0,  -- 交通补助（30元/天）
     total REAL DEFAULT 0,
-    status TEXT DEFAULT '⏳ 待发放',     -- 待发放/已发放/已过期（带 emoji）
+    status TEXT DEFAULT ' 待发放',       -- 待发放/已发放/已过期（emoji 由迁移语句添加）
     paid_trip_allowance REAL DEFAULT 0,  -- 已发差旅补助
     paid_transport_allowance REAL DEFAULT 0, -- 已发交通补助
     paid_date TEXT,
     notes TEXT,
+    local_updated_at TEXT DEFAULT (datetime('now')),  -- 本地最后修改时间
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
     nocobase_updated_at TEXT,
@@ -236,8 +237,7 @@ CREATE TABLE system_prompts (
 -- 应用配置（KV 存储）
 CREATE TABLE app_config (
     key TEXT PRIMARY KEY,               -- ai_services, budget_monthly 等
-    value TEXT NOT NULL,
-    updated_at TEXT DEFAULT (datetime('now'))
+    value TEXT NOT NULL
 );
 
 -- 学习数据（替代 learning_data collection）
@@ -248,6 +248,7 @@ CREATE TABLE learning_data (
     key TEXT,                           -- 关键词
     value TEXT,                         -- JSON 值
     count INTEGER DEFAULT 1,
+    local_updated_at TEXT DEFAULT (datetime('now')),  -- 本地最后修改时间
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
     nocobase_updated_at TEXT,
