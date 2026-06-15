@@ -351,6 +351,8 @@ interface StepDetail {
 ```typescript
 interface LLMLogEntry {
   id: number;
+  /** 请求 ID，用于关联 IPC 日志 */
+  requestId: string;
   timestamp: string;
   systemMessage: string;
   userMessage: string;
@@ -359,6 +361,12 @@ interface LLMLogEntry {
   steps: string[];
 }
 ```
+
+**日志关联机制**：
+- IPC、LLM、Rust 日志通过 `requestId` 字段串联
+- 开发环境日志文件：`{项目根目录}/logs/app_YYYY-MM-DD.jsonl`
+- 生产环境日志文件：`~/Library/Application Support/com.accounting-app.app/logs/app_YYYY-MM-DD.jsonl`（macOS）
+- 日志格式为 JSONL（每行一个 JSON 对象），包含 `level`、`module`、`message`、`timestamp`、`requestId` 等字段
 
 **日志收集规则**：
 - IPC 日志由前端 invoke 拦截器维护内存环形列表，DevConsole 打开时读取快照。
@@ -458,6 +466,9 @@ sequenceDiagram
 | `src/components/chat/StepList.vue` | 推理链可视化组件 |
 | `src/components/chat/DevConsole.vue` | 开发者控制台 |
 | `src/stores/chat.ts` | 重构后的 ChatStore |
+| `src/utils/invoke-logger.ts` | IPC 调用日志记录，含 requestId 生成和关联 |
+| `src-tauri/src/logger.rs` | Rust 端结构化日志，写入 JSONL 文件 |
+| `src/components/ErrorBoundary.vue` | 错误边界组件 |
 
 #### 修改文件
 
@@ -971,11 +982,11 @@ const operationSessionId = ref<string>('') // 当前操作的 sessionId（用于
 
 | 字段 | 来源 | 原格式 | 处理方式 |
 |------|------|--------|----------|
-| `local_updated_at` | SQLite | `YYYY-MM-DD HH:MM:SS` | 转换为 ISO 8601 |
-| `nocobase_updated_at` | NocoBase | `YYYY-MM-DDTHH:MM:SS.sssZ` | 直接使用 |
+| `local_updated_at` | SQLite | `YYYY-MM-DD HH:MM:SS`（本地时间） | 使用 `new Date()` 解析为本地时间 |
+| `nocobase_updated_at` | NocoBase | `YYYY-MM-DDTHH:MM:SS.sssZ`（UTC时间） | 使用 `new Date()` 解析，自动识别 UTC |
 
 **比较规则**：
-- 将时间转换为 Date 对象进行比较，避免字符串比较错误
+- 通过 `Date.getTime()` 获取毫秒时间戳进行比较，自动处理时区差异
 - 设置 5 分钟阈值，时间差小于阈值视为一致
 
 ### 2.5 同步状态可视化

@@ -92,7 +92,7 @@
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="paid_date" label="发放日期" width="150">
+      <el-table-column prop="paid_date" label="发放日期" width="100">
         <template #default="{ row }">
           <span class="nowrap">
             <template v-if="row.paid_date">{{ row.paid_date }}</template>

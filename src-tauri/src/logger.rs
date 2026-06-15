@@ -88,9 +88,15 @@ pub fn init_log_file(mut log_dir: PathBuf) {
                          std::env::var("TAURI_ENV").map(|v| v == "development").unwrap_or(false);
     
     if is_development {
-        // Development mode: use project directory for easier access
+        // Development mode: use project directory for easier access (outside src-tauri to avoid hot reload)
         if let Ok(current_dir) = std::env::current_dir() {
-            let dev_log_file = current_dir.join("logs").join(format!("app_{}.jsonl", date));
+            // If we're in src-tauri/, go up one level to project root
+            let project_dir = if current_dir.file_name().map(|n| n == "src-tauri").unwrap_or(false) {
+                current_dir.parent().unwrap_or(&current_dir)
+            } else {
+                &current_dir
+            };
+            let dev_log_file = project_dir.join("logs").join(format!("app_{}.jsonl", date));
             if let Err(e) = try_init_log_file(&dev_log_file) {
                 eprintln!("[Logger] Failed to initialize dev log file at {}: {}", dev_log_file.display(), e);
             } else {

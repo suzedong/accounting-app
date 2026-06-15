@@ -308,8 +308,8 @@ function getSyncStatus(row: AccountRecord): 'unsynced' | 'synced' | 'local_newer
   }
   
   // 将时间字符串转换为 Date 对象进行比较
-  // local_updated_at 格式: 'YYYY-MM-DD HH:MM:SS' (SQLite)
-  // nocobase_updated_at 格式: 'YYYY-MM-DDTHH:MM:SS.sssZ' (ISO 8601)
+  // local_updated_at 格式: 'YYYY-MM-DD HH:MM:SS' (SQLite 本地时间)
+  // nocobase_updated_at 格式: 'YYYY-MM-DDTHH:MM:SS.sssZ' (ISO 8601 UTC)
   const localDate = parseTime(localTime);
   const remoteDate = parseTime(remoteTime);
   
@@ -335,8 +335,10 @@ function getSyncStatus(row: AccountRecord): 'unsynced' | 'synced' | 'local_newer
 /**
  * 解析时间字符串为 Date 对象
  * 支持两种格式：
- * - SQLite 格式: 'YYYY-MM-DD HH:MM:SS'
- * - ISO 8601 格式: 'YYYY-MM-DDTHH:MM:SS.sssZ'
+ * - SQLite 格式: 'YYYY-MM-DD HH:MM:SS'（本地时间）
+ * - ISO 8601 格式: 'YYYY-MM-DDTHH:MM:SS.sssZ'（UTC 时间）
+ * 
+ * 返回：统一转换为 UTC 时间戳进行比较
  */
 function parseTime(timeStr: string): Date | null {
   if (!timeStr) return null;
@@ -346,9 +348,9 @@ function parseTime(timeStr: string): Date | null {
     return new Date(timeStr);
   }
   
-  // SQLite 格式（空格分隔），需要替换为 T 并添加 Z（假设是 UTC）
-  const isoStr = timeStr.replace(' ', 'T') + 'Z';
-  return new Date(isoStr);
+  // SQLite 格式（空格分隔），解析为本地时间后转换为 UTC 时间戳
+  const localDate = new Date(timeStr);
+  return localDate;
 }
 
 /**

@@ -70,7 +70,7 @@ function formatAmount(val: unknown): string {
 
 function formatDateTime(val: unknown): string {
   if (typeof val !== 'string' || !val) return '';
-  return val.length > 16 ? val.substring(0, 16) : val;
+  return val.length > 19 ? val.substring(0, 19) : val;
 }
 
 function formatValue(val: unknown): string {

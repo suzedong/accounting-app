@@ -104,6 +104,7 @@ export const useChatStore = defineStore('chat', () => {
           render,
           status,
           steps: persistedData._steps,
+          createdAt: m.created_at,
         });
 
         // 恢复最后确认的记录
@@ -194,11 +195,22 @@ export const useChatStore = defineStore('chat', () => {
     sending.value = true;
 
     // 添加用户消息
+    const now = new Date().toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).replace(/\//g, '-');
+    
     const userMsg: ChatMessage = {
       id: genId(),
       role: 'user',
       content: text,
       imageSrc: imageFullSrc,
+      createdAt: now,
     };
     messages.value.push(userMsg);
     await scrollToBottom(messagesRef);
@@ -211,6 +223,7 @@ export const useChatStore = defineStore('chat', () => {
       content: '',
       loading: true,
       steps: [],
+      createdAt: now,
     };
 
     // 收集本轮 LLM 消息

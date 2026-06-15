@@ -20,7 +20,7 @@ export function formatDatetime(datetime: string): string {
 export function formatDateTimeShort(datetime: string): string {
   if (!datetime) return '';
   const dt = datetime.replace('T', ' ');
-  return dt.length > 16 ? dt.substring(0, 16) : dt;
+  return dt.length > 19 ? dt.substring(0, 19) : dt;
 }
 
 export function formatDate(date: Date): string {

@@ -58,6 +58,7 @@
                     <img v-if="msg.imageSrc" :src="msg.imageSrc" class="message-image" />
                     <span>{{ msg.content }}</span>
                   </div>
+                  <span v-if="msg.createdAt" class="message-time">{{ msg.createdAt }}</span>
                 </div>
 
                 <!-- AI message -->
@@ -131,6 +132,7 @@
                       @select-field="handleFollowUpSelect(msg, $event)"
                     />
                   </div>
+                  <span v-if="msg.createdAt" class="message-time">{{ msg.createdAt }}</span>
                 </div>
               </template>
             </div>
@@ -584,7 +586,20 @@ async function handleClearHistory() {
 
 .message.user {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.message.ai {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.message-time {
+  font-size: 11px;
+  color: #909399;
+  margin: 4px 8px;
 }
 
 .message-bubble {

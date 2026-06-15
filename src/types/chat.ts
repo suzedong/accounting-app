@@ -108,6 +108,8 @@ export interface ChatMessage {
   status?: 'pending' | 'confirmed' | 'cancelled' | 'success';
   skill?: SkillMeta;
   steps?: Step[];
+  /** 创建时间 */
+  createdAt?: string;
 }
 
 /** 技能元数据 */
