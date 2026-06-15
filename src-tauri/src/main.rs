@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use tauri::Manager;
+
 mod db;
 mod commands;
 mod models;
@@ -15,6 +17,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            // Initialize log file in app data directory
+            let app_data_dir = app.path().app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let logs_dir = app_data_dir.join("logs");
+            logger::init_log_file(logs_dir);
+
             // Emit startup log
             use tauri::Emitter;
             let handle = app.handle().clone();
@@ -25,6 +33,7 @@ fn main() {
                 message: "应用启动".to_string(),
                 timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
                 latency_ms: None,
+                request_id: None,
             });
 
             Ok(())

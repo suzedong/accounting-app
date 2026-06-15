@@ -8,6 +8,8 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
 export interface IpcLogEntry {
   id: number;
+  /** 请求 ID，用于关联 LLM/Rust 日志 */
+  requestId: string;
   timestamp: string;
   command: string;
   params: Record<string, unknown>;
@@ -18,8 +20,14 @@ export interface IpcLogEntry {
 }
 
 let nextId = 1;
+let nextRequestId = 1;
 const entries: IpcLogEntry[] = [];
 const MAX_ENTRIES = 200;
+
+/** 生成唯一的请求 ID，用于关联 IPC ↔ LLM ↔ Rust 日志 */
+function generateRequestId(): string {
+  return `req-${Date.now().toString(36)}-${nextRequestId++}`;
+}
 
 // Listeners for new entries
 const listeners = new Set<(entry: IpcLogEntry) => void>();
@@ -36,6 +44,16 @@ export function getIpcLogs(): IpcLogEntry[] {
 export function clearIpcLogs() {
   entries.length = 0;
   nextId = 1;
+  nextRequestId = 1;
+}
+
+/** 获取当前的请求 ID（可关联到 IPC 日志） */
+let currentRequestId = '';
+export function getCurrentRequestId(): string {
+  return currentRequestId;
+}
+export function setCurrentRequestId(id: string): void {
+  currentRequestId = id;
 }
 
 /**
@@ -46,6 +64,7 @@ export async function invoke<T>(
   args?: Record<string, unknown>,
 ): Promise<T> {
   const id = nextId++;
+  const requestId = generateRequestId();
   const timestamp = new Date().toLocaleTimeString();
   const startTime = Date.now();
 
@@ -55,6 +74,7 @@ export async function invoke<T>(
 
     const entry: IpcLogEntry = {
       id,
+      requestId,
       timestamp,
       command,
       params: args || {},
@@ -71,6 +91,7 @@ export async function invoke<T>(
 
     const entry: IpcLogEntry = {
       id,
+      requestId,
       timestamp,
       command,
       params: args || {},

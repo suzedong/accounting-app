@@ -1,7 +1,7 @@
 <template>
   <div v-if="hasError" class="error-boundary">
     <div class="error-icon">
-      <el-icon :size="48"><AlertCircle /></el-icon>
+      <el-icon :size="48"><InfoFilled /></el-icon>
     </div>
     <h3>加载失败</h3>
     <p class="error-message">{{ errorMessage }}</p>
@@ -12,7 +12,7 @@
 
 <script setup lang="ts">
 import { ref, onErrorCaptured, type ComponentPublicInstance } from 'vue';
-import { AlertCircle } from '@element-plus/icons-vue';
+import { InfoFilled } from '@element-plus/icons-vue';
 
 const props = withDefaults(defineProps<{
   fallbackMessage?: string;

@@ -1,6 +1,7 @@
 import { callLLMWithTools, getSystemPrompt, getLearningCorrections } from '@/api/tauri';
 import { toolRegistry, type ToolResult, type ToolRuntimeContext } from './tool-registry';
 import type { LLMMessage, Step } from '@/types/chat';
+import { getCurrentRequestId, setCurrentRequestId } from '@/utils/invoke-logger';
 
 // ============================================================
 // AgentEngine — 逻辑层：LLM 调用 + 工具执行 + 推理链构建
@@ -8,6 +9,8 @@ import type { LLMMessage, Step } from '@/types/chat';
 
 export interface LLMLogEntry {
   id: number;
+  /** 请求 ID，用于关联 IPC 日志 */
+  requestId: string;
   timestamp: string;
   systemMessage: string;
   userMessage: string;
@@ -71,6 +74,10 @@ export class AgentEngine {
     onStep?: (step: Step) => void | Promise<void>,
     runtimeContext?: Omit<ToolRuntimeContext, 'userMessage'>,
   ): Promise<ProcessResult> {
+    // 生成新的请求 ID，用于关联 IPC ↔ LLM 日志
+    const requestId = `req-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+    setCurrentRequestId(requestId);
+
     const steps: Step[] = [];
 
     // 构建完整 system message
@@ -323,6 +330,7 @@ export class AgentEngine {
       console.log('[AgentEngine] 记录 LLM 日志, 当前条数:', this.llmLogs.length);
       this.pushLLMLog({
         id: this.nextLogId++,
+        requestId: getCurrentRequestId(),
         timestamp: new Date().toLocaleTimeString(),
         systemMessage: systemWithHistory,
         userMessage,
@@ -342,6 +350,7 @@ export class AgentEngine {
       console.log('[AgentEngine] LLM 调用失败，记录错误日志:', errorMsg);
       this.pushLLMLog({
         id: this.nextLogId++,
+        requestId: getCurrentRequestId(),
         timestamp: new Date().toLocaleTimeString(),
         systemMessage: systemWithHistory,
         userMessage,

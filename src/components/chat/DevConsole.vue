@@ -37,6 +37,7 @@
           <div v-for="log in ipcLogs.slice().reverse()" :key="log.id" class="log-entry">
             <div class="log-header" @click="log.expanded = !log.expanded">
               <span class="log-id">#{{ log.id }}</span>
+              <span class="log-req-id" :title="'请求 ID: ' + log.requestId">{{ truncate(log.requestId, 12) }}</span>
               <span class="log-time">{{ log.timestamp }}</span>
               <span class="log-latency" :class="latencyClass(log.latency)">{{ log.latency }}ms</span>
               <span class="log-command" :class="{ error: !log.success }">{{ log.command }}</span>
@@ -77,6 +78,7 @@
           <div v-for="log in llmLogs.slice().reverse()" :key="log.id" class="log-entry">
             <div class="log-header" @click="log.expanded = !log.expanded">
               <span class="log-id">#{{ log.id }}</span>
+              <span class="log-req-id" :title="'请求 ID: ' + log.requestId">{{ truncate(log.requestId, 12) }}</span>
               <span class="log-time">{{ log.timestamp }}</span>
               <span class="log-latency" :class="latencyClass(log.latency)">{{ log.latency }}ms</span>
               <span class="log-user-text" :class="{ error: isLLMError(log) }">{{ truncate(log.userMessage, 60) }}</span>
@@ -84,12 +86,13 @@
               <span class="log-chevron" :class="{ rotated: log.expanded }">▾</span>
             </div>
             <div v-show="log.expanded" class="log-detail">
-              <div class="log-section">
+              <!-- System Prompt 默认折叠，点击展开 -->
+              <div class="log-section log-section-collapsible" @click="log.systemExpanded = !log.systemExpanded">
                 <div class="log-section-header">
-                  <span>请求 System Prompt</span>
+                  <span>System Prompt <span class="collapse-hint">(点击{{ log.systemExpanded ? '折叠' : '展开' }})</span></span>
                   <el-button size="small" text @click.stop="copyText(log.systemMessage)">复制</el-button>
                 </div>
-                <pre class="log-code">{{ log.systemMessage }}</pre>
+                <pre v-show="log.systemExpanded" class="log-code">{{ log.systemMessage }}</pre>
               </div>
               <div class="log-section">
                 <div class="log-section-header">
@@ -176,7 +179,7 @@ let ipcUnsub: (() => void) | null = null;
 // LLM logs
 // ============================================================
 
-const llmLogs = ref<(LLMLogEntry & { expanded?: boolean })[]>([]);
+const llmLogs = ref<(LLMLogEntry & { expanded?: boolean; systemExpanded?: boolean })[]>([]);
 let llmUnsub: (() => void) | null = null;
 
 // ============================================================
@@ -190,6 +193,7 @@ interface RustLogEntry {
   message: string;
   timestamp: string;
   latencyMs?: number;
+  requestId?: string;
   expanded?: boolean;
 }
 
@@ -230,16 +234,17 @@ function copyActiveTab() {
   let text = '';
   if (activeTab.value === 'ipc') {
     text = ipcLogs.value.map(log =>
-      `[#${log.id}] ${log.timestamp} ${log.command} (${log.latency}ms)\n` +
+      `[#${log.id}] req:${log.requestId} ${log.timestamp} ${log.command} (${log.latency}ms)\n` +
       `参数: ${JSON.stringify(log.params)}\n` +
       (log.success ? `结果: ${JSON.stringify(log.result)}` : `错误: ${log.error}`) +
       '\n---',
     ).join('\n');
   } else if (activeTab.value === 'llm') {
     text = llmLogs.value.map(log =>
-      `[#${log.id}] ${log.timestamp} (${log.latency}ms)\n` +
+      `[#${log.id}] req:${log.requestId} ${log.timestamp} (${log.latency}ms)${isLLMError(log) ? ' [失败]' : ''}\n` +
       `用户: ${log.userMessage}\n` +
       `AI: ${log.response}\n` +
+      `System Prompt: ${log.systemMessage.substring(0, 200)}${log.systemMessage.length > 200 ? '...' : ''}\n` +
       '---',
     ).join('\n');
   } else {
@@ -260,7 +265,7 @@ function copyAllTabs() {
     sections.push('(无记录)');
   } else {
     sections.push(ipcLogs.value.map(log =>
-      `[#${log.id}] ${log.timestamp} ${log.command} (${log.latency}ms)\n` +
+      `[#${log.id}] req:${log.requestId} ${log.timestamp} ${log.command} (${log.latency}ms)\n` +
       `参数: ${JSON.stringify(log.params)}\n` +
       (log.success ? `结果: ${JSON.stringify(log.result)}` : `错误: ${log.error}`),
     ).join('\n---\n'));
@@ -270,9 +275,10 @@ function copyAllTabs() {
     sections.push('(无记录)');
   } else {
     sections.push(llmLogs.value.map(log =>
-      `[#${log.id}] ${log.timestamp} (${log.latency}ms)\n` +
+      `[#${log.id}] req:${log.requestId} ${log.timestamp} (${log.latency}ms)${isLLMError(log) ? ' [失败]' : ''}\n` +
       `用户: ${log.userMessage}\n` +
-      `AI: ${log.response}`,
+      `AI: ${log.response}\n` +
+      `System Prompt: ${log.systemMessage.substring(0, 200)}${log.systemMessage.length > 200 ? '...' : ''}`,
     ).join('\n---\n'));
   }
   sections.push('\n\n=== Rust 端日志 ===');
@@ -512,6 +518,13 @@ defineExpose({ toggle });
   min-width: 30px;
 }
 
+.log-req-id {
+  color: #c586c0;
+  font-size: 10px;
+  font-family: monospace;
+  cursor: help;
+}
+
 .log-time {
   color: #6a9955;
   min-width: 70px;
@@ -596,6 +609,23 @@ defineExpose({ toggle });
 
 .log-section {
   margin-bottom: 8px;
+}
+
+.log-section-collapsible {
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.log-section-collapsible:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.collapse-hint {
+  font-size: 10px;
+  color: #666;
+  font-weight: normal;
+  text-transform: none;
 }
 
 .log-section-header {
