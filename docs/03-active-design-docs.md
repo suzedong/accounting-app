@@ -629,7 +629,7 @@ CREATE TABLE chat_history (
     role TEXT NOT NULL,
     content TEXT,
     data TEXT,                              -- 存储 PersistedChatData JSON
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX idx_chat_history_session ON chat_history(session_id, created_at);
 -- 删除字段：skill, confidence
@@ -1004,7 +1004,7 @@ CREATE TABLE records (
     account TEXT,
     note TEXT,
     payment_method TEXT,
-    local_updated_at TEXT DEFAULT (datetime('now')),  -- 本地最后修改时间
+    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),  -- 本地最后修改时间
     synced INTEGER DEFAULT 0,                         -- 是否已同步
     nocobase_id INTEGER,                              -- 云端记录 ID
     nocobase_updated_at TEXT,                         -- 云端最后更新时间

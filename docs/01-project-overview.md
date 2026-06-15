@@ -185,18 +185,18 @@
 CREATE TABLE records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid TEXT UNIQUE NOT NULL,          -- 全局唯一标识（用于同步）
-    datetime TEXT NOT NULL,             -- 时间 YYYY-MM-DD HH:MM:SS
+    datetime TEXT NOT NULL,             -- 时间 YYYY-MM-DD HH:MM:SS（本地时间）
     type TEXT NOT NULL,                 -- 收入/支出
     category TEXT,                      -- 分类
     amount REAL NOT NULL DEFAULT 0,     -- 金额
     account TEXT DEFAULT '个人',         -- 账户
     note TEXT,                          -- 备注
     payment_method TEXT,                -- 支付方式
-    local_updated_at TEXT DEFAULT (datetime('now')),  -- 本地最后修改时间
+    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),  -- 本地最后修改时间（本地时间）
     synced INTEGER DEFAULT 0,           -- 是否已同步到 NocoBase
     nocobase_id INTEGER,                -- NocoBase 记录 ID（同步时使用）
-    nocobase_updated_at TEXT,           -- NocoBase 最后修改时间
-    created_at TEXT DEFAULT (datetime('now'))
+    nocobase_updated_at TEXT,           -- NocoBase 最后修改时间（ISO UTC，原样存储）
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
 CREATE INDEX idx_records_datetime ON records(datetime);
@@ -218,20 +218,20 @@ CREATE TABLE business_trip (
     status TEXT DEFAULT ' 待发放',       -- 待发放/已发放/已过期（emoji 由迁移语句添加）
     paid_trip_allowance REAL DEFAULT 0,  -- 已发差旅补助
     paid_transport_allowance REAL DEFAULT 0, -- 已发交通补助
-    paid_date TEXT,
+    paid_date TEXT,                     -- 仅日期 YYYY-MM-DD
     notes TEXT,
-    local_updated_at TEXT DEFAULT (datetime('now')),  -- 本地最后修改时间
+    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),  -- 本地最后修改时间（本地时间）
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
-    nocobase_updated_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    nocobase_updated_at TEXT,           -- NocoBase 最后修改时间（ISO UTC，原样存储）
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
 -- 系统 Prompt（本地 SQLite 管理）
 CREATE TABLE system_prompts (
     name TEXT PRIMARY KEY,              -- dispatch / record / preferences
     content TEXT NOT NULL,
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now', 'localtime'))  -- 本地时间
 );
 
 -- 应用配置（KV 存储）
@@ -248,11 +248,11 @@ CREATE TABLE learning_data (
     key TEXT,                           -- 关键词
     value TEXT,                         -- JSON 值
     count INTEGER DEFAULT 1,
-    local_updated_at TEXT DEFAULT (datetime('now')),  -- 本地最后修改时间
+    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),  -- 本地最后修改时间（本地时间）
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
-    nocobase_updated_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    nocobase_updated_at TEXT,           -- NocoBase 最后修改时间（ISO UTC，原样存储）
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
 -- 对话历史（Agent Session 架构）
@@ -263,7 +263,7 @@ CREATE TABLE chat_history (
     role TEXT NOT NULL,                     -- user / ai
     content TEXT,                           -- 文本内容
     data TEXT,                              -- JSON：{ llmMessages, record, result, _steps, ... }
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))  -- 本地时间
 );
 CREATE INDEX idx_chat_history_session ON chat_history(session_id, created_at);
 
@@ -275,7 +275,7 @@ CREATE TABLE sync_log (
     status TEXT NOT NULL,               -- success / failed / conflict
     count INTEGER DEFAULT 0,
     error TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))  -- 本地时间
 );
 ```
 

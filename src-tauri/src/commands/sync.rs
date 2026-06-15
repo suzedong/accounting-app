@@ -175,19 +175,15 @@ pub async fn sync_full(
     let records_conflicts = result.conflicts;
     all_errors.extend(result.errors);
 
-    // 拉取差旅补助（暂时使用旧的增量拉取）
+    // 差旅补助：增量拉取 + 增量推送
     let (trips_pulled, errors) = pull_trips(&state, &client).await?;
     all_errors.extend(errors);
-
-    // 推送差旅补助（暂时使用旧的推送）
     let (trips_pushed, errors) = push_trips(&state, &client).await?;
     all_errors.extend(errors);
 
-    // 拉取学习数据（暂时使用旧的增量拉取）
+    // 学习数据：增量拉取 + 增量推送
     let (learning_pulled, errors) = pull_learning(&state, &client).await?;
     all_errors.extend(errors);
-
-    // 推送学习数据（暂时使用旧的推送）
     let (learning_pushed, errors) = push_learning(&state, &client).await?;
     all_errors.extend(errors);
 

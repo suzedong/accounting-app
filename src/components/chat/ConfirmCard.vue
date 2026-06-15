@@ -142,6 +142,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { Check, Edit, Close } from '@element-plus/icons-vue';
+import { formatDateTimeShort } from '@/utils/formatters';
 
 const props = defineProps<{
   fields: Record<string, unknown>;
@@ -188,8 +189,7 @@ function formatAmount(val: unknown): string {
 
 function formatDateTime(val: unknown): string {
   if (typeof val !== 'string' || !val) return '';
-  // Show date + time (first 16 chars: YYYY-MM-DD HH:mm)
-  return val.length > 16 ? val.substring(0, 16) : val;
+  return formatDateTimeShort(val);
 }
 </script>
 

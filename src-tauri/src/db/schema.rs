@@ -17,11 +17,11 @@ CREATE TABLE IF NOT EXISTS records (
     account TEXT DEFAULT '个人',
     note TEXT,
     payment_method TEXT,
-    local_updated_at TEXT DEFAULT (datetime('now')),
+    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
     nocobase_updated_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_records_datetime ON records(datetime);
 CREATE INDEX IF NOT EXISTS idx_records_type ON records(type);
@@ -44,18 +44,18 @@ CREATE TABLE IF NOT EXISTS business_trip (
     paid_transport_allowance REAL DEFAULT 0,
     paid_date TEXT,
     notes TEXT,
-    local_updated_at TEXT DEFAULT (datetime('now')),
+    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
     nocobase_updated_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
 -- 系统 Prompt
 CREATE TABLE IF NOT EXISTS system_prompts (
     name TEXT PRIMARY KEY,
     content TEXT NOT NULL,
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
 -- 学习数据
@@ -66,11 +66,11 @@ CREATE TABLE IF NOT EXISTS learning_data (
     key TEXT,
     value TEXT,
     count INTEGER DEFAULT 1,
-    local_updated_at TEXT DEFAULT (datetime('now')),
+    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),
     synced INTEGER DEFAULT 0,
     nocobase_id INTEGER,
     nocobase_updated_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
 -- 对话历史
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
     role TEXT NOT NULL,
     content TEXT,
     data TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_chat_history_session ON chat_history(session_id, created_at);
 
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
     status TEXT NOT NULL,
     count INTEGER DEFAULT 0,
     error TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
 -- 应用配置（AI Key、NocoBase URL 等）
@@ -127,10 +127,25 @@ CREATE TABLE IF NOT EXISTS app_config (
     }
 
     // Migration: add local_updated_at column to business_trip for sync support
-    let _ = conn.execute("ALTER TABLE business_trip ADD COLUMN local_updated_at TEXT DEFAULT (datetime('now'))", []);
-    
+    // NOTE: SQLite ALTER TABLE ADD COLUMN does not support non-constant defaults like datetime('now', 'localtime')
+    let has_local_updated_at: bool = conn.prepare("SELECT * FROM pragma_table_info('business_trip') WHERE name = 'local_updated_at'")
+        .ok()
+        .and_then(|mut stmt| stmt.query_row([], |row| row.get::<_, bool>(0)).ok())
+        .unwrap_or(false);
+    if !has_local_updated_at {
+        let _ = conn.execute("ALTER TABLE business_trip ADD COLUMN local_updated_at TEXT DEFAULT ''", []);
+        let _ = conn.execute("UPDATE business_trip SET local_updated_at = datetime('now', 'localtime') WHERE local_updated_at IS NULL OR local_updated_at = ''", []);
+    }
+
     // Migration: add local_updated_at column to learning_data for sync support
-    let _ = conn.execute("ALTER TABLE learning_data ADD COLUMN local_updated_at TEXT DEFAULT (datetime('now'))", []);
+    let has_learning_local_updated_at: bool = conn.prepare("SELECT * FROM pragma_table_info('learning_data') WHERE name = 'local_updated_at'")
+        .ok()
+        .and_then(|mut stmt| stmt.query_row([], |row| row.get::<_, bool>(0)).ok())
+        .unwrap_or(false);
+    if !has_learning_local_updated_at {
+        let _ = conn.execute("ALTER TABLE learning_data ADD COLUMN local_updated_at TEXT DEFAULT ''", []);
+        let _ = conn.execute("UPDATE learning_data SET local_updated_at = datetime('now', 'localtime') WHERE local_updated_at IS NULL OR local_updated_at = ''", []);
+    }
     
     // Migration: drop deprecated columns from business_trip
     let _ = conn.execute("ALTER TABLE business_trip DROP COLUMN destination", []);
@@ -176,7 +191,7 @@ CREATE TABLE IF NOT EXISTS app_config (
 
     // Sync dispatch prompt from file (always update to pick up new rules like _source annotations)
     conn.execute(
-        "INSERT INTO system_prompts (name, content, updated_at) VALUES ('dispatch', ?, datetime('now')) ON CONFLICT(name) DO UPDATE SET content = excluded.content, updated_at = datetime('now')",
+        "INSERT INTO system_prompts (name, content, updated_at) VALUES ('dispatch', ?, datetime('now', 'localtime')) ON CONFLICT(name) DO UPDATE SET content = excluded.content, updated_at = datetime('now', 'localtime')",
         [include_str!("../../prompts/dispatch.md")],
     )?;
 
@@ -192,6 +207,37 @@ CREATE TABLE IF NOT EXISTS app_config (
 
     // Cleanup: remove deprecated 'record' prompt (merged into dispatch.md)
     let _ = conn.execute("DELETE FROM system_prompts WHERE name = 'record'", []);
+
+    // Migration: add retry_count and last_error columns for sync retry control
+    // records table
+    let has_records_retry: bool = conn.prepare("SELECT * FROM pragma_table_info('records') WHERE name = 'retry_count'")
+        .ok()
+        .and_then(|mut stmt| stmt.query_row([], |row| row.get::<_, bool>(0)).ok())
+        .unwrap_or(false);
+    if !has_records_retry {
+        let _ = conn.execute("ALTER TABLE records ADD COLUMN retry_count INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE records ADD COLUMN last_error TEXT", []);
+    }
+
+    // business_trip table
+    let has_trip_retry: bool = conn.prepare("SELECT * FROM pragma_table_info('business_trip') WHERE name = 'retry_count'")
+        .ok()
+        .and_then(|mut stmt| stmt.query_row([], |row| row.get::<_, bool>(0)).ok())
+        .unwrap_or(false);
+    if !has_trip_retry {
+        let _ = conn.execute("ALTER TABLE business_trip ADD COLUMN retry_count INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE business_trip ADD COLUMN last_error TEXT", []);
+    }
+
+    // learning_data table
+    let has_learning_retry: bool = conn.prepare("SELECT * FROM pragma_table_info('learning_data') WHERE name = 'retry_count'")
+        .ok()
+        .and_then(|mut stmt| stmt.query_row([], |row| row.get::<_, bool>(0)).ok())
+        .unwrap_or(false);
+    if !has_learning_retry {
+        let _ = conn.execute("ALTER TABLE learning_data ADD COLUMN retry_count INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE learning_data ADD COLUMN last_error TEXT", []);
+    }
 
     Ok(())
 }
@@ -243,7 +289,7 @@ fn migrate_chat_history(conn: &Connection) -> Result<(), rusqlite::Error> {
                 role TEXT NOT NULL,
                 content TEXT,
                 data TEXT,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
             )"#,
             [],
         )?;
@@ -302,7 +348,7 @@ fn migrate_chat_history(conn: &Connection) -> Result<(), rusqlite::Error> {
             role TEXT NOT NULL,
             content TEXT,
             data TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
+            created_at TEXT DEFAULT (datetime('now', 'localtime'))
         )"#,
         [],
     )?;

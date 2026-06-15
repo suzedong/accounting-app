@@ -1,8 +1,7 @@
 use crate::db::connection::Database;
 use crate::db::sync_log::log_sync;
-use crate::db::nocobase::client::NocoBaseClient;
+use crate::db::nocobase::client::{NocoBaseClient, iso_utc_to_local_db, diff_seconds_remote_minus_local};
 use rusqlite::params;
-use chrono::{DateTime, Utc};
 
 /// 同步结果
 pub struct SyncResult {
@@ -74,9 +73,15 @@ pub async fn sync_records_full(
     for (uuid, local) in &local_map {
         if !remote_map.contains_key(uuid) {
             if local.synced == 0 {
+                // 重试次数超限，跳过
+                if local.retry_count >= 3 {
+                    println!("[SYNC] 本地有云端无但重试已达上限: {} → 跳过", uuid);
+                    continue;
+                }
                 // synced = 0 → 推送到云端（本地新增未同步）
                 println!("[SYNC] 本地有云端无且未同步: {} → 推送", uuid);
                 if let Err(e) = push_record_to_remote(db, client, uuid, local).await {
+                    mark_push_failure(db, "records", uuid, &e)?;
                     result.errors.push(format!("推送 {} 失败: {}", uuid, e));
                 } else {
                     result.pushed += 1;
@@ -96,15 +101,11 @@ pub async fn sync_records_full(
     // 4.3 处理两边都有的记录 → 比较时间，更新较旧的
     for (uuid, local) in &local_map {
         if let Some(remote) = remote_map.get(uuid) {
-            // 比较更新时间
-            let local_time = parse_time(&local.local_updated_at);
-            let remote_time = parse_time(&remote.updated_at);
+            // 比较更新时间：本地是空格格式本地时间，云端是 ISO UTC
+            let diff = diff_seconds_remote_minus_local(&local.local_updated_at, &remote.updated_at);
 
-            match (local_time, remote_time) {
-                (Some(lt), Some(rt)) => {
-                    // 计算时间差（秒）
-                    let diff = (rt - lt).num_seconds();
-                    
+            match diff {
+                Some(diff) => {
                     // 设置阈值：5分钟（300秒）
                     let threshold = 300;
 
@@ -119,8 +120,13 @@ pub async fn sync_records_full(
                         }
                     } else if diff < -threshold {
                         // 本地明显较新 → 推送到云端
+                        if local.retry_count >= 3 {
+                            println!("[SYNC] 本地较新但重试已达上限: {} → 跳过", uuid);
+                            continue;
+                        }
                         println!("[SYNC] 本地较新: {} (diff={}s) → 推送", uuid, diff);
                         if let Err(e) = push_record_to_remote(db, client, uuid, local).await {
+                            mark_push_failure(db, "records", uuid, &e)?;
                             result.errors.push(format!("推送 {} 失败: {}", uuid, e));
                         } else {
                             result.pushed += 1;
@@ -131,7 +137,7 @@ pub async fn sync_records_full(
                         println!("[SYNC] 时间一致: {} (diff={}s) → 无操作", uuid, diff);
                     }
                 },
-                _ => {
+                None => {
                     // 无法解析时间，跳过
                     println!("[SYNC] 无法解析时间: {} → 跳过", uuid);
                 }
@@ -166,6 +172,7 @@ struct LocalRecordInfo {
     uuid: String,
     local_updated_at: String,
     synced: i32,
+    retry_count: i32,
     datetime: String,
     r#type: String,
     category: Option<String>,
@@ -224,7 +231,7 @@ fn fetch_all_local_records(db: &Database) -> Result<Vec<LocalRecordInfo>, String
 
     let mut stmt = guard
         .prepare(
-            "SELECT uuid, local_updated_at, synced, datetime, type, category, amount, account, note, payment_method 
+            "SELECT uuid, local_updated_at, synced, retry_count, datetime, type, category, amount, account, note, payment_method 
              FROM records"
         )
         .map_err(|e| e.to_string())?;
@@ -235,13 +242,14 @@ fn fetch_all_local_records(db: &Database) -> Result<Vec<LocalRecordInfo>, String
                 uuid: row.get(0)?,
                 local_updated_at: row.get(1)?,
                 synced: row.get(2)?,
-                datetime: row.get(3)?,
-                r#type: row.get(4)?,
-                category: row.get(5)?,
-                amount: row.get(6)?,
-                account: row.get(7)?,
-                note: row.get(8)?,
-                payment_method: row.get(9)?,
+                retry_count: row.get(3)?,
+                datetime: row.get(4)?,
+                r#type: row.get(5)?,
+                category: row.get(6)?,
+                amount: row.get(7)?,
+                account: row.get(8)?,
+                note: row.get(9)?,
+                payment_method: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -249,30 +257,6 @@ fn fetch_all_local_records(db: &Database) -> Result<Vec<LocalRecordInfo>, String
         .map_err(|e| e.to_string())?;
 
     Ok(records)
-}
-
-/// 解析时间字符串为 DateTime<Utc>
-/// 支持两种格式：
-/// - SQLite 格式: 'YYYY-MM-DD HH:MM:SS'（假设是 UTC）
-/// - ISO 8601 格式: 'YYYY-MM-DDTHH:MM:SS.sssZ'
-fn parse_time(time_str: &str) -> Option<DateTime<Utc>> {
-    if time_str.is_empty() {
-        return None;
-    }
-
-    // 尝试 ISO 8601 格式（带 T 和 Z）
-    if time_str.contains('T') {
-        return DateTime::parse_from_rfc3339(time_str)
-            .map(|dt| dt.with_timezone(&Utc))
-            .ok();
-    }
-
-    // SQLite 格式（空格分隔），解析为 UTC
-    // 格式: 'YYYY-MM-DD HH:MM:SS'
-    let format = "%Y-%m-%d %H:%M:%S";
-    chrono::NaiveDateTime::parse_from_str(time_str, format)
-        .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
-        .ok()
 }
 
 /// 拉取单条记录到本地（云端有本地无）
@@ -368,7 +352,9 @@ fn update_local_record_full(
     let conn = db.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
 
-    let datetime = get_json_string(item, "datetime").unwrap_or("".to_string());
+    let datetime = get_json_string(item, "datetime")
+        .and_then(|d| iso_utc_to_local_db(&d))
+        .unwrap_or("".to_string());
     let r#type = get_json_string(item, "type").unwrap_or("".to_string());
     let category = get_json_string(item, "category");
     let amount = item.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -379,7 +365,7 @@ fn update_local_record_full(
     guard
         .execute(
             "UPDATE records SET datetime = ?, type = ?, category = ?, amount = ?, account = ?, note = ?, payment_method = ?, synced = 1, nocobase_id = ?, nocobase_updated_at = ?, local_updated_at = ? WHERE uuid = ?",
-            params![datetime, r#type, category, amount, account, note, payment_method, nocobase_id, nocobase_updated_at, nocobase_updated_at, uuid],
+            params![datetime, r#type, category, amount, account, note, payment_method, nocobase_id, nocobase_updated_at.clone(), iso_utc_to_local_db(&nocobase_updated_at.unwrap_or_default()).unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()), uuid],
         )
         .map_err(|e| e.to_string())?;
 
@@ -409,7 +395,9 @@ fn insert_local_record(
     let conn = db.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
 
-    let datetime = get_json_string(item, "datetime").unwrap_or("".to_string());
+    let datetime = get_json_string(item, "datetime")
+        .and_then(|d| iso_utc_to_local_db(&d))
+        .unwrap_or("".to_string());
     let r#type = get_json_string(item, "type").unwrap_or("".to_string());
     let category = get_json_string(item, "category");
     let amount = item.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -420,7 +408,7 @@ fn insert_local_record(
     guard
         .execute(
             "INSERT INTO records (uuid, datetime, type, category, amount, account, note, payment_method, synced, nocobase_id, nocobase_updated_at, local_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
-            params![uuid, datetime, r#type, category, amount, account, note, payment_method, nocobase_id, nocobase_updated_at, nocobase_updated_at],
+            params![uuid, datetime, r#type, category, amount, account, note, payment_method, nocobase_id, nocobase_updated_at.clone(), iso_utc_to_local_db(&nocobase_updated_at.unwrap_or_default()).unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string())],
         )
         .map_err(|e| e.to_string())?;
 
@@ -440,10 +428,31 @@ fn update_local_sync_status(
     guard
         .execute(
             "UPDATE records SET synced = 1, nocobase_id = ?, nocobase_updated_at = ?, local_updated_at = ? WHERE uuid = ?",
-            params![nocobase_id, nocobase_updated_at, nocobase_updated_at, uuid],
+            params![nocobase_id, nocobase_updated_at.clone(), iso_utc_to_local_db(&nocobase_updated_at.unwrap_or_default()).unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()), uuid],
         )
         .map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+/// 标记推送失败（递增重试次数，记录错误信息）
+fn mark_push_failure(
+    db: &Database,
+    table: &str,
+    uuid: &str,
+    error: &str,
+) -> Result<(), String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    guard
+        .execute(
+            &format!(
+                "UPDATE {} SET retry_count = retry_count + 1, last_error = ? WHERE uuid = ?",
+                table
+            ),
+            params![error, uuid],
+        )
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -527,25 +536,20 @@ pub async fn pull_records_only(
     println!("[SYNC] 步骤 4: 更新本地较旧的记录...");
     for (uuid, local) in &local_map {
         if let Some(remote) = remote_map.get(uuid) {
-            let local_time = parse_time(&local.local_updated_at);
-            let remote_time = parse_time(&remote.updated_at);
+            let diff = diff_seconds_remote_minus_local(&local.local_updated_at, &remote.updated_at);
 
-            match (local_time, remote_time) {
-                (Some(lt), Some(rt)) => {
-                    let diff = (rt - lt).num_seconds();
-                    let threshold = 300; // 5分钟
+            if let Some(diff) = diff {
+                let threshold = 300; // 5分钟
 
-                    if diff > threshold {
-                        // 云端较新 → 更新本地
-                        println!("[SYNC] 云端较新: {} (diff={}s) → 更新本地", uuid, diff);
-                        if let Err(e) = update_local_from_remote(db, client, uuid, remote).await {
-                            errors.push(format!("更新本地 {} 失败: {}", uuid, e));
-                        } else {
-                            pulled += 1;
-                        }
+                if diff > threshold {
+                    // 云端较新 → 更新本地
+                    println!("[SYNC] 云端较新: {} (diff={}s) → 更新本地", uuid, diff);
+                    if let Err(e) = update_local_from_remote(db, client, uuid, remote).await {
+                        errors.push(format!("更新本地 {} 失败: {}", uuid, e));
+                    } else {
+                        pulled += 1;
                     }
-                },
-                _ => {}
+                }
             }
         }
     }

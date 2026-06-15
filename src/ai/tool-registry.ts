@@ -10,9 +10,15 @@ import type { AccountRecord, RecordInput, RecordType, TripRecord } from '@/types
 // Tool Schema 定义（一个定义，三种用途：JSON Schema / TS 类型 / 运行时校验）
 // ============================================================
 
+// 收入/支出类型：先 trim 再做 enum 校验，容忍 LLM 返回带空格的值
+const RecordTypeSchema = z.preprocess(
+  v => (typeof v === 'string' ? v.trim() : v),
+  z.enum(['收入', '支出']),
+);
+
 const CreateRecordSchema = z.object({
   datetime: z.string().optional(),
-  type: z.enum(['收入', '支出']).transform(s => s.trim()),
+  type: RecordTypeSchema,
   category: z.string().optional(),
   // OCR 可能提取负数（如 -8.00），自动取绝对值
   amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0'),
@@ -24,7 +30,7 @@ const CreateRecordSchema = z.object({
 const CorrectRecordSchema = z.object({
   fields: z.object({
     datetime: z.string().optional(),
-    type: z.enum(['收入', '支出']).transform(s => s.trim()).optional(),
+    type: RecordTypeSchema.optional(),
     category: z.string().optional(),
     amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0').optional(),
     account: z.string().optional(),
@@ -43,7 +49,7 @@ const UpdateRecordSchema = z.object({
   recordId: z.number(),
   fields: z.object({
     datetime: z.string().optional(),
-    type: z.enum(['收入', '支出']).transform(s => s.trim()).optional(),
+    type: RecordTypeSchema.optional(),
     category: z.string().optional(),
     amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0').optional(),
     account: z.string().optional(),
@@ -57,7 +63,7 @@ const ConfirmCorrectionSchema = z.object({
   recordId: z.number(),
   fields: z.object({
     datetime: z.string().optional(),
-    type: z.enum(['收入', '支出']).transform(s => s.trim()).optional(),
+    type: RecordTypeSchema.optional(),
     category: z.string().optional(),
     amount: z.coerce.number().transform(a => Math.abs(a)).refine(a => a > 0, '金额必须大于 0').optional(),
     account: z.string().optional(),
@@ -69,7 +75,10 @@ const ConfirmCorrectionSchema = z.object({
 
 const QueryRecordsSchema = z.object({
   timeRange: z.enum(['today', 'yesterday', 'week', 'month', 'last_month']).optional(),
-  type: z.enum(['支出', '收入', 'all']).optional(),
+  type: z.preprocess(
+    v => (typeof v === 'string' ? v.trim() : v),
+    z.enum(['支出', '收入', 'all']),
+  ).optional(),
   category: z.string().optional(),
   account: z.string().optional(),
   limit: z.number().optional(),
@@ -78,7 +87,7 @@ const QueryRecordsSchema = z.object({
 const RenderStatsSchema = z.object({
   dimension: z.enum(['category', 'account', 'trend', 'comparison']),
   timeRange: z.enum(['month', 'last_month', 'year']).optional(),
-  type: z.enum(['收入', '支出']).optional(),
+  type: RecordTypeSchema.optional(),
 });
 
 const RenderBudgetSchema = z.object({});

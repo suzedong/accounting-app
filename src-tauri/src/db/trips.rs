@@ -148,6 +148,14 @@ pub fn update_trip(state: &Database, id: i64, input: TripUpdateInput) -> Result<
         return get_trip(state, id)?.ok_or_else(|| "Trip not found".to_string());
     }
 
+    // 更新 local_updated_at 并标记为未同步，重置重试状态，下次 push 会重新推送到 NocoBase
+    let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S").to_string();
+    sets.push("local_updated_at = ?".to_string());
+    params.push(Box::new(now));
+    sets.push("synced = 0".to_string());
+    sets.push("retry_count = 0".to_string());
+    sets.push("last_error = NULL".to_string());
+
     let sql = format!("UPDATE business_trip SET {} WHERE id = ?", sets.join(", "));
     params.push(Box::new(id));
 

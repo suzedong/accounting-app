@@ -17,6 +17,12 @@ export function formatDatetime(datetime: string): string {
   return `${dt} ${weekday}`;
 }
 
+export function formatDateTimeShort(datetime: string): string {
+  if (!datetime) return '';
+  const dt = datetime.replace('T', ' ');
+  return dt.length > 16 ? dt.substring(0, 16) : dt;
+}
+
 export function formatDate(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');

@@ -75,7 +75,17 @@ invoke('get_stats_summary', { datetimeGte: '2026-05-01 00:00:00' })
 
 ### SQLite 时间格式
 
-所有时间字段使用 **TEXT** 存储，格式 `YYYY-MM-DD HH:MM:SS`（空格分隔，24 小时制）。
+所有时间字段使用 **TEXT** 存储：
+- **datetime/local_updated_at/created_at/updated_at**：`YYYY-MM-DD HH:MM:SS`（本地时间，空格分隔，24 小时制）
+- **paid_date/start_date/end_date**：`YYYY-MM-DD`（纯日期）
+
+### 数据库脚本
+
+开发阶段数据迁移脚本位于 `scripts/` 目录：
+- `normalize_all_time_fields.sql` — 统一所有时间字段格式
+- `check_fields.py` — 检查 NocoBase 集合字段结构
+
+详见 [scripts/README.md](scripts/README.md)
 
 ### LLM 字段来源标注
 

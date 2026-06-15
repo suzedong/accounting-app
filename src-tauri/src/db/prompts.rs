@@ -35,7 +35,7 @@ pub fn update_prompt(state: &Database, name: &str, content: &str) -> Result<(), 
     let conn = state.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
     guard.execute(
-        "INSERT INTO system_prompts (name, content, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(name) DO UPDATE SET content = excluded.content, updated_at = datetime('now')",
+        "INSERT INTO system_prompts (name, content, updated_at) VALUES (?, ?, datetime('now', 'localtime')) ON CONFLICT(name) DO UPDATE SET content = excluded.content, updated_at = datetime('now', 'localtime')",
         [name, content],
     )
     .map_err(|e| e.to_string())?;

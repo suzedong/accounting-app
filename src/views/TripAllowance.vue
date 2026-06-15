@@ -2,7 +2,12 @@
   <div class="trip-page">
     <div class="page-header">
       <h2>差旅补助</h2>
-      <el-button type="primary" @click="showCreateDialog">新增出差</el-button>
+      <div class="page-actions">
+        <el-button @click="fetchTrips" :loading="loading">
+          <el-icon><Refresh /></el-icon> 刷新
+        </el-button>
+        <el-button type="primary" @click="showCreateDialog">新增出差</el-button>
+      </div>
     </div>
 
     <!-- Filter -->
@@ -176,11 +181,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { ElMessageBox, ElMessage } from 'element-plus';
+import { Refresh } from '@element-plus/icons-vue';
 import { getTrips, createTrip, updateTrip, deleteTrip } from '@/api/tauri';
 import { formatIntMoney } from '@/utils/formatters';
+import { useChatStore } from '@/stores/chat';
 import type { TripRecord, TripStatus } from '@/types';
+
+const chat = useChatStore();
 
 const trips = ref<TripRecord[]>([]);
 const loading = ref(false);
@@ -227,6 +236,11 @@ const editForm = ref({
 
 onMounted(() => {
   fetchTrips();
+
+  // 监听 AI 对话发放/创建/修改差旅补助的更新，自动刷新页面
+  watch(() => chat.recordUpdated, () => {
+    fetchTrips();
+  });
 });
 
 async function fetchTrips() {
@@ -342,6 +356,11 @@ function statusTag(status: string): 'info' | 'success' | 'warning' {
 .page-header h2 {
   font-size: 1.5em;
   color: #333;
+}
+
+.page-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .header-actions {

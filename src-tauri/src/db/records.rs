@@ -213,6 +213,11 @@ pub fn update_record(
     sets.push("local_updated_at = ?".to_string());
     params.push(Box::new(now));
 
+    // 修改后标记为未同步，并重置重试状态，下次 push 会重新推送到 NocoBase
+    sets.push("synced = 0".to_string());
+    sets.push("retry_count = 0".to_string());
+    sets.push("last_error = NULL".to_string());
+
     if sets.is_empty() {
         return get_record(state, id)?.ok_or_else(|| "Record not found".to_string());
     }

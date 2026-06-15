@@ -127,7 +127,10 @@ export const useChatStore = defineStore('chat', () => {
       const lastMsg = loaded[loaded.length - 1];
       if (lastMsg?.status === 'pending' && lastMsg.data) {
         pendingRecord.value = lastMsg.data as Record<string, unknown>;
-        pendingAction.value = 'create_record';
+        // 从推理步骤中推断 action，没有则回退到 create_record
+        const intentStep = lastMsg.steps?.find(s => s.id === 'intent');
+        const inferredAction = intentStep?.detail?.action;
+        pendingAction.value = inferredAction || 'create_record';
       }
     } catch {
       // No history
@@ -295,7 +298,14 @@ export const useChatStore = defineStore('chat', () => {
     if (!pendingRecord.value) return;
 
     const record = pendingRecord.value;
-    const action = pendingAction.value || 'create_record';
+    // 防御：如果 pendingAction 丢失，根据 record 字段特征推断
+    let action = pendingAction.value;
+    if (!action) {
+      if ('tripId' in record && 'matchType' in record) action = 'record_trip_payment';
+      else if ('trip_id' in record && 'days' in record) action = 'create_trip_record';
+      else if ('pendingUpdate' in record) action = 'confirm_correction';
+      else action = 'create_record';
+    }
 
     if (action === 'create_record') {
       // 检查重复记录
@@ -313,7 +323,11 @@ export const useChatStore = defineStore('chat', () => {
     try {
       await agentEngine.loadContext();
 
-      const toolName = action === 'confirm_correction' ? 'confirm_correction' : action.replace('create_', 'confirm_');
+      const toolName = action === 'confirm_correction'
+        ? 'confirm_correction'
+        : action === 'record_trip_payment'
+          ? 'confirm_trip_payment'
+          : action.replace('create_', 'confirm_');
       const toolArgs = action === 'confirm_correction'
         ? (record.pendingUpdate as Record<string, unknown>)
         : record;
@@ -352,11 +366,12 @@ export const useChatStore = defineStore('chat', () => {
         await saveLearningIfNeeded(originalParse.value, record);
       }
 
+      // 临时保留 pendingAction，让 persistMessage 写入 result.action，写完再清
       pendingRecord.value = null;
-      pendingAction.value = null;
       originalParse.value = null;
 
       await persistMessage(msg, confirmLlmMessages);
+      pendingAction.value = null;
     } catch (e: unknown) {
       msg.content = e instanceof Error ? e.message : '确认失败';
       msg.render = 'text';

@@ -1,6 +1,7 @@
 use crate::db::connection::Database;
 use crate::db::sync_log::log_sync;
 use crate::db::nocobase::client::NocoBaseClient;
+use crate::db::nocobase::client::{extract_record_object, diff_seconds_remote_minus_local, iso_utc_to_local_db, normalize_to_date};
 use rusqlite::params;
 use rusqlite::OptionalExtension;
 
@@ -61,7 +62,7 @@ pub async fn push_trips(
     let mut pushed = 0;
     let mut errors = Vec::new();
 
-    // 查询所有未同步的本地记录
+    // 查询所有未同步且重试次数未达上限的本地记录
     let unsynced = get_unsynced_trips(db)?;
 
     if unsynced.is_empty() {
@@ -73,7 +74,10 @@ pub async fn push_trips(
     for record in unsynced {
         match push_single_trip(db, client, &record).await {
             Ok(_) => pushed += 1,
-            Err(e) => errors.push(format!("[{}] {}", record.uuid, e)),
+            Err(e) => {
+                mark_push_failure(db, "business_trip", &record.uuid, &e)?;
+                errors.push(format!("[{}] {}", record.uuid, e));
+            }
         }
     }
 
@@ -92,7 +96,7 @@ fn get_last_trip_sync_time(db: &Database) -> Result<Option<serde_json::Value>, S
         .query_row(
             "SELECT MAX(nocobase_updated_at) FROM business_trip 
              WHERE nocobase_updated_at IS NOT NULL 
-             AND nocobase_updated_at LIKE '____-__-__T%'",
+             AND nocobase_updated_at != ''",
             [],
             |r| r.get::<_, Option<String>>(0),
         )
@@ -129,19 +133,20 @@ async fn pull_single_trip(
     let local_record = get_local_trip_by_uuid(db, uuid)?;
 
     if let Some(local) = local_record {
-        // 本地已有，比较更新时间
-        let local_updated = local.local_updated_at.clone();
-        let nocobase_updated = item.get("updated_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        // 本地已有，比较更新时间（本地空格格式 vs 云端 ISO UTC）
+        let diff = diff_seconds_remote_minus_local(&local.local_updated_at, &nocobase_updated_at.clone().unwrap_or_default());
 
-        // 如果本地更新，跳过
-        if local_updated.as_str() > nocobase_updated {
+        if let Some(diff) = diff {
+            if diff <= 300 {
+                // 时间接近或本地较新，跳过
+                return Ok(false);
+            }
+            // 云端明显较新，更新本地
+            update_local_trip(db, uuid, item, nocobase_id, nocobase_updated_at)?;
+        } else {
+            // 无法解析时间，跳过
             return Ok(false);
         }
-
-        // NocoBase 更新，更新本地
-        update_local_trip(db, uuid, item, nocobase_id, nocobase_updated_at)?;
     } else {
         // 本地没有，创建新记录
         insert_local_trip(db, uuid, item, nocobase_id, nocobase_updated_at)?;
@@ -193,10 +198,11 @@ fn insert_local_trip(
     let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("⏳ 待发放");
     let paid_trip_allowance = item.get("paid_trip_allowance").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let paid_transport_allowance = item.get("paid_transport_allowance").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let paid_date = item.get("paid_date").and_then(|v| v.as_str());
+    let paid_date = item.get("paid_date").and_then(|v| v.as_str()).and_then(normalize_to_date);
     let notes = item.get("notes").and_then(|v| v.as_str());
-    let local_updated_at: String = item.get("local_updated_at").and_then(|v| v.as_str()).map(|s| s.to_string())
-        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string());
+    // local_updated_at 反映"本地这条记录最后变更时间"。从云端拉取时，转换为本地时间空格格式
+    let local_updated_at: String = iso_utc_to_local_db(&nocobase_updated_at.clone().unwrap_or_default())
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
 
     guard
         .execute(
@@ -237,10 +243,11 @@ fn update_local_trip(
     let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("⏳ 待发放");
     let paid_trip_allowance = item.get("paid_trip_allowance").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let paid_transport_allowance = item.get("paid_transport_allowance").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let paid_date = item.get("paid_date").and_then(|v| v.as_str());
+    let paid_date = item.get("paid_date").and_then(|v| v.as_str()).and_then(normalize_to_date);
     let notes = item.get("notes").and_then(|v| v.as_str());
-    let local_updated_at: String = item.get("local_updated_at").and_then(|v| v.as_str()).map(|s| s.to_string())
-        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string());
+    // local_updated_at 反映"本地这条记录最后变更时间"。从云端拉取时，转换为本地时间空格格式
+    let local_updated_at: String = iso_utc_to_local_db(&nocobase_updated_at.clone().unwrap_or_default())
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
 
     guard
         .execute(
@@ -262,14 +269,14 @@ fn update_local_trip(
     Ok(())
 }
 
-/// 查询未同步的差旅补助记录
+/// 查询未同步且重试次数未达上限的差旅补助记录
 fn get_unsynced_trips(db: &Database) -> Result<Vec<UnsyncedTrip>, String> {
     let conn = db.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = guard
         .prepare("SELECT uuid, trip_id, start_date, end_date, days, trip_allowance, 
                    transport_allowance, total, status, paid_trip_allowance, paid_transport_allowance, 
-                   paid_date, notes FROM business_trip WHERE synced = 0")
+                   paid_date, notes, nocobase_id FROM business_trip WHERE synced = 0 AND retry_count < 3")
         .map_err(|e| e.to_string())?;
 
     let trips = stmt
@@ -288,6 +295,7 @@ fn get_unsynced_trips(db: &Database) -> Result<Vec<UnsyncedTrip>, String> {
                 paid_transport_allowance: row.get(10)?,
                 paid_date: row.get(11)?,
                 notes: row.get(12)?,
+                nocobase_id: row.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -312,6 +320,7 @@ struct UnsyncedTrip {
     paid_transport_allowance: f64,
     paid_date: Option<String>,
     notes: Option<String>,
+    nocobase_id: Option<i64>,
 }
 
 /// 推送单条差旅补助记录到 NocoBase
@@ -336,26 +345,33 @@ async fn push_single_trip(
         "notes": record.notes,
     });
 
-    // 查询 nocobase_id（在 await 前释放锁）
-    let nocobase_id: Option<i64> = {
-        let conn = db.get_conn();
-        let guard = conn.lock().map_err(|e| e.to_string())?;
-        guard
-            .query_row("SELECT nocobase_id FROM business_trip WHERE uuid = ?", [&record.uuid], |r| r.get(0))
-            .optional()
-            .map_err(|e| e.to_string())?
-    };
-
-    // 异步操作（锁已释放）
-    if let Some(nocobase_id) = nocobase_id {
-        let result = client.update_record("business_trip", nocobase_id, data).await?;
-        let updated_at = result.get("updated_at")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        update_trip_synced_status(db, &record.uuid, Some(nocobase_id), updated_at)?;
+    // 异步操作（nocobase_id 已在查询时取出，无需再查）
+    if let Some(nocobase_id) = record.nocobase_id {
+        let result = client.update_record("business_trip", nocobase_id, data.clone()).await?;
+        if let Some(obj) = extract_record_object(&result) {
+            let updated_at = obj.get("updated_at").and_then(|v| v.as_str()).map(|s| s.to_string());
+            update_trip_synced_status(db, &record.uuid, Some(nocobase_id), updated_at)?;
+        } else {
+            // update 返回空：用 UUID 查询云端确认记录是否真的不存在，避免错误地创建重复记录
+            let filter = serde_json::json!({ "uuid": record.uuid });
+            let check = client.list_records("business_trip", Some(filter), 1, 1).await?;
+            if !check.data.is_empty() {
+                return Err(format!(
+                    "update 返回空但云端仍存在记录 uuid={}，跳过创建以防重复",
+                    record.uuid
+                ));
+            }
+            // 云端确认不存在，重新创建
+            let result = client.create_record("business_trip", data).await?;
+            if let Some(obj) = extract_record_object(&result) {
+                let new_id = obj.get("id").and_then(|v| v.as_i64());
+                let updated_at = obj.get("updated_at").and_then(|v| v.as_str()).map(|s| s.to_string());
+                update_trip_synced_status(db, &record.uuid, new_id, updated_at)?;
+            }
+        }
     } else {
         let result = client.create_record("business_trip", data).await?;
-        if let Some(obj) = result.as_object() {
+        if let Some(obj) = extract_record_object(&result) {
             let nocobase_id = obj.get("id").and_then(|v| v.as_i64());
             let updated_at = obj.get("updated_at").and_then(|v| v.as_str()).map(|s| s.to_string());
             update_trip_synced_status(db, &record.uuid, nocobase_id, updated_at)?;
@@ -374,10 +390,34 @@ fn update_trip_synced_status(
 ) -> Result<(), String> {
     let conn = db.get_conn();
     let guard = conn.lock().map_err(|e| e.to_string())?;
+    // 推送后，local_updated_at 与 nocobase_updated_at 保持一致（数据已同步到云端，与云端版本相同）
+    let local_updated_at: String = iso_utc_to_local_db(&updated_at.clone().unwrap_or_default())
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
     guard
         .execute(
-            "UPDATE business_trip SET synced = 1, nocobase_id = ?, nocobase_updated_at = ? WHERE uuid = ?",
-            params![nocobase_id, updated_at, uuid],
+            "UPDATE business_trip SET synced = 1, nocobase_id = ?, nocobase_updated_at = ?, local_updated_at = ? WHERE uuid = ?",
+            params![nocobase_id, updated_at, local_updated_at, uuid],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 标记推送失败（递增重试次数，记录错误信息）
+fn mark_push_failure(
+    db: &Database,
+    table: &str,
+    uuid: &str,
+    error: &str,
+) -> Result<(), String> {
+    let conn = db.get_conn();
+    let guard = conn.lock().map_err(|e| e.to_string())?;
+    guard
+        .execute(
+            &format!(
+                "UPDATE {} SET retry_count = retry_count + 1, last_error = ? WHERE uuid = ?",
+                table
+            ),
+            params![error, uuid],
         )
         .map_err(|e| e.to_string())?;
     Ok(())

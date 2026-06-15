@@ -2,9 +2,13 @@
   <div class="app-container">
     <AppNavbar />
     <main class="main-content">
-      <router-view />
+      <ErrorBoundary>
+        <router-view />
+      </ErrorBoundary>
     </main>
-    <ChatWidget />
+    <ErrorBoundary>
+      <ChatWidget />
+    </ErrorBoundary>
     <DevConsole ref="devConsoleRef" />
   </div>
 </template>
@@ -16,6 +20,7 @@ import { ElMessageBox } from 'element-plus';
 import AppNavbar from '@/components/layout/AppNavbar.vue';
 import ChatWidget from '@/components/chat/ChatWidget.vue';
 import DevConsole from '@/components/chat/DevConsole.vue';
+import ErrorBoundary from '@/components/ErrorBoundary.vue';
 import { checkOcrStatus } from '@/api/tauri';
 
 const router = useRouter();
