@@ -102,11 +102,6 @@
 │                          │  │  OCR（Python subprocess）│     │   │
 │                          │  │  └─ PaddleOCR        │      │   │
 │                          │  └──────────────────────┘      │   │
-│                          │                              │   │
-│                          │  ┌──────────────────────┐      │   │
-│                          │  │  本地 LLM（规划中）     │      │   │
-│                          │  │  └─ Candle + Qwen2   │      │   │
-│                          │  └──────────────────────┘      │   │
 │                          └──────────────────────────────┘   │
 │                                                              │
 │  外部服务（直连，无需代理）                                      │
@@ -160,23 +155,6 @@
 - Settings 页提供 OCR 管理（状态展示 / 安装依赖 / 启用禁用开关 / 事件驱动扫描）
 - **事件驱动发现机制**：前端调用 `startOcrDiscover()`，Rust 后台线程扫描 Python，完成后通过 Tauri 事件 `ocr_discover_result` 推送结果，扫描期间显示加载动画
 - **Microsoft Store Python 限制**：App Execution Aliases（stub 文件）在非交互式终端中无法执行，标记为"不可用"，提示用户从 python.org 安装
-
-#### 本地 LLM 层
-
-**Candle（Hugging Face 纯 Rust 推理框架）+ Qwen2 中文模型**
-
-| 选型 | 理由 |
-|---|---|
-| Candle vs Ollama | 完全自包含，无需外部进程，跨平台原生 |
-| GGUF 4-bit 量化 | 模型体积 ~0.9GB，内存占用低，CPU 可用 |
-| Qwen2-1.5B-Instruct | 中文能力好，体积小，Candle 官方支持 |
-
-- **推理引擎**：`candle-transformers` crate（Qwen2 架构原生支持）
-- **模型格式**：GGUF 量化（4-bit / 8-bit），通过 `hf-hub` 下载
-- **GPU 策略**：macOS 自动启用 Metal，Windows 检测 NVIDIA GPU（CUDA），无则回退 CPU
-- **模型存储**：与 OCR 模型同目录 `$APP_DATA/ai-jizhang/models/`
-- **下载策略**：HF 默认源 + 镜像源备选 + 断点续传 + 代理配置
-- **云端 / 本地切换**：Settings 页严格二选一，不自动回退
 
 ### 2.3 SQLite Schema
 
@@ -368,9 +346,6 @@ Rust 后端                  百炼 API              NocoBase
 | 字段类型 | `records.category` 和 `payment_method` 为自由文本，非枚举 |
 | 数据层 | SQLite 通过 `rusqlite` crate，7 张表 + 预置数据 |
 | OCR | Python 子进程调用 PaddleOCR，跨平台智能探测 Python，自动安装依赖 |
-| LLM 模型存储 | `$APP_DATA/ai-jizhang/models/`，GGUF 格式（4-bit 量化 ~0.9GB） |
-| GPU 策略 | macOS Metal / Windows CUDA（检测后自动启用）/ CPU 回退 |
-| AI 引擎切换 | 百炼 API ↔ 本地 LLM，严格二选一，不自动回退 |
 
 ---
 

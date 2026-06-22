@@ -70,7 +70,7 @@ src-tauri/        # Rust 后端（Tauri 2 + SQLite）
 
 docs/             # 设计文档
 │   ├── 01-project-overview.md     # 需求 + 架构 + UI
-│   ├── 02-development-roadmap.md  # 开发计划（含本地 LLM 方案）
+│   ├── 02-development-roadmap.md  # 开发计划
 │   └── 03-active-design-docs.md   # 进行中的设计（Agent 重构 + OCR）
 ```
 
