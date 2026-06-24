@@ -117,6 +117,9 @@ impl NocoBaseClient {
     }
 
     /// 查询记录（分页）
+    ///
+    /// 使用 POST + filter 放在请求体（AGENTS.md §4.2 硬性约束）。
+    /// 原因：避免长 filter 触发 URI Too Long、URL 编码歧义、access log/缓存泄漏。
     pub async fn list_records(
         &self,
         collection: &str,
@@ -124,33 +127,38 @@ impl NocoBaseClient {
         page: u32,
         page_size: u32,
     ) -> Result<NocoBaseListResponse, String> {
-        // 使用 GET 请求，参数通过 URL 查询字符串传递
-        let mut url = format!("{}/api/{}:list?page={}&pageSize={}", self.base_url, collection, page, page_size);
-        
-        // 如果有 filter，作为 URL 查询参数添加
-        if let Some(f) = filter {
-            let filter_str = f.to_string();
-            // URL 编码 filter
-            let encoded_filter = urlencoding::encode(&filter_str);
-            url = format!("{}&filter={}", url, encoded_filter);
-        }
-        
-        println!("[DEBUG] NocoBase 请求 - URL: {}", url);
-        
+        // URL 只放分页参数，filter 进 body
+        let url = format!(
+            "{}/api/{}:list?page={}&pageSize={}",
+            self.base_url, collection, page, page_size
+        );
+
+        let body = match filter {
+            Some(f) => serde_json::json!({ "filter": f }),
+            None => serde_json::json!({}),
+        };
+
+        println!("[DEBUG] NocoBase 请求 - POST {} body={}", url, body);
+
         let resp = self
             .http
-            .get(&url)
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.token))
             .header("Content-Type", "application/json")
+            .json(&body)
             .send()
             .await
             .map_err(|e| format!("HTTP 请求失败: {}", e))?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        
-        println!("[DEBUG] NocoBase 响应 - Status: {}, 响应长度: {} 字符", status, text.len());
-        
+
+        println!(
+            "[DEBUG] NocoBase 响应 - Status: {}, 响应长度: {} 字符",
+            status,
+            text.len()
+        );
+
         if !status.is_success() {
             return Err(format!("HTTP {} {}", status.as_u16(), text));
         }
@@ -161,7 +169,8 @@ impl NocoBaseClient {
             if let Ok(err) = error_resp {
                 if let Some(errors) = err.errors {
                     if !errors.is_empty() {
-                        let msg = errors.iter()
+                        let msg = errors
+                            .iter()
                             .filter_map(|e| e.message.as_ref())
                             .map(|s| s.as_str())
                             .collect::<Vec<_>>()

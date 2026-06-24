@@ -131,18 +131,18 @@
 
 ```
 accounting-app/
-├── AGENTS.md                # AI Agent 协作规范（开发硬约束）
-├── README.md
+├── AGENTS.md                # 开发规范（唯一规范源）
+├── CODE_WIKI.md             # 代码实现现状（本文件）
+├── README.md                # 项目入口
 ├── package.json             # 前端依赖
 ├── vite.config.ts           # Vite，dev 端口 5174
 ├── tsconfig.json
 ├── index.html
 │
-├── docs/                    # 设计文档（项目概览/路线图/活跃设计/本 Wiki）
+├── docs/                    # 设计蓝图（项目概览/路线图/活跃设计）
 │   ├── 01-项目概览.md
 │   ├── 02-开发路线图.md
-│   ├── 03-活跃设计文档.md
-│   └── CODE_WIKI.md         # ← 当前文件
+│   └── 03-活跃设计文档.md
 │
 ├── scripts/                 # 数据库维护脚本（跨平台 SQL/Python）
 │
