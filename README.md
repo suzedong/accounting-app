@@ -93,6 +93,6 @@ LLM 返回的每个参数字段附带 `_source`：`extracted`（明确提到）/
 
 ## 详细文档
 
-- [项目概览](docs/01-project-overview.md) — 需求 + 架构 + UI
-- [开发路线图](docs/02-development-roadmap.md) — 开发计划（含本地 LLM 方案）
-- [活跃设计文档](docs/03-active-design-docs.md) — 进行中的设计
+- [项目概览](docs/01-项目概览.md) — 需求 + 架构 + UI
+- [开发路线图](docs/02-开发路线图.md) — 开发计划（含本地 LLM 方案）
+- [活跃设计文档](docs/03-活跃设计文档.md) — 进行中的设计
