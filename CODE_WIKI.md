@@ -730,7 +730,6 @@ Rust 函数 `datetime_gte: String` ↔ 前端 invoke 传 `{ datetimeGte: value }
 
 ## 附录 C：已知的潜在改进点
 
-- [`client.rs::list_records`](file:///Users/szd/Documents/Code/accounting-app/src-tauri/src/db/nocobase/client.rs#L128-L136) 目前是 GET + URL 编码 filter，与 AGENTS.md "必须 POST + filter 放请求体" 的约束不一致，是未来修复点。
 - `sync_push` 不会推送本地删除（硬删的记录无法通知云端），仅靠 `sync_full` 的反向同步策略可能造成不一致。
 
 ---
