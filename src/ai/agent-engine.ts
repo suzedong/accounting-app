@@ -136,6 +136,8 @@ export class AgentEngine {
         confirm_trip_payment: new Set(['tripId', 'amount', 'datetime', 'matchType']),
         create_trip_record: new Set(['trip_id', 'start_date', 'end_date', 'days', 'notes']),
         confirm_trip_record: new Set(['trip_id', 'start_date', 'end_date', 'days', 'notes']),
+        // delete_record 只有 context 对象，不展示到意图面板（面板由 correction 分支渲染目标记录）
+        delete_record: new Set([]),
       };
       const allowedFields = TOOL_VISIBLE_FIELDS[parsed.action];
 
@@ -241,6 +243,23 @@ export class AgentEngine {
           changes: correction.changes || [],
           risk: correction.risk || 'low',
           reason: correction.reason,
+        };
+      }
+      // 删除操作：复用 correction 面板展示目标记录与风险原因（changes 用一条"删除"标记）
+      if (
+        toolResult.data && typeof toolResult.data === 'object' &&
+        ('pendingDelete' in toolResult.data || 'deletedRecord' in toolResult.data)
+      ) {
+        const deletion = toolResult.data as {
+          targetRecord?: Record<string, unknown>;
+          risk?: 'low' | 'high';
+          reason?: string;
+        };
+        executeStep.detail!.correction = {
+          targetRecord: deletion.targetRecord || {},
+          changes: [{ field: '_action', label: '操作', oldValue: '保留', newValue: '删除' }],
+          risk: deletion.risk || 'low',
+          reason: deletion.reason,
         };
       }
     } else {

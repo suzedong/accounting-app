@@ -3,10 +3,10 @@ import { ref, nextTick } from 'vue';
 import { ElMessage } from 'element-plus';
 import { agentEngine } from '@/ai/agent-engine';
 import { toolRegistry } from '@/ai/tool-registry';
-import { getChatHistory, saveChatMessage, clearChatHistory } from '@/api/tauri';
+import { getChatHistory, saveChatMessage, clearChatHistory, getConfig } from '@/api/tauri';
 import { clearIpcLogs } from '@/utils/invoke-logger';
 import type { ChatMessage, PersistedChatData, LLMMessage } from '@/types/chat';
-import type { AccountRecord } from '@/types';
+import type { AccountRecord, TripRecord } from '@/types';
 
 /** 生成 session ID（应用启动时一次） */
 function generateSessionId(): string {
@@ -16,6 +16,7 @@ function generateSessionId(): string {
 /** 从持久化数据推导 UI 渲染类型 */
 function deriveRenderType(data: PersistedChatData): string {
   if (data.correction) return 'correctionCard';
+  if (data.deletion) return 'deleteCard';
   if (data.followUp) return 'followUp';
   // 已取消的记录不显示卡片
   if (data.record && !data.result && !data.record?._cancelled) return 'card';
@@ -49,6 +50,59 @@ export const useChatStore = defineStore('chat', () => {
   const pendingRecord = ref<Record<string, unknown> | null>(null);
   const pendingAction = ref<string | null>(null);
   const lastConfirmedRecord = ref<AccountRecord | null>(null);
+  const lastConfirmedTrip = ref<TripRecord | null>(null);
+  // "上一条"过期保护：记录内部写入时间戳；超过 TTL 后再读时返回 null 并清空
+  let lastConfirmedRecordSavedAt = 0;
+  let lastConfirmedTripSavedAt = 0;
+  // TTL：分钟；默认 30，可通过 app_config.last_confirmed_ttl_minutes 覆盖
+  let lastConfirmedTtlMs = 30 * 60 * 1000;
+  // 强制确认修正：从 app_config.force_confirm_corrections 读取（"1" 表示开启）
+  let forceConfirmCorrections = false;
+
+  /** 记录"上一条"（含时间戳，供跨会话过期判定） */
+  function setLastConfirmedRecord(rec: AccountRecord | null, savedAt: number = Date.now()) {
+    lastConfirmedRecord.value = rec;
+    lastConfirmedRecordSavedAt = rec ? savedAt : 0;
+  }
+  function setLastConfirmedTrip(trip: TripRecord | null, savedAt: number = Date.now()) {
+    lastConfirmedTrip.value = trip;
+    lastConfirmedTripSavedAt = trip ? savedAt : 0;
+  }
+  /** 读取"上一条"记账；若已过期则清空并返回 null（强制降级为候选/确认） */
+  function getFreshLastConfirmedRecord(): AccountRecord | null {
+    if (!lastConfirmedRecord.value) return null;
+    if (Date.now() - lastConfirmedRecordSavedAt > lastConfirmedTtlMs) {
+      lastConfirmedRecord.value = null;
+      lastConfirmedRecordSavedAt = 0;
+      agentEngine.setLastConfirmedRecordContext(null);
+      return null;
+    }
+    return lastConfirmedRecord.value;
+  }
+  function getFreshLastConfirmedTrip(): TripRecord | null {
+    if (!lastConfirmedTrip.value) return null;
+    if (Date.now() - lastConfirmedTripSavedAt > lastConfirmedTtlMs) {
+      lastConfirmedTrip.value = null;
+      lastConfirmedTripSavedAt = 0;
+      return null;
+    }
+    return lastConfirmedTrip.value;
+  }
+
+  /** 从 app_config 加载 TTL 与强制确认开关，失败时保留默认值 */
+  async function loadLastConfirmedTtl() {
+    try {
+      const val = await getConfig('last_confirmed_ttl_minutes');
+      const minutes = parseInt(val, 10);
+      if (!Number.isNaN(minutes) && minutes > 0) {
+        lastConfirmedTtlMs = minutes * 60 * 1000;
+      }
+    } catch { /* 未设置则用默认值 */ }
+    try {
+      const val = await getConfig('force_confirm_corrections');
+      forceConfirmCorrections = val === '1' || val === 'true';
+    } catch { /* 未设置则默认关闭 */ }
+  }
   const awaitingFollowUp = ref(false);
   const pendingFollowUp = ref<{
     question: string;
@@ -77,6 +131,9 @@ export const useChatStore = defineStore('chat', () => {
    */
   async function loadHistory(limit = 50) {
     try {
+      // 先加载 "上一条" TTL 配置，供后续恢复时判定
+      await loadLastConfirmedTtl();
+
       const res = await getChatHistory(limit);
       console.log(`[ChatStore] Loaded ${res.data.length} messages from history`);
       const loaded: ChatMessage[] = [];
@@ -100,19 +157,38 @@ export const useChatStore = defineStore('chat', () => {
           id: genId(),
           role: m.role as 'user' | 'ai',
           content: m.content || '',
-          data: (persistedData.record || persistedData.correction || persistedData.followUp) as Record<string, unknown> | undefined,
+          data: (persistedData.record || persistedData.correction || persistedData.deletion || persistedData.followUp) as Record<string, unknown> | undefined,
           render,
           status,
           steps: persistedData._steps,
           createdAt: m.created_at,
         });
 
-        // 恢复最后确认的记录
-        if (persistedData.result?.success && persistedData.result.action === 'confirm_record') {
-          const recordData = persistedData.record;
-          if (recordData && 'id' in recordData) {
-            lastConfirmedRecord.value = recordData as unknown as AccountRecord;
-            agentEngine.setLastConfirmedRecordContext(recordData);
+        // 恢复"上一条"引用（含时间戳，供 TTL 过期判定）
+        if (persistedData.result?.success) {
+          const action = persistedData.result.action;
+          const savedAt = parseCreatedAt(m.created_at);
+          // 记账域：新建 / 修正 confirm
+          if (['confirm_record', 'confirm_correction'].includes(action || '')) {
+            const rec = (persistedData.record as unknown as AccountRecord) || null;
+            if (rec && 'id' in rec) {
+              setLastConfirmedRecord(rec, savedAt);
+              agentEngine.setLastConfirmedRecordContext(rec);
+            }
+          }
+          // 差旅域：新建 / 修正 / 发放（成功后视为"最近处理过的一条差旅"）
+          else if (['create_trip_record', 'confirm_trip_record', 'confirm_trip_correction', 'record_trip_payment', 'confirm_trip_payment'].includes(action || '')) {
+            const rec = (persistedData.record as unknown as TripRecord) || null;
+            if (rec && 'id' in rec) {
+              setLastConfirmedTrip(rec, savedAt);
+            }
+          }
+          // 删除：清空对应域引用
+          else if (action === 'confirm_delete') {
+            setLastConfirmedRecord(null);
+            agentEngine.setLastConfirmedRecordContext(null);
+          } else if (action === 'confirm_trip_delete') {
+            setLastConfirmedTrip(null);
           }
         }
       }
@@ -123,6 +199,10 @@ export const useChatStore = defineStore('chat', () => {
       if (llmMessages.length > 0) {
         agentEngine.restoreContext(llmMessages, 10);
       }
+
+      // 触发一次 TTL 检查：若恢复出的引用已过期，读取时会自动清空
+      getFreshLastConfirmedRecord();
+      getFreshLastConfirmedTrip();
 
       // 恢复当前 pending 状态（如果最后一条是 pending）
       const lastMsg = loaded[loaded.length - 1];
@@ -136,6 +216,14 @@ export const useChatStore = defineStore('chat', () => {
     } catch {
       // No history
     }
+  }
+
+  /** 解析持久化消息里 created_at（形如 "2026-07-08 15:00:00"），转为 epoch ms；解析失败返回 0（表示未知，将立即过期） */
+  function parseCreatedAt(createdAt?: string): number {
+    if (!createdAt) return 0;
+    // 本地时间字符串，直接给 Date 解析（跨平台 Safari/Chromium 都能识别 "YYYY-MM-DD HH:mm:ss" 变体，也支持 ISO）
+    const ts = new Date(createdAt.replace(' ', 'T')).getTime();
+    return Number.isFinite(ts) ? ts : 0;
   }
 
   /**
@@ -155,9 +243,15 @@ export const useChatStore = defineStore('chat', () => {
         persistedData._steps = msg.steps;
       }
 
-      // 存储记录数据（用于卡片展示）
+      // 存储记录数据（按 render 类型分派到对应字段，便于 deriveRenderType 恢复）
       if (msg.data) {
-        persistedData.record = msg.data as Record<string, unknown>;
+        if (msg.render === 'correctionCard') {
+          persistedData.correction = msg.data as PersistedChatData['correction'];
+        } else if (msg.render === 'deleteCard') {
+          persistedData.deletion = msg.data as PersistedChatData['deletion'];
+        } else {
+          persistedData.record = msg.data as Record<string, unknown>;
+        }
       }
 
       // 存储操作结果
@@ -242,7 +336,9 @@ export const useChatStore = defineStore('chat', () => {
           aiMsg.steps!.push(step);
         }
       }, {
-        lastConfirmedRecord: lastConfirmedRecord.value,
+        lastConfirmedRecord: getFreshLastConfirmedRecord(),
+        lastConfirmedTrip: getFreshLastConfirmedTrip(),
+        forceConfirmCorrections,
       });
 
       // 收集 LLM 消息
@@ -255,34 +351,79 @@ export const useChatStore = defineStore('chat', () => {
       aiMsg.render = result.toolResult?.render || 'text';
       aiMsg.data = result.toolResult?.data as Record<string, unknown>;
 
-      // 处理确认卡片
-      if (result.action && ['create_record', 'create_trip_record', 'record_trip_payment'].includes(result.action) && result.toolResult?.render === 'card') {
+      // 处理确认卡片（含 record_trip_payment 单命中路径 与 confirm_trip_payment_selected 候选选中后）
+      if (
+        result.action &&
+        ['create_record', 'create_trip_record', 'record_trip_payment', 'confirm_trip_payment_selected'].includes(result.action) &&
+        result.toolResult?.render === 'card'
+      ) {
         aiMsg.status = 'pending';
         pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
-        pendingAction.value = result.action;
+        // confirm_trip_payment_selected 走 record_trip_payment 一样的确认路径
+        pendingAction.value = result.action === 'confirm_trip_payment_selected' ? 'record_trip_payment' : result.action;
       }
 
-      // 处理候选记录选择
-      if (result.action === 'correct_record' && result.toolResult?.render === 'candidateSelect') {
+      // 处理候选记录选择（含记账 correct/delete、差旅 update/delete、差旅发放多命中）
+      if (
+        result.action &&
+        ['correct_record', 'delete_record', 'update_trip_record', 'delete_trip_record', 'record_trip_payment'].includes(result.action) &&
+        result.toolResult?.render === 'candidateSelect'
+      ) {
         aiMsg.status = 'pending';
         aiMsg.render = 'candidateSelect';
         pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
         pendingAction.value = 'select_record';
       }
 
-      // 处理高风险修正
-      if (result.action === 'correct_record' && result.toolResult?.render === 'correctionCard') {
+      // 处理高风险修正（记账 & 差旅共用 correctionCard 分支，通过 data.domain 区分）
+      if (
+        result.action &&
+        ['correct_record', 'update_trip_record'].includes(result.action) &&
+        result.toolResult?.render === 'correctionCard'
+      ) {
         aiMsg.status = 'pending';
         pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
-        pendingAction.value = 'confirm_correction';
+        pendingAction.value = result.action === 'update_trip_record' ? 'confirm_trip_correction' : 'confirm_correction';
       }
 
-      // 低风险修正
+      // 低风险修正（成功后更新 lastConfirmedRecord / lastConfirmedTrip）
       if (result.action === 'correct_record' && result.toolResult?.render === 'text') {
         const data = result.toolResult?.data as { updatedRecord?: AccountRecord } | undefined;
         if (data?.updatedRecord) {
-          lastConfirmedRecord.value = data.updatedRecord;
+          setLastConfirmedRecord(data.updatedRecord);
           agentEngine.setLastConfirmedRecordContext(data.updatedRecord);
+        }
+      }
+      if (result.action === 'update_trip_record' && result.toolResult?.render === 'text') {
+        const data = result.toolResult?.data as { updatedRecord?: TripRecord } | undefined;
+        if (data?.updatedRecord) {
+          setLastConfirmedTrip(data.updatedRecord);
+          recordUpdated.value++;
+        }
+      }
+
+      // 处理删除（记账）
+      if (result.action === 'delete_record') {
+        if (result.toolResult?.render === 'deleteCard') {
+          aiMsg.status = 'pending';
+          pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
+          pendingAction.value = 'confirm_delete';
+        } else if (result.toolResult?.render === 'text') {
+          setLastConfirmedRecord(null);
+          agentEngine.setLastConfirmedRecordContext(null);
+          recordUpdated.value++;
+        }
+      }
+
+      // 处理删除（差旅）
+      if (result.action === 'delete_trip_record') {
+        if (result.toolResult?.render === 'deleteCard') {
+          aiMsg.status = 'pending';
+          pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
+          pendingAction.value = 'confirm_trip_delete';
+        } else if (result.toolResult?.render === 'text') {
+          setLastConfirmedTrip(null);
+          recordUpdated.value++;
         }
       }
 
@@ -324,6 +465,10 @@ export const useChatStore = defineStore('chat', () => {
     if (!action) {
       if ('tripId' in record && 'matchType' in record) action = 'record_trip_payment';
       else if ('trip_id' in record && 'days' in record) action = 'create_trip_record';
+      // 差旅域优先判定（_domain='trip' 由 tool-registry 写入）
+      else if (record._domain === 'trip' && 'pendingDelete' in record) action = 'confirm_trip_delete';
+      else if (record._domain === 'trip' && 'pendingUpdate' in record) action = 'confirm_trip_correction';
+      else if ('pendingDelete' in record) action = 'confirm_delete';
       else if ('pendingUpdate' in record) action = 'confirm_correction';
       else action = 'create_record';
     }
@@ -344,17 +489,36 @@ export const useChatStore = defineStore('chat', () => {
     try {
       await agentEngine.loadContext();
 
-      const toolName = action === 'confirm_correction'
-        ? 'confirm_correction'
-        : action === 'record_trip_payment'
-          ? 'confirm_trip_payment'
-          : action.replace('create_', 'confirm_');
-      const toolArgs = action === 'confirm_correction'
-        ? (record.pendingUpdate as Record<string, unknown>)
-        : record;
+      // 工具名映射：确认动作 → 目标工具
+      const toolName = (() => {
+        switch (action) {
+          case 'confirm_correction': return 'confirm_correction';
+          case 'confirm_delete': return 'confirm_delete';
+          case 'confirm_trip_correction': return 'confirm_trip_correction';
+          case 'confirm_trip_delete': return 'confirm_trip_delete';
+          case 'record_trip_payment': return 'confirm_trip_payment';
+          default: return action.replace('create_', 'confirm_');
+        }
+      })();
+      // 参数映射：不同确认工具需要的入参形状不同
+      const toolArgs = (() => {
+        if (action === 'confirm_correction') return record.pendingUpdate as Record<string, unknown>;
+        if (action === 'confirm_delete') return record.pendingDelete as Record<string, unknown>;
+        if (action === 'confirm_trip_correction') {
+          const pu = record.pendingUpdate as { recordId: number; fields: Record<string, unknown> };
+          return { tripId: pu.recordId, fields: pu.fields };
+        }
+        if (action === 'confirm_trip_delete') {
+          const pd = record.pendingDelete as { recordId: number };
+          return { tripId: pd.recordId };
+        }
+        return record;
+      })();
       const toolResult = await toolRegistry.execute(toolName, toolArgs, {
         userMessage: msg.content,
-        lastConfirmedRecord: lastConfirmedRecord.value,
+        lastConfirmedRecord: getFreshLastConfirmedRecord(),
+        lastConfirmedTrip: getFreshLastConfirmedTrip(),
+        forceConfirmCorrections,
       });
 
       msg.content = toolResult.success
@@ -370,17 +534,34 @@ export const useChatStore = defineStore('chat', () => {
         { role: 'assistant', content: msg.content },
       ];
 
-      const confirmedData = toolResult.data as AccountRecord | { updatedRecord?: AccountRecord } | undefined;
+      const confirmedData = toolResult.data as (AccountRecord | TripRecord | { updatedRecord?: AccountRecord | TripRecord; deletedRecord?: Record<string, unknown>; domain?: string }) | undefined;
       if (toolResult.success && confirmedData) {
-        if ('updatedRecord' in confirmedData && confirmedData.updatedRecord) {
-          lastConfirmedRecord.value = confirmedData.updatedRecord;
-          agentEngine.setLastConfirmedRecordContext(confirmedData.updatedRecord);
+        // 差旅域优先分派（若 tool 返回带 domain='trip'）
+        const isTrip = (confirmedData as { domain?: string }).domain === 'trip' || action === 'confirm_trip_correction' || action === 'confirm_trip_delete';
+        if (action === 'confirm_trip_delete') {
+          setLastConfirmedTrip(null);
+          recordUpdated.value++;
+        } else if (action === 'confirm_delete') {
+          setLastConfirmedRecord(null);
+          agentEngine.setLastConfirmedRecordContext(null);
+          recordUpdated.value++;
+        } else if ('updatedRecord' in confirmedData && confirmedData.updatedRecord) {
+          if (isTrip) {
+            setLastConfirmedTrip(confirmedData.updatedRecord as TripRecord);
+          } else {
+            setLastConfirmedRecord(confirmedData.updatedRecord as AccountRecord);
+            agentEngine.setLastConfirmedRecordContext(confirmedData.updatedRecord);
+          }
+          recordUpdated.value++;
         } else if ('id' in confirmedData) {
-          lastConfirmedRecord.value = confirmedData as AccountRecord;
-          agentEngine.setLastConfirmedRecordContext(confirmedData);
+          if (isTrip) {
+            setLastConfirmedTrip(confirmedData as TripRecord);
+          } else {
+            setLastConfirmedRecord(confirmedData as AccountRecord);
+            agentEngine.setLastConfirmedRecordContext(confirmedData);
+          }
+          recordUpdated.value++;
         }
-        // 通知其他页面记录已更新
-        recordUpdated.value++;
       }
 
       if (originalParse.value) {
@@ -531,7 +712,8 @@ export const useChatStore = defineStore('chat', () => {
     pendingFollowUp.value = null;
     editingField.value = null;
     originalParse.value = null;
-    lastConfirmedRecord.value = null;
+    setLastConfirmedRecord(null);
+    setLastConfirmedTrip(null);
     sessionId = generateSessionId(); // 清空时生成新 session
   }
 
@@ -554,7 +736,9 @@ export const useChatStore = defineStore('chat', () => {
       await agentEngine.loadContext();
       const result = await toolRegistry.execute(name, args, {
         userMessage: '',
-        lastConfirmedRecord: lastConfirmedRecord.value,
+        lastConfirmedRecord: getFreshLastConfirmedRecord(),
+        lastConfirmedTrip: getFreshLastConfirmedTrip(),
+        forceConfirmCorrections,
       });
       return result;
     } catch (e) {
@@ -565,9 +749,13 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     messages, isOpen, sending, ocrLoading,
-    pendingRecord, pendingAction, lastConfirmedRecord, awaitingFollowUp, pendingFollowUp, editingField,
+    pendingRecord, pendingAction, lastConfirmedRecord, lastConfirmedTrip,
+    awaitingFollowUp, pendingFollowUp, editingField,
     recordUpdated,
     genId, loadHistory, sendMessage, confirmRecord, cancelRecord, callTool,
     startEditField, applyFieldEdit, answerFollowUp, clearMessages, clearHistory,
+    // 让 Settings 页保存后即时热更新（无需重启）
+    setForceConfirmCorrections: (v: boolean) => { forceConfirmCorrections = v; },
+    setLastConfirmedTtlMinutes: (m: number) => { if (m > 0) lastConfirmedTtlMs = m * 60 * 1000; },
   };
 });

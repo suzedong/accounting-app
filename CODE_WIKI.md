@@ -229,18 +229,30 @@ accounting-app/
 | `execute(name, args, context)` | 查工具 → Zod `safeParse` 校验 → 调 `execute` → 统一捕获异常包装为 `ToolResult` |
 | `getNames / has` | 辅助 |
 
-**注册的 20 个工具**（按域分组）：
+**注册的工具**（按域分组）：
 
 | 域 | 工具 |
 |---|---|
 | 记账（创建） | `create_record`、`confirm_record` |
-| 记账（修正） | `correct_record`（含 `resolveCorrectionTarget` + `classifyCorrectionRisk`，按 `LOW/HIGH_RISK_FIELDS` 风险分级，低风险直接执行 / 高风险生成 `CorrectionConfirmCard`）、`confirm_correction`、`update_record` |
+| 记账（修正） | `correct_record`（含 `resolveCorrectionTarget` + `classifyCorrectionRisk`，按 `LOW/HIGH_RISK_FIELDS` 风险分级，低风险直接执行 / 高风险生成 `CorrectionConfirmCard`）、`confirm_correction`、`update_record`、`select_record`（候选卡选中后由 UI 调用） |
+| 记账（删除） | `delete_record`（复用 `resolveCorrectionTarget` + `classifyDeleteRisk`：低风险直接删 / 高风险生成 `DeleteConfirmCard` / 多命中走 `CandidateSelectCard`，选中后 UI 携 `followUpAction=confirm_delete` 派发确认）、`confirm_delete` |
 | 查询/统计 | `query_records`、`render_stats`、`render_budget`、`query_collection` |
 | 偏好/系统 | `save_preference`、`update_prompt`、`clear_chat` |
 | 交互 | `ask_follow_up`、`reply_text` |
-| 差旅 | `create_trip_record`、`confirm_trip_record`、`record_trip_payment`（按金额匹配 trip/transport/full、end_date+10 天窗口）、`confirm_trip_payment`、`update_trip_record`、`delete_trip_record` |
+| 差旅（创建） | `create_trip_record`、`confirm_trip_record` |
+| 差旅（发放） | `record_trip_payment`（按金额匹配 trip/transport/full、end_date+10 天窗口；单命中直接生成发放卡，多命中返回 `candidateSelect`+`followUpAction=confirm_trip_payment_selected`）、`confirm_trip_payment_selected`（候选选中后由 UI 调用，生成待确认发放卡）、`confirm_trip_payment` |
+| 差旅（修正） | `update_trip_record`（含 `resolveTripTarget` + `classifyTripCorrectionRisk`，按 `LOW/HIGH_RISK_FIELDS_TRIP` 风险分级，低风险直接更新 / 高风险生成 `CorrectionConfirmCard[domain=trip]` / 多命中弹候选）、`confirm_trip_correction` |
+| 差旅（删除） | `delete_trip_record`（含 `classifyTripDeleteRisk`：低风险直接删除 / 高风险生成 `DeleteConfirmCard[domain=trip]` / 多命中弹候选）、`confirm_trip_delete`、`select_trip_record`（候选卡选中后由 UI 调用） |
 
-辅助：`normalizeRecordFields`、`buildCorrectionChanges`、`hasContextConflict`、`recordToCorrectionTarget`、常量 `FIELD_LABELS` / `RECENT_RECORD_KEYWORDS`。
+辅助：`normalizeRecordFields`、`buildCorrectionChanges`、`hasContextConflict`、`recordToCorrectionTarget`、`classifyDeleteRisk`、`resolveTripTarget`、`classifyTripCorrectionRisk`、`classifyTripDeleteRisk`、`buildTripCorrectionChanges`、`hasTripContextConflict`、`tripToCorrectionTarget`，常量 `FIELD_LABELS` / `FIELD_LABELS_TRIP` / `LOW_RISK_FIELDS_TRIP` / `HIGH_RISK_FIELDS_TRIP` / `RECENT_RECORD_KEYWORDS`。
+
+**候选卡闭环**：`correct_record` / `delete_record` / `update_trip_record` / `delete_trip_record` / `record_trip_payment` 命中多条时返回 `render:'candidateSelect'` + `data.followUpAction`（`confirm_correction` / `confirm_delete` / `confirm_trip_correction` / `confirm_trip_delete` / `confirm_trip_payment_selected`）+ 视情况附 `data.pendingFields` 或 `data.paymentAmount`。`ChatWidget.handleCandidateSelect` 依 `followUpAction` 就地把当前 AI 消息切换为 `correctionCard` / `deleteCard`（含 `domain='trip'` 分支）或发放确认卡，用户再点确认即触发对应 tool 落库。
+
+**风险分级复用**：`ToolRuntimeContext` 同时携带 `lastConfirmedRecord`（记账域）与 `lastConfirmedTrip`（差旅域），`chat` store 在成功创建 / 修正 / 发放 trip 后写回 `lastConfirmedTrip`，删除后清空。Rust `update_trip` 在 `days` 变化时自动重算 `trip_allowance = days*100 / transport_allowance = days*30 / total = days*130`，避免前端遗漏产生金额与天数不一致的记录。
+
+**跨会话"上一条"过期保护**：`chat` store 内部为 `lastConfirmedRecord` / `lastConfirmedTrip` 各维护 `savedAt` 时间戳，TTL 从 `app_config.last_confirmed_ttl_minutes` 读取（默认 30 分钟，可在 Settings › AI 服务 › "上一条"引用时效 中调整）。`loadHistory` 遍历持久化消息按成功的 `confirm_record` / `confirm_correction` / `confirm_trip_*` / `record_trip_payment` / `confirm_trip_payment` 类事件回填两个引用，并以消息 `created_at` 作为 `savedAt`。所有向工具透传的位置改用 `getFreshLastConfirmedRecord()` / `getFreshLastConfirmedTrip()`：读取时若超 TTL 会自动清空并返回 null，从而强制"上一条"关键词降级为"最新一条 + 高风险确认"或候选选择流程。
+
+**强制确认修正开关**：`app_config.force_confirm_corrections`（"1"/"0"，默认关闭）控制记账 / 差旅修正是否忽略低风险直更路径。开启后 `classifyCorrectionRisk` / `classifyTripCorrectionRisk` 会短路返回 `high`，任何 `correct_record` / `update_trip_record` 都会走 `CorrectionConfirmCard` 二次确认。Settings › AI 服务 › 强制确认修正 提供开关；保存后通过 `chatStore.setForceConfirmCorrections()` 热更新，无需重启。
 
 ### 5.3 Pinia Stores
 

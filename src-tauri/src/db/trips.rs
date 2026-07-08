@@ -144,6 +144,20 @@ pub fn update_trip(state: &Database, id: i64, input: TripUpdateInput) -> Result<
     add!("paid_transport_allowance", input.paid_transport_allowance.as_ref());
     add!("paid_date", input.paid_date.as_ref());
 
+    // days 变化时联动重算金额（当调用方未显式重写金额时统一维护）
+    // 规则同 create_trip：trip_allowance = days*100 / transport_allowance = days*30 / total = days*130
+    if let Some(days) = input.days {
+        let trip_allowance = days as f64 * 100.0;
+        let transport_allowance = days as f64 * 30.0;
+        let total = trip_allowance + transport_allowance;
+        sets.push("trip_allowance = ?".to_string());
+        params.push(Box::new(trip_allowance));
+        sets.push("transport_allowance = ?".to_string());
+        params.push(Box::new(transport_allowance));
+        sets.push("total = ?".to_string());
+        params.push(Box::new(total));
+    }
+
     if sets.is_empty() {
         return get_trip(state, id)?.ok_or_else(|| "Trip not found".to_string());
     }

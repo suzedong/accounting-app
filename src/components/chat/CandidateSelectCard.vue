@@ -1,6 +1,6 @@
 <template>
   <div class="candidate-select-card">
-    <div class="card-header">请选择要修改的记录</div>
+    <div class="card-header">{{ headerText }}</div>
 
     <div class="candidates-list">
       <div
@@ -9,17 +9,33 @@
         class="candidate-item"
         @click="handleSelect(candidate.id)"
       >
-        <div class="candidate-main">
-          <el-tag :type="candidate.type === '收入' ? 'success' : 'danger'" size="small">
-            {{ candidate.type || '支出' }}
-          </el-tag>
-          <span class="amount">¥{{ formatAmount(candidate.amount) }}</span>
-          <span class="category">{{ candidate.category || '其他' }}</span>
-        </div>
-        <div class="candidate-meta">
-          <span>{{ formatDateTime(candidate.datetime) }}</span>
-          <span class="note">{{ candidate.note || '无备注' }}</span>
-        </div>
+        <!-- 记账候选 -->
+        <template v-if="!isTrip">
+          <div class="candidate-main">
+            <el-tag :type="candidate.type === '收入' ? 'success' : 'danger'" size="small">
+              {{ candidate.type || '支出' }}
+            </el-tag>
+            <span class="amount">¥{{ formatAmount(candidate.amount) }}</span>
+            <span class="category">{{ candidate.category || '其他' }}</span>
+          </div>
+          <div class="candidate-meta">
+            <span>{{ formatDateTime(candidate.datetime) }}</span>
+            <span class="note">{{ candidate.note || '无备注' }}</span>
+          </div>
+        </template>
+        <!-- 差旅候选 -->
+        <template v-else>
+          <div class="candidate-main">
+            <el-tag size="small" type="info">{{ candidate.days || 0 }} 天</el-tag>
+            <span class="amount">¥{{ formatAmount(candidate.total) }}</span>
+            <span v-if="candidate._matchLabel" class="category">{{ candidate._matchLabel }}</span>
+            <span v-else class="category">{{ candidate.trip_id || '无编号' }}</span>
+          </div>
+          <div class="candidate-meta">
+            <span>{{ formatDateRange(candidate.start_date, candidate.end_date) }}</span>
+            <span class="note">{{ candidate.notes || candidate.trip_id || '' }}</span>
+          </div>
+        </template>
         <div class="candidate-select">
           <el-icon class="select-icon"><CircleCheck /></el-icon>
         </div>
@@ -35,24 +51,51 @@
 </template>
 
 <script setup lang="ts">
-interface CorrectionTarget {
+import { computed } from 'vue';
+import { CircleCheck, Close } from '@element-plus/icons-vue';
+
+interface CandidateItem {
   id: number;
-  datetime: string;
-  type: string;
-  category: string;
-  amount: number;
-  note: string;
+  // 记账
+  datetime?: string;
+  type?: string;
+  category?: string;
+  amount?: number;
+  note?: string;
+  // 差旅
+  trip_id?: string;
+  start_date?: string;
+  end_date?: string;
+  days?: number;
+  total?: number;
+  notes?: string;
+  _matchLabel?: string;
+  _matchType?: string;
+  _domain?: string;
 }
 
-defineProps<{
-  candidates: CorrectionTarget[];
+const props = defineProps<{
+  candidates: CandidateItem[];
   readonly?: boolean;
+  /** 'record' 或 'trip'；未传时按首个候选的字段特征推断 */
+  domain?: 'record' | 'trip';
 }>();
 
 const emit = defineEmits<{
   select: [recordId: number];
   cancel: [];
 }>();
+
+const isTrip = computed(() => {
+  if (props.domain === 'trip') return true;
+  if (props.domain === 'record') return false;
+  const first = props.candidates[0];
+  if (!first) return false;
+  if (first._domain === 'trip') return true;
+  return 'days' in first && ('trip_id' in first || 'total' in first);
+});
+
+const headerText = computed(() => isTrip.value ? '请选择目标出差记录' : '请选择要修改的记录');
 
 function handleSelect(recordId: number) {
   emit('select', recordId);
@@ -66,6 +109,13 @@ function formatAmount(val: unknown): string {
 function formatDateTime(val: unknown): string {
   if (typeof val !== 'string' || !val) return '';
   return val.length > 19 ? val.substring(0, 19) : val;
+}
+
+function formatDateRange(start?: string, end?: string): string {
+  const s = (start || '').substring(0, 10);
+  const e = (end || '').substring(0, 10);
+  if (!s && !e) return '';
+  return `${s} ~ ${e}`;
 }
 </script>
 

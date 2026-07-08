@@ -41,6 +41,11 @@ export interface PersistedChatData {
     changes?: Array<{ field: string; label: string; oldValue: unknown; newValue: unknown }>;
     reason?: string;
   };
+  /** 删除相关数据（高风险删除待确认卡片） */
+  deletion?: {
+    targetRecord?: Record<string, unknown>;
+    reason?: string;
+  };
   /** 追问相关数据 */
   followUp?: {
     question: string;

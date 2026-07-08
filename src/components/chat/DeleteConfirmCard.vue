@@ -1,9 +1,8 @@
 <template>
-  <div class="correction-card">
-    <div class="card-header">{{ readonly ? '已保存' : '请确认修改（尚未保存）' }}</div>
+  <div class="delete-card">
+    <div class="card-header">{{ readonly ? '已删除' : '请确认删除（尚未执行）' }}</div>
 
     <div class="section-title">目标记录</div>
-    <!-- 记账记录：展示时间/类型/金额/分类/账户/支付方式 -->
     <div v-if="!isTrip" class="record-summary">
       <div>{{ formatDateTime(targetRecord.datetime) }}</div>
       <div>
@@ -16,7 +15,6 @@
       <div>账户：{{ targetRecord.account || '个人' }}</div>
       <div>支付方式：{{ targetRecord.payment_method || '未指定' }}</div>
     </div>
-    <!-- 差旅记录：展示 trip_id / 起止日期 / 天数 / 合计 / 备注 -->
     <div v-else class="record-summary">
       <div>出差编号：{{ targetRecord.trip_id || '（未填）' }}</div>
       <div>{{ (targetRecord.start_date as string || '').substring(0, 10) }} ~ {{ (targetRecord.end_date as string || '').substring(0, 10) }}</div>
@@ -27,49 +25,30 @@
       <div>备注：{{ targetRecord.notes || '无备注' }}</div>
     </div>
 
-    <div class="section-title">修改内容</div>
-    <div class="changes-list">
-      <div v-for="change in changes" :key="change.field" class="change-row">
-        <span class="change-label">{{ change.label }}</span>
-        <span class="old-value">{{ formatValue(change.oldValue) }}</span>
-        <span class="arrow">→</span>
-        <span class="new-value">{{ formatValue(change.newValue) }}</span>
-      </div>
-    </div>
-
     <div v-if="reason" class="reason">原因：{{ reason }}</div>
-    <div v-if="!readonly" class="save-hint">点击"确认修改"后才会更新账本</div>
+    <div v-if="!readonly" class="save-hint">删除后无法恢复，点击"确认删除"才会从账本移除</div>
 
     <div class="card-actions" v-if="!readonly">
-      <el-button size="small" type="success" @click="$emit('confirm')">
-        <el-icon><Check /></el-icon> 确认修改
+      <el-button size="small" type="danger" @click="$emit('confirm')">
+        <el-icon><Delete /></el-icon> 确认删除
       </el-button>
       <el-button size="small" type="info" @click="$emit('cancel')">
         <el-icon><Close /></el-icon> 取消
       </el-button>
     </div>
-    <div v-else class="status-text" style="color: #909399; font-size: 12px; margin-top: 8px;">
-      已过期
-    </div>
+    <div v-else class="status-text">已完成</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-
-interface CorrectionChange {
-  field: string;
-  label: string;
-  oldValue: unknown;
-  newValue: unknown;
-}
+import { Delete, Close } from '@element-plus/icons-vue';
 
 const props = defineProps<{
   targetRecord: Record<string, unknown>;
-  changes: CorrectionChange[];
   reason?: string;
   readonly?: boolean;
-  /** 域：'record'（记账，默认）或 'trip'（差旅）；若未显式传入，则根据 targetRecord._domain 或字段特征推断 */
+  /** 'record' 或 'trip'；未传时按数据特征推断 */
   domain?: 'record' | 'trip';
 }>();
 
@@ -78,7 +57,6 @@ defineEmits<{
   cancel: [];
 }>();
 
-// 差旅域判断：显式 prop > 数据中的 _domain 标记 > 字段特征（含 days & trip_id）
 const isTrip = computed(() => {
   if (props.domain === 'trip') return true;
   if (props.domain === 'record') return false;
@@ -96,26 +74,21 @@ function formatDateTime(val: unknown): string {
   if (typeof val !== 'string' || !val) return '';
   return val.length > 19 ? val.substring(0, 19) : val;
 }
-
-function formatValue(val: unknown): string {
-  if (val === undefined || val === null || val === '') return '空';
-  if (typeof val === 'number') return val.toFixed(2).replace(/\.00$/, '');
-  return String(val);
-}
 </script>
 
 <style scoped>
-.correction-card {
+.delete-card {
   background: white;
   border-radius: 8px;
   padding: 12px;
   min-width: 280px;
+  border: 1px solid #fecaca;
 }
 
 .card-header {
   font-weight: 600;
   margin-bottom: 10px;
-  color: #333;
+  color: #dc2626;
   font-size: 0.95em;
 }
 
@@ -127,7 +100,7 @@ function formatValue(val: unknown): string {
 }
 
 .record-summary {
-  background: #f8fafc;
+  background: #fef2f2;
   border-radius: 6px;
   padding: 8px;
   display: grid;
@@ -142,37 +115,6 @@ function formatValue(val: unknown): string {
   color: #ff4d4f;
 }
 
-.changes-list {
-  display: grid;
-  gap: 6px;
-}
-
-.change-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.change-label {
-  min-width: 56px;
-  color: #6b7280;
-}
-
-.old-value {
-  color: #909399;
-  text-decoration: line-through;
-}
-
-.arrow {
-  color: #c0c4cc;
-}
-
-.new-value {
-  color: #67c23a;
-  font-weight: 600;
-}
-
 .reason {
   margin-top: 10px;
   padding: 6px 8px;
@@ -185,14 +127,20 @@ function formatValue(val: unknown): string {
 .save-hint {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid #f0f0f0;
-  color: #909399;
+  border-top: 1px solid #fee2e2;
+  color: #dc2626;
   font-size: 12px;
 }
 
 .card-actions {
   display: flex;
   gap: 6px;
+  margin-top: 8px;
+}
+
+.status-text {
+  color: #909399;
+  font-size: 12px;
   margin-top: 8px;
 }
 </style>

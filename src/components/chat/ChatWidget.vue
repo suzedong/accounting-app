@@ -91,8 +91,8 @@
                       <el-icon><CircleClose /></el-icon> 已取消
                     </div>
 
-                    <!-- Confirmation card -->
-                    <div v-if="msg.data && msg.render !== 'correctionCard'" class="thinking-section">
+                    <!-- Confirmation card (仅用于普通新建/差旅确认；correctionCard/deleteCard/candidateSelect/followUp 各自渲染) -->
+                    <div v-if="msg.data && !['correctionCard', 'deleteCard', 'candidateSelect', 'followUp'].includes(msg.render || '')" class="thinking-section">
                       <div class="thinking-header" @click="toggleCardExpand(msg.id)">
                         <el-icon class="thinking-chevron" :class="{ rotated: cardExpanded[msg.id] !== false }">
                           <ArrowDown />
@@ -119,6 +119,18 @@
                       :target-record="(msg.data as Record<string, unknown>).targetRecord as Record<string, unknown> || {}"
                       :changes="(msg.data as Record<string, unknown>).changes as Array<{ field: string; label: string; oldValue: unknown; newValue: unknown }> || []"
                       :reason="(msg.data as Record<string, unknown>).reason as string || ''"
+                      :domain="((msg.data as Record<string, unknown>).domain as 'record' | 'trip') || undefined"
+                      @confirm="handleCardAction(msg, 'confirm')"
+                      @cancel="handleCardAction(msg, 'cancel')"
+                    />
+
+                    <!-- Delete confirmation card -->
+                    <DeleteConfirmCard
+                      v-if="msg.data && msg.render === 'deleteCard'"
+                      :readonly="msg.status !== 'pending'"
+                      :target-record="(msg.data as Record<string, unknown>).targetRecord as Record<string, unknown> || {}"
+                      :reason="(msg.data as Record<string, unknown>).reason as string || ''"
+                      :domain="((msg.data as Record<string, unknown>).domain as 'record' | 'trip') || undefined"
                       @confirm="handleCardAction(msg, 'confirm')"
                       @cancel="handleCardAction(msg, 'cancel')"
                     />
@@ -128,6 +140,7 @@
                       v-if="msg.render === 'candidateSelect' && msg.data"
                       :readonly="msg.status !== 'pending'"
                       :candidates="(msg.data as Record<string, unknown>).candidates as Array<{ id: number; datetime: string; type: string; category: string; amount: number; note: string }> || []"
+                      :domain="((msg.data as Record<string, unknown>).domain as 'record' | 'trip') || undefined"
                       @select="handleCandidateSelect(msg, $event)"
                       @cancel="handleCardAction(msg, 'cancel')"
                     />
@@ -187,6 +200,7 @@ import { storeToRefs } from 'pinia';
 import ChatInput from './ChatInput.vue';
 import ConfirmCard from './ConfirmCard.vue';
 import CorrectionConfirmCard from './CorrectionConfirmCard.vue';
+import DeleteConfirmCard from './DeleteConfirmCard.vue';
 import FollowUpCard from './FollowUpCard.vue';
 import CandidateSelectCard from './CandidateSelectCard.vue';
 import StepList from './StepList.vue';
@@ -340,6 +354,137 @@ async function handleCardAction(msg: typeof messages.value[0], action: 'confirm'
 
 async function handleCandidateSelect(msg: typeof messages.value[0], recordId: number) {
   try {
+    // 候选卡数据中带有 followUpAction（confirm_correction / confirm_delete），
+    // 并把 pendingFields（修正字段）传给下一步；这样就完成"选择目标 → 二次确认"的闭环。
+    const data = (msg.data || {}) as { followUpAction?: string; pendingFields?: Record<string, unknown> };
+    const followUp = data.followUpAction;
+
+    if (followUp === 'confirm_correction') {
+      // 展开为高风险修正卡：读取目标记录 + 计算 changes + 交给 CorrectionConfirmCard 确认
+      const target = await chat.callTool('select_record', { recordId });
+      if (!target?.success) {
+        msg.content = target?.error || '所选记录不存在';
+        msg.render = 'text';
+        return;
+      }
+      const selected = (target.data as { selectedRecord?: Record<string, unknown> })?.selectedRecord;
+      if (!selected) {
+        msg.content = '所选记录不存在';
+        msg.render = 'text';
+        return;
+      }
+      const changes = buildChangesForCandidate(selected, data.pendingFields || {});
+      // 切换本条 AI 消息为高风险修正卡
+      msg.render = 'correctionCard';
+      msg.status = 'pending';
+      msg.data = {
+        targetRecord: selected,
+        changes,
+        reason: '已从候选中选择目标，请确认修改',
+        pendingUpdate: { recordId, fields: data.pendingFields || {} },
+      };
+      chat.pendingRecord = msg.data;
+      chat.pendingAction = 'confirm_correction';
+      return;
+    }
+
+    if (followUp === 'confirm_delete') {
+      const target = await chat.callTool('select_record', { recordId });
+      if (!target?.success) {
+        msg.content = target?.error || '所选记录不存在';
+        msg.render = 'text';
+        return;
+      }
+      const selected = (target.data as { selectedRecord?: Record<string, unknown> })?.selectedRecord;
+      if (!selected) {
+        msg.content = '所选记录不存在';
+        msg.render = 'text';
+        return;
+      }
+      // 切换本条 AI 消息为删除确认卡
+      msg.render = 'deleteCard';
+      msg.status = 'pending';
+      msg.data = {
+        targetRecord: selected,
+        risk: 'high',
+        reason: '已从候选中选择目标，请确认删除',
+        pendingDelete: { recordId },
+      };
+      chat.pendingRecord = msg.data;
+      chat.pendingAction = 'confirm_delete';
+      return;
+    }
+
+    // ---------------- 差旅域 ----------------
+    // 差旅修正：candidate → correctionCard(domain=trip) → 用户确认 → confirm_trip_correction
+    if (followUp === 'confirm_trip_correction') {
+      const target = await chat.callTool('select_trip_record', { tripId: recordId });
+      const selected = (target?.data as { selectedTrip?: Record<string, unknown> })?.selectedTrip;
+      if (!target?.success || !selected) {
+        msg.content = target?.error || '所选出差记录不存在';
+        msg.render = 'text';
+        return;
+      }
+      const changes = buildTripChangesForCandidate(selected, data.pendingFields || {});
+      msg.render = 'correctionCard';
+      msg.status = 'pending';
+      msg.data = {
+        targetRecord: selected,
+        changes,
+        reason: '已从候选中选择目标，请确认修改',
+        pendingUpdate: { recordId, fields: data.pendingFields || {} },
+        domain: 'trip',
+      };
+      chat.pendingRecord = msg.data;
+      chat.pendingAction = 'confirm_trip_correction';
+      return;
+    }
+
+    // 差旅删除：candidate → deleteCard(domain=trip) → 用户确认 → confirm_trip_delete
+    if (followUp === 'confirm_trip_delete') {
+      const target = await chat.callTool('select_trip_record', { tripId: recordId });
+      const selected = (target?.data as { selectedTrip?: Record<string, unknown> })?.selectedTrip;
+      if (!target?.success || !selected) {
+        msg.content = target?.error || '所选出差记录不存在';
+        msg.render = 'text';
+        return;
+      }
+      msg.render = 'deleteCard';
+      msg.status = 'pending';
+      msg.data = {
+        targetRecord: selected,
+        risk: 'high',
+        reason: '已从候选中选择目标，请确认删除',
+        pendingDelete: { recordId },
+        domain: 'trip',
+      };
+      chat.pendingRecord = msg.data;
+      chat.pendingAction = 'confirm_trip_delete';
+      return;
+    }
+
+    // 差旅发放：candidate → 调 confirm_trip_payment_selected 组装发放卡 → 用户确认 → confirm_trip_payment
+    if (followUp === 'confirm_trip_payment_selected') {
+      const pd = data as { paymentAmount?: number; paymentDatetime?: string };
+      const result = await chat.callTool('confirm_trip_payment_selected', {
+        tripId: recordId,
+        amount: pd.paymentAmount,
+        datetime: pd.paymentDatetime,
+      });
+      if (!result?.success) {
+        msg.content = result?.error || '生成发放卡失败';
+        msg.render = 'text';
+        return;
+      }
+      msg.render = 'card';
+      msg.status = 'pending';
+      msg.data = result.data as Record<string, unknown>;
+      chat.pendingRecord = msg.data;
+      chat.pendingAction = 'record_trip_payment';
+      return;
+    }
+
+    // 兜底：老逻辑（仅展示已选择记录）
     const result = await chat.callTool('select_record', { recordId });
     if (result?.success) {
       msg.content = result.message || '已选择记录';
@@ -354,6 +499,45 @@ async function handleCandidateSelect(msg: typeof messages.value[0], recordId: nu
     msg.content = e instanceof Error ? e.message : '选择失败';
     msg.render = 'text';
   }
+}
+
+// 计算候选记录 → pending 字段之间的差异（仅用于 UI 展示）
+function buildChangesForCandidate(
+  target: Record<string, unknown>,
+  fields: Record<string, unknown>,
+): Array<{ field: string; label: string; oldValue: unknown; newValue: unknown }> {
+  const FIELD_LABELS: Record<string, string> = {
+    datetime: '时间', type: '类型', category: '分类', amount: '金额',
+    account: '账户', note: '备注', payment_method: '支付方式', payment: '支付方式',
+  };
+  return Object.entries(fields)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .filter(([k, v]) => String(target[k] ?? '') !== String(v ?? ''))
+    .map(([k, v]) => ({
+      field: k,
+      label: FIELD_LABELS[k] || k,
+      oldValue: target[k] ?? '',
+      newValue: v,
+    }));
+}
+
+// 差旅版本的候选 → pendingFields diff
+function buildTripChangesForCandidate(
+  target: Record<string, unknown>,
+  fields: Record<string, unknown>,
+): Array<{ field: string; label: string; oldValue: unknown; newValue: unknown }> {
+  const LABELS: Record<string, string> = {
+    trip_id: '出差编号', start_date: '开始日期', end_date: '结束日期', days: '天数', notes: '备注',
+  };
+  return Object.entries(fields)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .filter(([k, v]) => String(target[k] ?? '') !== String(v ?? ''))
+    .map(([k, v]) => ({
+      field: k,
+      label: LABELS[k] || k,
+      oldValue: target[k] ?? '',
+      newValue: v,
+    }));
 }
 
 async function handleCardSave(msg: typeof messages.value[0], editedFields: Record<string, unknown>) {

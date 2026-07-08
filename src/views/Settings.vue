@@ -75,6 +75,42 @@
         </div>
       </div>
     </el-card>
+
+    <!-- 上一条 有效时长 -->
+    <el-card class="section">
+      <template #header>"上一条"引用时效</template>
+      <div style="max-width: 700px">
+        <p class="prompt-hint">
+          聊天中说"上一条改一下 / 删掉上一条"时，AI 会优先命中最近一次成功创建/修正的记账或差旅记录。
+          为避免应用重启后仍把很久以前的记录当作"上一条"误操作，设置一个有效时长；超时后再说"上一条"会触发候选选择或高风险确认。
+        </p>
+        <el-form label-width="140px" size="small">
+          <el-form-item label="有效时长（分钟）">
+            <el-input-number v-model="lastConfirmedTtlMinutes" :min="1" :max="1440" />
+            <el-button type="primary" style="margin-left: 8px" @click="saveLastConfirmedTtl" :loading="savingTtl">保存</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
+    </el-card>
+
+    <!-- 强制确认修正 -->
+    <el-card class="section">
+      <template #header>强制确认修正</template>
+      <div style="max-width: 700px">
+        <p class="prompt-hint">
+          开启后，所有对已有记录的修改（无论是修改备注这类低风险字段，还是金额/时间/类型这类高风险字段）都会先弹出"请确认修改"卡片，用户点击"确认"后才落库。
+          关闭时按原风险分级策略执行（低风险直接改，高风险才确认）。
+        </p>
+        <el-form label-width="140px" size="small">
+          <el-form-item label="启用">
+            <el-switch v-model="forceConfirmCorrections" @change="saveForceConfirmCorrections" :loading="savingForceConfirm" />
+            <span class="hint" style="margin-left: 8px">
+              {{ forceConfirmCorrections ? '已开启：所有修正都需要确认' : '已关闭：按风险分级判定' }}
+            </span>
+          </el-form-item>
+        </el-form>
+      </div>
+    </el-card>
       </el-tab-pane>
 
       <el-tab-pane label="数据同步" name="sync">
@@ -396,8 +432,9 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { Loading, Download, InfoFilled } from '@element-plus/icons-vue';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { getAllConfig, setConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, syncFull, syncPush, syncPull } from '@/api/tauri';
+import { getAllConfig, setConfig, getConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, syncFull, syncPush, syncPull } from '@/api/tauri';
 import { agentEngine } from '@/ai/agent-engine';
+import { useChatStore } from '@/stores/chat';
 import type { AiService } from '@/types';
 
 // Types for OCR
@@ -467,6 +504,13 @@ const syncTerminalLines = ref<string[]>([]);
 const syncTerminalBodyRef = ref<HTMLElement | null>(null);
 
 const budgetMonthly = ref(3500);
+const lastConfirmedTtlMinutes = ref(30);
+const savingTtl = ref(false);
+const forceConfirmCorrections = ref(false);
+const savingForceConfirm = ref(false);
+
+// Chat store：Settings 保存后热更新配置，避免重启才能生效
+const chatStore = useChatStore();
 
 // Platform detection
 const isWindows = navigator.platform.includes('Win');
@@ -598,6 +642,19 @@ onMounted(async () => {
     syncForm.value.nocobase_token = configResult.value.nocobase_token || '';
     budgetMonthly.value = configResult.value.budget_monthly;
   }
+
+  // "上一条"引用有效时长（app_config.last_confirmed_ttl_minutes，未设置时默认 30）
+  try {
+    const val = await getConfig('last_confirmed_ttl_minutes');
+    const minutes = parseInt(val, 10);
+    if (!Number.isNaN(minutes) && minutes > 0) lastConfirmedTtlMinutes.value = minutes;
+  } catch { /* 未设置则用默认值 30 */ }
+
+  // 强制确认修正（app_config.force_confirm_corrections，未设置时默认关闭）
+  try {
+    const val = await getConfig('force_confirm_corrections');
+    forceConfirmCorrections.value = val === '1' || val === 'true';
+  } catch { /* 未设置则默认关闭 */ }
 
   // Process OCR
   if (ocrResult.status === 'fulfilled') {
@@ -756,6 +813,34 @@ async function saveBudget() {
     ElMessage.success('预算已保存');
   } finally {
     saving.value = false;
+  }
+}
+
+async function saveLastConfirmedTtl() {
+  savingTtl.value = true;
+  try {
+    await setConfig('last_confirmed_ttl_minutes', String(lastConfirmedTtlMinutes.value));
+    // 热更新到 chat store，无需重启
+    chatStore.setLastConfirmedTtlMinutes(lastConfirmedTtlMinutes.value);
+    ElMessage.success('"上一条"有效时长已保存并生效');
+  } finally {
+    savingTtl.value = false;
+  }
+}
+
+async function saveForceConfirmCorrections(v: boolean) {
+  savingForceConfirm.value = true;
+  try {
+    await setConfig('force_confirm_corrections', v ? '1' : '0');
+    // 热更新到 chat store，立即对后续对话生效
+    chatStore.setForceConfirmCorrections(v);
+    ElMessage.success(v ? '已开启强制确认修正' : '已关闭强制确认修正');
+  } catch (e) {
+    // 保存失败时回滚 UI 状态
+    forceConfirmCorrections.value = !v;
+    ElMessage.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    savingForceConfirm.value = false;
   }
 }
 

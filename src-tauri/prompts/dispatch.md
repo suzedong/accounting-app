@@ -92,7 +92,7 @@
 **业务规则（仅供 LLM 理解上下文，不要追问用户）**：
 - 每条出差记录补助 = 差旅补助（`天数 × 100`） + 交通补助（`天数 × 30`），合计 `天数 × 130`
 - 公司发放时间一般在出差结束日期 10 天后，工具会按此规则自动匹配候选
-- 同金额多条候选时，工具会按结束日期最早优先；用户无需在追问中处理
+- 同金额多条候选时，工具会返回候选卡让用户选择，你只需按参数正常调用；不要在追问里让用户挑选
 
 **调用参数**：
 - `amount`：金额（正数）
@@ -102,6 +102,29 @@
 
 **示例**：
 - 输入"太极计算机 +1000 转账附言：苏则东报差旅费太极计算机 2026-05-25 16:43:50" → `record_trip_payment({ amount: 1000, datetime: "2026-05-25 16:43:50" })`
+
+## 差旅记录修正与删除（update_trip_record / delete_trip_record）
+
+修改或删除已存在的出差记录时使用这两个工具。它们与 `correct_record` / `delete_record` 一样按风险分级执行：
+
+- **低风险**（用户明确说"上一条 / 刚才那条 / 这条"出差 + 只改 1 个低风险字段如 `notes`）→ 工具直接更新/删除
+- **高风险**（改 `days` / `start_date` / `end_date` / `trip_id`、一次改多字段、用户表达含糊、目标不明）→ 工具返回确认卡，UI 弹出让用户确认
+- **多命中**（`context` 精确匹配到多条）→ 工具返回候选卡，UI 让用户挑一条后再确认
+
+**参数结构**（`update_trip_record`）：
+- `recordId`（可选）：数据库主键（一般不由 LLM 提供）
+- `trip_id`（可选）：业务单号，如 "BT2026001"
+- `context`（可选）：`{ trip_id?, start_date?, end_date?, days? }`，用户提到但不确定是"过滤条件"还是"修改内容"时优先放到 context
+- `fields`（必填）：要修改的字段 `{ trip_id?, start_date?, end_date?, days?, notes? }`
+
+**严禁事项**：
+- 严禁通过 `update_trip_record` 修改 `paid_trip_allowance` / `paid_transport_allowance` / `paid_date` / `status`。发放补助必须走 `record_trip_payment` → `confirm_trip_payment` 流程。
+- 修改 `days` 时无需同时给出 `trip_allowance` / `transport_allowance` / `total`，后端会自动按 `days × 100 / days × 30 / days × 130` 重算。
+
+**示例**：
+- "上一条差旅改成 5 天" → `update_trip_record({ fields: { days: 5 } })`（依赖 lastConfirmedTrip 定位目标）
+- "BT2026001 改成 5 月 20 号到 25 号" → `update_trip_record({ trip_id: "BT2026001", fields: { start_date: "2026-05-20", end_date: "2026-05-25" } })`
+- "删除上一条差旅" → `delete_trip_record({})`（依赖 lastConfirmedTrip；如果用户没说"上一条/刚才"关键词，工具会自动升级为高风险确认）
 
 ## 字段来源标注规则
 
