@@ -123,6 +123,15 @@
                       @cancel="handleCardAction(msg, 'cancel')"
                     />
 
+                    <!-- Candidate select card -->
+                    <CandidateSelectCard
+                      v-if="msg.render === 'candidateSelect' && msg.data"
+                      :readonly="msg.status !== 'pending'"
+                      :candidates="(msg.data as Record<string, unknown>).candidates as Array<{ id: number; datetime: string; type: string; category: string; amount: number; note: string }> || []"
+                      @select="handleCandidateSelect(msg, $event)"
+                      @cancel="handleCardAction(msg, 'cancel')"
+                    />
+
                     <!-- Follow-up card -->
                     <FollowUpCard
                       v-if="msg.render === 'followUp' && msg.data"
@@ -179,6 +188,7 @@ import ChatInput from './ChatInput.vue';
 import ConfirmCard from './ConfirmCard.vue';
 import CorrectionConfirmCard from './CorrectionConfirmCard.vue';
 import FollowUpCard from './FollowUpCard.vue';
+import CandidateSelectCard from './CandidateSelectCard.vue';
 import StepList from './StepList.vue';
 import SettingsPanel from './SettingsPanel.vue';
 import { useChatStore } from '@/stores/chat';
@@ -325,6 +335,24 @@ async function handleCardAction(msg: typeof messages.value[0], action: 'confirm'
     await chat.confirmRecord(msg);
   } else if (action === 'cancel') {
     await chat.cancelRecord(msg);
+  }
+}
+
+async function handleCandidateSelect(msg: typeof messages.value[0], recordId: number) {
+  try {
+    const result = await chat.callTool('select_record', { recordId });
+    if (result?.success) {
+      msg.content = result.message || '已选择记录';
+      msg.render = 'text';
+      msg.status = 'success';
+      msg.data = result.data as Record<string, unknown> | undefined;
+    } else {
+      msg.content = result?.error || '选择失败';
+      msg.render = 'text';
+    }
+  } catch (e) {
+    msg.content = e instanceof Error ? e.message : '选择失败';
+    msg.render = 'text';
   }
 }
 

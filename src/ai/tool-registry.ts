@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  createRecord, updateRecord, getRecords, getStatsSummary, getStatsByCategory,
+  createRecord, updateRecord, getRecords, getRecord, getStatsSummary, getStatsByCategory,
   getBudgetAnalysis, updateSystemPrompt, updatePreference, clearChatHistory,
   createTrip, updateTrip, deleteTrip, getTrips, getRecords as getRecordsApi,
 } from '@/api/tauri';
@@ -430,27 +430,39 @@ function classifyCorrectionRisk(
 async function resolveCorrectionTarget(
   args: CorrectRecordArgs,
   context?: ToolRuntimeContext,
-): Promise<{ record: AccountRecord | null; source: 'lastConfirmed' | 'latest' | 'context' | 'none' }> {
+): Promise<{ 
+  record: AccountRecord | null; 
+  candidates: AccountRecord[]; 
+  source: 'lastConfirmed' | 'latest' | 'context' | 'none' | 'multiple'; 
+}> {
   if (context?.lastConfirmedRecord) {
-    return { record: context.lastConfirmedRecord, source: 'lastConfirmed' };
+    return { record: context.lastConfirmedRecord, candidates: [], source: 'lastConfirmed' };
   }
 
   if (context?.userMessage && hasRecentRecordReference(context.userMessage)) {
     const records = await getRecords({ page: 1, pageSize: 1, sort: 'datetime_desc' });
-    if (records.data.length > 0) return { record: records.data[0], source: 'latest' };
+    if (records.data.length > 0) return { record: records.data[0], candidates: [], source: 'latest' };
   }
 
   if (args.context) {
     const records = await getRecords({ page: 1, pageSize: 100, sort: 'datetime_desc' });
+    const matches: AccountRecord[] = [];
+
     for (const record of records.data) {
       if (args.context.amount !== undefined && Math.abs(record.amount - args.context.amount) > 0.01) continue;
       if (args.context.note && !(record.note || '').includes(args.context.note)) continue;
       if (args.context.datetime && record.datetime !== args.context.datetime) continue;
-      return { record, source: 'context' };
+      matches.push(record);
+    }
+
+    if (matches.length === 1) {
+      return { record: matches[0], candidates: [], source: 'context' };
+    } else if (matches.length > 1) {
+      return { record: null, candidates: matches, source: 'multiple' };
     }
   }
 
-  return { record: null, source: 'none' };
+  return { record: null, candidates: [], source: 'none' };
 }
 
 // ============================================================
@@ -520,7 +532,20 @@ toolRegistry.register<CorrectRecordArgs>({
       return { success: false, error: '缺少修正信息', render: 'text' };
     }
 
-    const { record: target, source } = await resolveCorrectionTarget(args, context);
+    const { record: target, candidates, source } = await resolveCorrectionTarget(args, context);
+
+    if (source === 'multiple') {
+      return {
+        success: true,
+        render: 'candidateSelect',
+        message: '找到多条匹配记录，请选择要修改的一条：',
+        data: {
+          candidates: candidates.map(recordToCorrectionTarget),
+          pendingFields: fields,
+        },
+      };
+    }
+
     if (!target) return { success: false, error: '未找到可修正的记录，请说明要修改哪一条。', render: 'text' };
 
     const changes = buildCorrectionChanges(target, fields);
@@ -555,6 +580,31 @@ toolRegistry.register<CorrectRecordArgs>({
       updatedRecord: updated as unknown as Record<string, unknown>,
     };
     return { success: true, render: 'text', message: '已修正记录', data };
+  },
+});
+
+// --- select_record ---
+const SelectRecordSchema = z.object({
+  recordId: z.number().describe('要选择的记录 ID'),
+});
+type SelectRecordArgs = z.infer<typeof SelectRecordSchema>;
+
+toolRegistry.register<SelectRecordArgs>({
+  name: 'select_record',
+  description: '从候选记录中选择目标记录（仅由候选选择卡调用）',
+  schema: SelectRecordSchema,
+  execute: async (args) => {
+    try {
+      const record = await getRecord(args.recordId);
+      return {
+        success: true,
+        render: 'text',
+        message: `已选择：${record.type} ¥${record.amount.toFixed(2)} - ${record.category}`,
+        data: { selectedRecord: record },
+      };
+    } catch {
+      return { success: false, error: '所选记录不存在', render: 'text' };
+    }
   },
 });
 

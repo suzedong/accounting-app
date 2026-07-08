@@ -6,6 +6,9 @@
 
 ## 目录
 
+> **业务需求与设计蓝图**：[docs/01-项目概览.md](docs/01-项目概览.md)
+> **设计决策与重构记录**：[docs/03-活跃设计文档.md](docs/03-活跃设计文档.md)
+
 1. [项目概览](#1-项目概览)
 2. [整体架构](#2-整体架构)
 3. [技术栈与依赖](#3-技术栈与依赖)
@@ -23,22 +26,14 @@
 
 ## 1. 项目概览
 
+**业务需求与设计蓝图**请见 [docs/01-项目概览.md](docs/01-项目概览.md)。
+
 | 维度 | 说明 |
 |------|------|
 | 定位 | 单用户桌面记账工具，强调本地隐私，可选云端同步 |
-| 主要功能 | 收支记录 CRUD、差旅补助、统计与预算分析、AI 对话记账、票据 OCR、NocoBase 双向同步 |
 | 平台 | macOS / Windows（跨平台开发，需在两端均能构建） |
 | 包名 | `accounting-app`（前端）、`accounting-app`（Rust crate）、Bundle id `com.accounting-app.app` |
 | 版本 | 0.1.0 |
-
-### 功能模块完成度
-
-| 模块 | 状态 |
-|---|---|
-| Tauri 骨架 + SQLite（7 张表） | ✅ |
-| 业务 CRUD + 前端 6 页面 | ✅ |
-| AI 对话 + Agent（LLM Function Calling、学习引擎、对话历史、OCR） | ✅ |
-| NocoBase 同步（push / pull / sync_full） | ✅ |
 
 ---
 
@@ -53,7 +48,7 @@
 │         │                                                               │
 │         ├─ AI 引擎层 (src/ai)                                            │
 │         │     • AgentEngine   ← LLM 调用 + Function Calling 解析         │
-│         │     • ToolRegistry  ← 16 个工具（Zod schema）                  │
+│         │     • ToolRegistry  ← 20 个工具（Zod schema）                  │
 │         │                                                               │
 │         ├─ Chat 组件 (ChatWidget / ConfirmCard / StepList / …)           │
 │         │                                                               │
@@ -204,6 +199,8 @@ accounting-app/
 
 ### 5.2 AI 引擎层
 
+**设计决策与架构说明**请见 [docs/03-活跃设计文档.md §1 AI Agent 架构重构](docs/03-活跃设计文档.md#1-ai-agent-架构重构)。
+
 #### `src/ai/agent-engine.ts` — `AgentEngine`（全局单例）
 
 负责"理解用户意图 → 调用工具"的两阶段流水线。
@@ -232,7 +229,7 @@ accounting-app/
 | `execute(name, args, context)` | 查工具 → Zod `safeParse` 校验 → 调 `execute` → 统一捕获异常包装为 `ToolResult` |
 | `getNames / has` | 辅助 |
 
-**注册的 16 个工具**（按域分组）：
+**注册的 20 个工具**（按域分组）：
 
 | 域 | 工具 |
 |---|---|
@@ -536,6 +533,8 @@ LLM 返回的每个字段必须附带 `_source`：
 
 ## 9. NocoBase 同步机制
 
+**设计决策与同步策略**请见 [docs/03-活跃设计文档.md §3 NocoBase 全量对比同步](docs/03-活跃设计文档.md#3-nocobase-全量对比同步)。
+
 ### 9.1 整体策略
 
 | 操作 | records | business_trip | learning_data |
@@ -561,6 +560,8 @@ LLM 返回的每个字段必须附带 `_source`：
 ---
 
 ## 10. OCR 子系统
+
+**设计决策与 Python 管理**请见 [docs/03-活跃设计文档.md §2 OCR Python 管理重设计](docs/03-活跃设计文档.md#2-ocr-python-管理重设计)。
 
 ### 10.1 Python 探测与依赖
 
@@ -717,7 +718,7 @@ Rust 函数 `datetime_gte: String` ↔ 前端 invoke 传 `{ datetimeGte: value }
 
 ---
 
-## 附录 B：8 个事件名（前端 listen）
+## 附录 B：4 个事件名（前端 listen）
 
 | 事件 | 来源 | 用途 |
 |---|---|---|

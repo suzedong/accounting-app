@@ -262,6 +262,14 @@ export const useChatStore = defineStore('chat', () => {
         pendingAction.value = result.action;
       }
 
+      // 处理候选记录选择
+      if (result.action === 'correct_record' && result.toolResult?.render === 'candidateSelect') {
+        aiMsg.status = 'pending';
+        aiMsg.render = 'candidateSelect';
+        pendingRecord.value = result.toolResult?.data as Record<string, unknown> | null;
+        pendingAction.value = 'select_record';
+      }
+
       // 处理高风险修正
       if (result.action === 'correct_record' && result.toolResult?.render === 'correctionCard') {
         aiMsg.status = 'pending';
@@ -541,11 +549,25 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function callTool(name: string, args: unknown): Promise<{ success: boolean; message?: string; error?: string; data?: unknown } | undefined> {
+    try {
+      await agentEngine.loadContext();
+      const result = await toolRegistry.execute(name, args, {
+        userMessage: '',
+        lastConfirmedRecord: lastConfirmedRecord.value,
+      });
+      return result;
+    } catch (e) {
+      console.error('[ChatStore] callTool error:', e);
+      return { success: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   return {
     messages, isOpen, sending, ocrLoading,
     pendingRecord, pendingAction, lastConfirmedRecord, awaitingFollowUp, pendingFollowUp, editingField,
     recordUpdated,
-    genId, loadHistory, sendMessage, confirmRecord, cancelRecord,
+    genId, loadHistory, sendMessage, confirmRecord, cancelRecord, callTool,
     startEditField, applyFieldEdit, answerFollowUp, clearMessages, clearHistory,
   };
 });
