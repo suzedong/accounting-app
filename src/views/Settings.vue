@@ -203,7 +203,7 @@
         </div>
 
         <!-- 未找到兼容 Python 时的引导提示（仅 macOS 显示，Windows 使用内置 Python 区域的提示） -->
-        <div v-if="!isWindows && !ocrAvailable && !activePython && !discoverLoading && systemPythons.length > 0" class="python-guide-card">
+        <div v-if="!isWindows && !ocrAvailable && !activePython && !discoverLoading && compatiblePythonCount === 0 && systemPythons.length > 0" class="python-guide-card">
           <div class="guide-title">如何安装兼容的 Python</div>
           <ol class="guide-steps">
             <li>访问 python.org 下载 Python 3.12（推荐 3.12.10）</li>
@@ -294,18 +294,19 @@
                     </template>
                     <template v-else>
                       <el-button
-                        v-if="activePython && activePython.path !== row.path"
+                        v-if="!activePython || activePython.path !== row.path"
                         size="small"
                         type="primary"
                         @click="handleSelectPython(row.path)"
                       >使用</el-button>
-                      <el-button v-else-if="activePython" size="small" disabled>当前</el-button>
-                      <el-button 
-                        size="small" 
+                      <el-button v-else size="small" disabled>当前</el-button>
+                      <el-button
+                        v-if="!row.hasPaddleocr"
+                        size="small"
                         @click="handleInstallDepsForPython(row.path)"
                       >安装</el-button>
                       <el-button
-                        v-if="row.hasPaddleocr"
+                        v-else
                         size="small"
                         @click="handleUninstallDepsForPython(row.path)"
                       >卸载</el-button>
@@ -540,10 +541,16 @@ async function setupEventListeners() {
   });
 }
 
+// Compatible pythons available for user to pick (exclude Microsoft Store)
+const compatiblePythonCount = computed(() =>
+  systemPythons.value.filter(p => p.isCompatible && p.source !== 'store').length
+);
+
 const ocrStatusTag = computed(() => {
   if (!ocrEnabled.value) return 'info';
   if (ocrAvailable.value) return 'success';
   if (activePython.value && !activePython.value.hasPaddleocr) return 'warning';
+  if (!activePython.value && compatiblePythonCount.value > 0) return 'warning';
   return 'danger';
 });
 
@@ -552,6 +559,7 @@ const ocrStatusText = computed(() => {
   if (discoverLoading.value) return '正在扫描...';
   if (ocrAvailable.value) return 'PaddleOCR 已就绪';
   if (activePython.value) return 'Python 已找到，需要安装依赖';
+  if (compatiblePythonCount.value > 0) return '请选择 Python';
   return '未找到兼容的 Python';
 });
 
