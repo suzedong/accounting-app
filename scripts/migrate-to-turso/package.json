@@ -1,0 +1,14 @@
+{
+  "name": "accounting-app-migrate-to-turso",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "一次性把本地 SQLite 数据迁到 Turso（libSQL）云端库。独立脚本，不污染主项目。",
+  "scripts": {
+    "migrate": "node migrate.mjs"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.0",
+    "better-sqlite3": "^11.5.0"
+  }
+}

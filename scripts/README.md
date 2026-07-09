@@ -8,6 +8,7 @@
 |---------|------|---------|
 | `normalize_all_time_fields.sql` | 规范化所有时间字段 | 开发阶段修复历史数据 |
 | `check_fields.py` | 检查 NocoBase 集合的字段结构 | 开发调试 |
+| [`migrate-to-turso/`](./migrate-to-turso/) | 本地 SQLite → Turso 云端迁移 | 阶段 1：切换同步后端到 Turso 前的数据搬运 |
 
 ---
 
