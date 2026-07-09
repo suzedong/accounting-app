@@ -1,6 +1,6 @@
 # 记账本应用（Accounting-App）
 
-本地优先（Local-first）的桌面记账应用，基于 **Tauri 2 + Vue 3 + SQLite**，集成阿里云百炼 LLM 与 PaddleOCR，可选与 NocoBase 双向同步。
+本地优先（Local-first）的桌面记账应用，基于 **Tauri 2 + Vue 3 + libSQL (SQLite)**，集成阿里云百炼 LLM 与 PaddleOCR，可选启用 Turso 云端做双向同步（libSQL Embedded Replica）。
 
 ---
 
@@ -29,7 +29,7 @@ npm run tauri build   # 打包桌面安装包（macOS .dmg / Windows .exe）
 启动后在 **Settings 页** 配置：
 
 1. AI 服务（API Key、模型，存入 SQLite `app_config`）
-2. NocoBase 同步参数（可选）
+2. Turso 云同步参数（可选：启用开关、URL、Token）
 3. 个性化偏好（默认账户、支付方式映射等）
 
 ---
@@ -43,7 +43,7 @@ npm run tauri build   # 打包桌面安装包（macOS .dmg / Windows .exe）
 - 差旅补助（出差记录 + 补助发放 + 金额匹配）
 - OCR 识别（PaddleOCR 图片识别 → 自动记账）
 - 学习引擎（用户修正 → 个性化规则）
-- 数据同步（本地 ↔ NocoBase 双向同步）
+- 数据同步（本地 libSQL ↔ Turso 云端双向同步，可选启用）
 
 ---
 

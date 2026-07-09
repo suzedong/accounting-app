@@ -52,14 +52,7 @@
     >
       <el-table-column prop="datetime" label="时间" width="200">
         <template #default="{ row }">
-          <span 
-            class="nowrap sync-status"
-            :class="getSyncStatusClass(row)"
-            :title="getSyncStatusTooltip(row)"
-          >
-            {{ formatDatetime(row.datetime) }}
-            <span class="sync-indicator" :class="getSyncStatusClass(row)"></span>
-          </span>
+          <span class="nowrap">{{ formatDatetime(row.datetime) }}</span>
         </template>
       </el-table-column>
       <el-table-column prop="type" label="类型" width="70">
@@ -289,96 +282,6 @@ function resetFilters() {
   store.page = 1;
   store.fetchRecords();
 }
-
-/**
- * 判断同步状态
- */
-function getSyncStatus(row: AccountRecord): 'unsynced' | 'synced' | 'local_newer' | 'remote_newer' {
-  // 未同步
-  if (row.synced === 0) {
-    return 'unsynced';
-  }
-  
-  // 已同步，比较更新时间
-  const localTime = row.local_updated_at;
-  const remoteTime = row.nocobase_updated_at;
-  
-  if (!remoteTime) {
-    return 'synced';
-  }
-  
-  // 将时间字符串转换为 Date 对象进行比较
-  // local_updated_at 格式: 'YYYY-MM-DD HH:MM:SS' (SQLite 本地时间)
-  // nocobase_updated_at 格式: 'YYYY-MM-DDTHH:MM:SS.sssZ' (ISO 8601 UTC)
-  const localDate = parseTime(localTime);
-  const remoteDate = parseTime(remoteTime);
-  
-  if (!localDate || !remoteDate) {
-    return 'synced';
-  }
-  
-  // 计算时间差（毫秒）
-  const diff = remoteDate.getTime() - localDate.getTime();
-  
-  // 设置阈值：5分钟内视为一致（避免微小时间差异导致的误判）
-  const threshold = 5 * 60 * 1000;
-  
-  if (diff > threshold) {
-    return 'remote_newer';  // 云端明显较新
-  } else if (diff < -threshold) {
-    return 'local_newer';   // 本地明显较新
-  } else {
-    return 'synced';        // 时间接近，视为一致
-  }
-}
-
-/**
- * 解析时间字符串为 Date 对象
- * 支持两种格式：
- * - SQLite 格式: 'YYYY-MM-DD HH:MM:SS'（本地时间）
- * - ISO 8601 格式: 'YYYY-MM-DDTHH:MM:SS.sssZ'（UTC 时间）
- * 
- * 返回：统一转换为 UTC 时间戳进行比较
- */
-function parseTime(timeStr: string): Date | null {
-  if (!timeStr) return null;
-  
-  // 尝试 ISO 8601 格式（带 T 和 Z）
-  if (timeStr.includes('T')) {
-    return new Date(timeStr);
-  }
-  
-  // SQLite 格式（空格分隔），解析为本地时间后转换为 UTC 时间戳
-  const localDate = new Date(timeStr);
-  return localDate;
-}
-
-/**
- * 获取同步状态样式类
- */
-function getSyncStatusClass(row: AccountRecord): string {
-  const status = getSyncStatus(row);
-  return `sync-${status}`;
-}
-
-/**
- * 获取同步状态提示文本
- */
-function getSyncStatusTooltip(row: AccountRecord): string {
-  const status = getSyncStatus(row);
-  switch (status) {
-    case 'unsynced':
-      return '未同步';
-    case 'synced':
-      return '已同步（完全一致）';
-    case 'local_newer':
-      return '已同步（本地较新）';
-    case 'remote_newer':
-      return '已同步（云端较新）';
-    default:
-      return '';
-  }
-}
 </script>
 
 <style scoped>
@@ -425,58 +328,6 @@ function getSyncStatusTooltip(row: AccountRecord): string {
   white-space: nowrap;
   display: inline-flex;
   gap: 0;
-}
-
-/* 同步状态样式 */
-.sync-status {
-  position: relative;
-  padding-right: 20px;
-}
-
-.sync-indicator {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-/* 未同步 - 红色 */
-.sync-unsynced .sync-indicator {
-  background-color: #ff4d4f;
-}
-
-.sync-unsynced {
-  color: #ff4d4f;
-}
-
-/* 已同步（完全一致）- 绿色 */
-.sync-synced .sync-indicator {
-  background-color: #52c41a;
-}
-
-.sync-synced {
-  color: #52c41a;
-}
-
-/* 本地较新 - 橙色 */
-.sync-local_newer .sync-indicator {
-  background-color: #fa8c16;
-}
-
-.sync-local_newer {
-  color: #fa8c16;
-}
-
-/* 云端较新 - 蓝色 */
-.sync-remote_newer .sync-indicator {
-  background-color: #1890ff;
-}
-
-.sync-remote_newer {
-  color: #1890ff;
 }
 
 /* 重复记录闪烁高亮：3 次黄色闪烁 */

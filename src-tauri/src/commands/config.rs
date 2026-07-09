@@ -14,31 +14,73 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn new(db: &Database) -> Self {
+    /// 当前操作系统对应的 `active_python_path` key。与 `commands/ocr.rs::PY_KEY`
+    /// 保持一致；此处重复声明是为了避免跨模块循环依赖。
+    #[cfg(target_os = "macos")]
+    const PY_KEY: &'static str = "active_python_path_macos";
+    #[cfg(target_os = "windows")]
+    const PY_KEY: &'static str = "active_python_path_windows";
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    const PY_KEY: &'static str = "active_python_path_linux";
+
+    pub async fn new(db: &Database) -> Self {
         let mut map = HashMap::new();
-        if let Ok(conn) = db.get_conn().lock() {
-            let rows: Vec<(String, String)> = conn
-                .prepare("SELECT key, value FROM app_config")
-                .and_then(|mut stmt| {
-                    stmt.query_map([], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                    })
-                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                })
-                .unwrap_or_default();
-            for (k, v) in rows {
-                map.insert(k, v);
+        if let Ok(conn) = db.get_conn().await {
+            if let Ok(mut rows) = conn.query("SELECT key, value FROM app_config", ()).await {
+                while let Ok(Some(row)) = rows.next().await {
+                    // 用 get_value 避免 NULL 触发 libsql 0.9 panic
+                    let k = match row.get_value(0) {
+                        Ok(libsql::Value::Text(s)) => s,
+                        _ => continue,
+                    };
+                    let v = match row.get_value(1) {
+                        Ok(libsql::Value::Text(s)) => s,
+                        Ok(libsql::Value::Null) => String::new(),
+                        _ => continue,
+                    };
+                    map.insert(k, v);
+                }
+            }
+
+            // 平台相关配置迁移：把旧的 `active_python_path` 单 key 迁移到当前平台的新 key。
+            // 只在**新 key 尚未存在**时迁移，避免覆盖用户已经在新 key 上做过的选择。
+            // 迁移后删除旧 key，防止再次同步到另一台电脑造成"回退"。
+            if let Some(legacy_value) = map.get("active_python_path").cloned() {
+                if !legacy_value.is_empty() && !map.contains_key(Self::PY_KEY) {
+                    eprintln!(
+                        "[Config] 迁移 active_python_path → {}: {}",
+                        Self::PY_KEY,
+                        legacy_value
+                    );
+                    let _ = conn
+                        .execute(
+                            "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+                            libsql::params![Self::PY_KEY, legacy_value.clone()],
+                        )
+                        .await;
+                    map.insert(Self::PY_KEY.to_string(), legacy_value);
+                }
+                let _ = conn
+                    .execute(
+                        "DELETE FROM app_config WHERE key = ?",
+                        libsql::params!["active_python_path"],
+                    )
+                    .await;
+                map.remove("active_python_path");
             }
         }
-        Self { data: Mutex::new(map) }
+        Self {
+            data: Mutex::new(map),
+        }
     }
 }
 
 #[derive(Serialize)]
 pub struct AllConfig {
-    pub nocobase_url: String,
-    pub nocobase_token: String,
     pub budget_monthly: f64,
+    pub turso_sync_enabled: bool,
+    pub turso_url: String,
+    pub turso_token: String,
 }
 
 #[tauri::command]
@@ -53,17 +95,24 @@ pub async fn get_config(
             return Ok(v.clone());
         }
     }
-    let conn = state.get_conn();
+    let conn = state.get_conn().await?;
     let value = {
-        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        conn_guard
-            .query_row(
+        let mut rows = conn
+            .query(
                 "SELECT value FROM app_config WHERE key = ?",
-                [&key],
-                |row| row.get::<_, String>(0),
+                libsql::params![key.clone()],
             )
-            .map_err(|e| format!("Config key '{}' not found: {}", key, e))
-    }?;
+            .await
+            .map_err(|e| format!("Config key '{}' query failed: {}", key, e))?;
+        match rows.next().await.map_err(|e| e.to_string())? {
+            Some(row) => match row.get_value(0).map_err(|e| e.to_string())? {
+                libsql::Value::Text(s) => s,
+                libsql::Value::Null => String::new(),
+                _ => return Err(format!("Config key '{}' has unexpected type", key)),
+            },
+            None => return Err(format!("Config key '{}' not found", key)),
+        }
+    };
     if let Ok(mut g) = app_config.data.lock() {
         g.insert(key.clone(), value.clone());
     }
@@ -77,16 +126,13 @@ pub async fn set_config(
     key: String,
     value: String,
 ) -> Result<(), String> {
-    let conn = state.get_conn();
-    {
-        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        conn_guard
-            .execute(
-                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
-                (&key, &value),
-            )
-            .map_err(|e| e.to_string())?;
-    }
+    let conn = state.get_conn().await?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+        libsql::params![key.clone(), value.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let mut guard = app_config.data.lock().map_err(|e| e.to_string())?;
     guard.insert(key, value);
     Ok(())
@@ -98,11 +144,14 @@ pub async fn get_all_config(
 ) -> Result<AllConfig, String> {
     let guard = app_config.data.lock().map_err(|e| e.to_string())?;
     Ok(AllConfig {
-        nocobase_url: guard.get("nocobase_url").cloned().unwrap_or_default(),
-        nocobase_token: guard.get("nocobase_token").cloned().unwrap_or_default(),
         budget_monthly: guard.get("budget_monthly")
             .and_then(|v| v.parse().ok())
             .unwrap_or(3500.0),
+        turso_sync_enabled: guard.get("turso_sync_enabled")
+            .map(|v| v == "true")
+            .unwrap_or(false),
+        turso_url: guard.get("turso_url").cloned().unwrap_or_default(),
+        turso_token: guard.get("turso_token").cloned().unwrap_or_default(),
     })
 }
 
@@ -144,16 +193,13 @@ pub async fn save_ai_services(
 
     let json = serde_json::to_string(&services)
         .map_err(|e| format!("序列化失败: {}", e))?;
-    let conn = state.get_conn();
-    {
-        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        conn_guard
-            .execute(
-                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
-                ("ai_services", &json),
-            )
-            .map_err(|e| e.to_string())?;
-    }
+    let conn = state.get_conn().await?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+        libsql::params!["ai_services", json.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let mut guard = app_config.data.lock().map_err(|e| e.to_string())?;
     guard.insert("ai_services".to_string(), json);
     Ok(())
@@ -184,16 +230,13 @@ pub async fn activate_ai_service(
     // Save back
     let json = serde_json::to_string(&services)
         .map_err(|e| format!("序列化失败: {}", e))?;
-    let conn = state.get_conn();
-    {
-        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        conn_guard
-            .execute(
-                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
-                ("ai_services", &json),
-            )
-            .map_err(|e| e.to_string())?;
-    }
+    let conn = state.get_conn().await?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+        libsql::params!["ai_services", json.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     let mut guard = app_config.data.lock().map_err(|e| e.to_string())?;
     guard.insert("ai_services".to_string(), json);
     Ok(())
@@ -427,10 +470,64 @@ pub async fn test_ai_connection(
     }
 }
 
+// --- Turso Embedded Replica Sync ---
+
+/// 触发一次 Turso Embedded Replica 双向同步。
+///
+/// 前置条件：应用启动时读取 `turso_sync_enabled/turso_url/turso_token` 配置；
+/// 若已启用远程 URL/Token，则 Database 会以 Embedded Replica 方式打开，
+/// 此命令会调用 `db.sync()` 完成一次双向同步。
+///
+/// 若未启用（纯本地模式），仍然会调用底层的 `sync()`，libsql 会返回错误或空结果，
+/// 我们对错误予以透传。
+#[tauri::command]
+pub async fn sync_turso(state: State<'_, Database>) -> Result<serde_json::Value, String> {
+    state.sync().await?;
+    Ok(serde_json::json!({ "success": true, "message": "Turso 同步完成" }))
+}
+
+/// 测试到 Turso 的连接（并未真正打开 replica，仅通过 HTTP 探测健康）。
+///
+/// libsql 的远程连接建立在 build/sync 阶段，为避免创建/覆盖本地 replica 文件，
+/// 我们只是简单地发起一个 HTTP GET 到 `{url}/health`（Turso 提供）作为可达性检测。
+#[tauri::command]
+pub async fn test_turso_connection(
+    url: String,
+    token: String,
+) -> Result<serde_json::Value, String> {
+    if url.trim().is_empty() {
+        return Err("Turso URL 为空".to_string());
+    }
+    if token.trim().is_empty() {
+        return Err("Turso Token 为空".to_string());
+    }
+
+    // 将 libsql:// 协议替换为 https:// 以便通过 HTTP 探测
+    let base = url
+        .trim()
+        .trim_end_matches('/')
+        .replacen("libsql://", "https://", 1);
+    let health_url = format!("{}/health", base);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&health_url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| format!("连接失败: {}", e))?;
+
+    if resp.status().is_success() {
+        Ok(serde_json::json!({ "success": true, "message": "Turso 连接可达" }))
+    } else {
+        Err(format!("Turso 返回错误: {}", resp.status()))
+    }
+}
+
 #[tauri::command]
 pub async fn open_folder(path: String) -> Result<(), String> {
     use std::process::Command;
-    
+
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer.exe")
@@ -438,7 +535,7 @@ pub async fn open_folder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -446,7 +543,7 @@ pub async fn open_folder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         Command::new("xdg-open")
@@ -454,6 +551,6 @@ pub async fn open_folder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("无法打开文件夹: {}", e))?;
     }
-    
+
     Ok(())
 }

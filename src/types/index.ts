@@ -12,10 +12,6 @@ export interface AccountRecord {
   account: string;
   note: string | null;
   payment_method: string | null;
-  local_updated_at: string;
-  synced: number;
-  nocobase_id: number | null;
-  nocobase_updated_at: string | null;
   created_at: string;
 }
 
@@ -44,9 +40,6 @@ export interface TripRecord {
   paid_transport_allowance: number;
   paid_date: string | null;
   notes: string | null;
-  synced: number;
-  nocobase_id: number | null;
-  nocobase_updated_at: string | null;
   created_at: string;
 }
 
@@ -149,8 +142,6 @@ export interface AppConfig {
 }
 
 export interface AllConfig {
-  nocobase_url: string;
-  nocobase_token: string;
   budget_monthly: number;
 }
 

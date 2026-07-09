@@ -1,6 +1,6 @@
 # Accounting-App Code Wiki
 
-> 本地优先（Local-first）的 AI 桌面记账应用。基于 **Tauri 2 + Vue 3 + SQLite**，集成阿里云百炼 LLM Function Calling、PaddleOCR 票据识别，以及与 NocoBase 的双向同步能力。
+> 本地优先（Local-first）的 AI 桌面记账应用。基于 **Tauri 2 + Vue 3 + libSQL (SQLite)**，集成阿里云百炼 LLM Function Calling、PaddleOCR 票据识别；数据同步走 **Turso Embedded Replica**（libSQL 内建双向同步）。
 
 ---
 
@@ -17,7 +17,7 @@
 6. [Rust 后端模块详解](#6-rust-后端模块详解)
 7. [数据模型与数据库](#7-数据模型与数据库)
 8. [核心数据流](#8-核心数据流)
-9. [NocoBase 同步机制](#9-nocobase-同步机制)
+9. [Turso 同步机制](#9-turso-同步机制)
 10. [OCR 子系统](#10-ocr-子系统)
 11. [运行与构建方式](#11-运行与构建方式)
 12. [关键工程约定](#12-关键工程约定)
@@ -60,13 +60,13 @@
 │                                                                         │
 │   commands/  ←  对外暴露的 Tauri commands                                │
 │   (records / trips / stats / prompts / learning / chat /                │
-│    config[LLM] / sync / ocr)                                            │
+│    config[LLM + Turso] / ocr)                                           │
 │         │                                                               │
-│         ├──► db/ (rusqlite, WAL)                                        │
-│         │       schema.rs · records.rs · trips.rs · prompts.rs ·        │
-│         │       learning.rs · chat_history.rs · sync_log.rs             │
+│         ├──► db/ (libsql 0.9, async, WAL)                               │
+│         │       connection.rs · schema.rs · records.rs · trips.rs ·     │
+│         │       prompts.rs · learning.rs · chat_history.rs              │
 │         │                                                               │
-│         ├──► db/nocobase/ (HTTP client + push/pull/全量同步/增量同步)    │
+│         ├──► libsql Embedded Replica ─── db.sync() ──► Turso 云端        │
 │         │                                                               │
 │         ├──► HTTP → 阿里云百炼 / OpenAI 兼容 LLM (call_llm_with_tools)   │
 │         │                                                               │
@@ -75,13 +75,13 @@
 └─────────────────────────────────────────────────────────────────────────┘
                               ▲                         ▲
                               │                         │
-                  SQLite 本地数据库            NocoBase REST API（远端）
-                  app_data.db (WAL)            collections: records /
-                                               business_trip / learning_data
+                  本地 SQLite 副本                Turso 云端（libSQL）
+                  app_data.db (WAL)              双向增量同步（Embedded Replica）
 ```
 
 **核心思想**：
-- **数据持久化在 Rust + SQLite**：所有领域操作（CRUD、统计、同步、LLM 调用）都通过 Tauri `invoke()` 走 Rust。
+- **数据持久化在 Rust + libSQL**：所有领域操作（CRUD、统计、LLM 调用）都通过 Tauri `invoke()` 走 Rust 异步接口。
+- **同步由 libSQL 内建提供**：应用启动时若配置了 Turso URL/Token 且开关打开，则以 Embedded Replica 打开数据库；`db.sync()` 触发双向增量同步，本地始终保留完整副本以支持离线。
 - **AI 编排在前端**：`AgentEngine` 单例负责 prompt 组装、Function Calling、tool dispatch；`ToolRegistry` 用 Zod 定义工具 schema 并最终翻译为 LLM 的 JSON Schema。
 - **三层记忆**：活跃上下文（最近 10 轮）+ 对话归档（`chat_history` 表）+ 持久记忆（`learning_data` + preferences markdown）。
 
@@ -105,19 +105,19 @@
 | 依赖 | 用途 |
 |---|---|
 | `tauri@2`（启用 `devtools`）+ `tauri-plugin-shell` | 桌面外壳 |
-| `rusqlite@0.32`（`bundled`、`chrono`） | SQLite，无需系统依赖 |
-| `chrono@0.4` | 时间处理（本地时间 ↔ ISO UTC） |
+| `libsql@0.9`（`core` / `replication` / `remote`） | 异步 SQLite 客户端 + Turso Embedded Replica |
+| `chrono@0.4` | 时间处理（本地时间戳生成） |
 | `serde` / `serde_json` | JSON 序列化 |
 | `uuid@1`（v4） | 记录 UUID |
-| `reqwest@0.12`（`json`） | 调用 LLM 与 NocoBase |
+| `reqwest@0.12`（`json`） | 调用 LLM 与 Turso `/health` 探测 |
 | `tokio@1`（`full`） | 异步运行时 |
 | `dirs@5` | 用户数据目录 |
-| `urlencoding@2` | NocoBase filter URL 编码 |
-| `log@0.4` | 应用日志 |
+
+> `rusqlite` / `urlencoding` / `log` 已在 Phase 2 架构切换中移除；`db/nocobase/` 子模块与 `commands/sync.rs` 全部删除。
 
 ### 外部服务/工具
 - **阿里云百炼**（或任意 OpenAI 兼容 `/v1/chat/completions`）— Function Calling
-- **NocoBase**（自托管） — REST 同步
+- **Turso**（libSQL 托管）— Embedded Replica 双向同步（可选，无配置时纯本地）
 - **Python 3.8–3.12 + PaddleOCR** — 票据识别子进程
 
 ---
@@ -178,10 +178,10 @@ accounting-app/
     │   ├── python_manager.sh / .ps1
     │   └── download_models.sh
     └── src/
-        ├── main.rs          # invoke_handler! 注册所有命令；启动初始化
+        ├── main.rs          # invoke_handler! 注册所有命令；async 启动 + Turso 分支
         ├── logger.rs
-        ├── commands/        # 9 个命令模块（薄包装层）
-        ├── db/              # rusqlite 业务逻辑 + NocoBase 同步子模块
+        ├── commands/        # 8 个命令模块（records/trips/stats/prompts/learning/chat/config/ocr）
+        ├── db/              # libsql 业务逻辑（无 NocoBase 子模块）
         └── models/mod.rs    # AiService（跨域共享）
 ```
 
@@ -281,8 +281,10 @@ AI Service  getAiServices / saveAiServices / activateAiService / testAiConnectio
 OCR         checkOcrStatusFast / startOcrDiscover / checkOcrStatus / selectPython
             installOcrDependencies / install|uninstall|reinstallPaddleocrForPython
             setOcrEnabled / install|uninstall|reinstallBundledPython / ocrRecognize
-Sync        syncFull / syncPush / syncPull / getSyncLogs
+Sync        syncTurso / testTursoConnection
 ```
+
+> 原 `syncFull / syncPush / syncPull / getSyncLogs` 4 个包装已于阶段 3 一并移除。
 
 ### 5.5 Views
 
@@ -293,7 +295,7 @@ Sync        syncFull / syncPush / syncPull / getSyncLogs
 | [Budget.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Budget.vue) | 预算管理：月度预算进度条（超支/紧张/正常），可修改月度预算（`account='个人'` 口径） |
 | [Stats.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Stats.vue) | 统计：周期切换 + 4 个图表（分类排行 / 账户 / 趋势 / 对比） |
 | [TripAllowance.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/TripAllowance.vue) | 差旅补助：状态筛选、补助总额/已发/待发/记录数 + CRUD + 发放 |
-| [Settings.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Settings.vue) | 设置：AI 服务多实例（激活、连接测试） + Prompt 编辑 + NocoBase 同步 + OCR/Python 管理 + 数据库路径 |
+| [Settings.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Settings.vue) | 设置：AI 服务多实例（激活、连接测试） + Prompt 编辑 + Turso 云同步（URL/Token/启用开关/测试连接/立即同步） + OCR/Python 管理 + 数据库路径 |
 
 ### 5.6 Chat 组件清单
 
@@ -316,13 +318,15 @@ Sync        syncFull / syncPush / syncPull / getSyncLogs
 
 ### 6.1 入口（`src-tauri/src/main.rs`）
 
-`#[tokio::main]` 启动 Tauri Builder：
-1. 构造 `Database`（打开 SQLite，启用 WAL，调用 `schema::init` 创建/迁移表，覆盖 dispatch prompt）。
-2. 构造 `AppConfig`（启动时从 `app_config` 表载入到内存 `Mutex<HashMap>`）。
-3. 注入 `Database` 与 `AppConfig` 为 `State`。
-4. 初始化日志文件 + emit 启动 `app_log` 事件。
-5. 启用 `tauri_plugin_shell`。
-6. `invoke_handler!` 注册全部命令。
+`fn main()`（同步入口）通过 `tauri::async_runtime::block_on` 完成数据库初始化：
+
+1. **Step 1** — 用 `db::Database::new().await` 打开纯本地 libsql 数据库，并读取 `app_config` 表中的 `turso_sync_enabled` / `turso_url` / `turso_token` 三项配置。
+2. **Step 2** — 若三者齐备且启用，重新调用 `db::Database::new_with_turso(url, token).await` 打开为 **Embedded Replica**（内部走 `libsql::Builder::new_remote_replica`）；失败则回退纯本地。
+3. **Step 3** — `commands::config::AppConfig::new(&database).await` 把 `app_config` 载入内存 `Mutex<HashMap>`。
+4. **Step 4** — 构造 `tauri::Builder`：注入 `Database` 与 `AppConfig` 为 `State`；初始化日志文件、emit 启动 `app_log` 事件；启用 `tauri_plugin_shell`。
+5. **Step 5** — `invoke_handler!` 注册全部命令。
+
+Schema 初始化在 `Database::init_and_wrap` 内完成：`PRAGMA journal_mode=WAL; foreign_keys=ON;` → `schema::init(&conn).await`（含 chat_history 结构迁移、prompts 覆盖、seed 默认 `app_config`：`ocr_enabled=true`、`budget_monthly=3500.0`、`turso_sync_enabled=false`、`turso_url=""`、`turso_token=""`）。
 
 ### 6.2 Tauri Commands 一览
 
@@ -335,8 +339,10 @@ Sync        syncFull / syncPush / syncPull / getSyncLogs
 | Learning | `get_learning_corrections` `save_correction` `delete_correction` `clear_corrections` |
 | Chat | `get_chat_history` `save_chat_message` `clear_chat_history` `get_chat_sessions` |
 | Config / LLM | `get_config` `set_config` `get_all_config` `test_ai_connection` `call_llm` `call_llm_with_tools` `get_ai_services` `save_ai_services` `activate_ai_service` `open_folder` |
-| Sync | `nocobase_test_connection` `sync_push` `sync_pull` `sync_full` `get_sync_logs` |
+| Turso Sync | `sync_turso` `test_turso_connection` |
 | OCR | `check_ocr_status` `check_ocr_status_fast` `start_ocr_discover` `select_python` `install_ocr_dependencies` `install_paddleocr_for_python` `uninstall_paddleocr_for_python` `reinstall_paddleocr_for_python` `set_ocr_enabled` `ocr_recognize` `install_bundled_python` `uninstall_bundled_python` `reinstall_bundled_python` |
+
+> 原 `nocobase_test_connection` / `sync_push` / `sync_pull` / `sync_full` / `get_sync_logs` 5 个命令已删除。
 
 ### 6.3 commands 模块要点
 
@@ -372,6 +378,10 @@ struct BudgetAnalysis    { budget_monthly, actual_expense, usage_rate, remaining
 - 内存 KV：`AppConfig { data: Mutex<HashMap<String,String>> }`，启动从 `app_config` 表载入。
 - LLM：`call_llm_with_tools(system_message, user_message?, tools_json?, include_tool_calls)` 是 Function Calling 主入口。构建 OpenAI 兼容 `/v1/chat/completions` 请求（`tool_choice:"auto"`），`include_tool_calls=true` 时返回 `{content, tool_calls}` 序列化字符串。
 - AI 多实例：`AiService { id, name, api_url, api_key, model, active }`，保存时确保唯一 active。
+- **Turso 同步**：
+  - `sync_turso()` — 调用 `Database::sync()` 触发一次 libsql Embedded Replica 双向同步；纯本地模式下会得到 libsql 底层错误并透传。
+  - `test_turso_connection(url, token)` — 把 `libsql://` 替换为 `https://`，`GET {base}/health` 并带 `Authorization: Bearer <token>`，作为可达性探测；不打开 replica，不改动本地文件。
+- `AllConfig` 结构含 `budget_monthly / turso_sync_enabled / turso_url / turso_token` 4 个字段（供 `get_all_config` 返回给前端）。
 - `open_folder` 跨平台调用 `explorer/open/xdg-open`。
 
 #### `ocr.rs`
@@ -382,47 +392,25 @@ struct BudgetAnalysis    { budget_monthly, actual_expense, usage_rate, remaining
 - 内置 Python：`install/uninstall/reinstall_bundled_python` 调用 `scripts/python_manager.{sh,ps1}`。
 - 识别：`ocr_recognize(image_base64)` 写临时 base64 文件，调 `import ocr_service; recognize_image(b64)`，60s 超时。
 
-#### `sync.rs`
-NocoBase 同步入口，对 `records / business_trip / learning_data` 三表统一编排：
+#### Turso 同步（config.rs）
 
-```rust
-struct TableSyncResult { records_pushed, records_pulled, records_deleted,
-                         records_conflicts, trips_pushed, trips_pulled,
-                         learning_pushed, learning_pulled,
-                         total_pushed, total_pulled, total_deleted,
-                         total_conflicts, errors: Vec<String> }
-```
-
-- `sync_push`：顺序 `push_records → push_trips → push_learning`
-- `sync_pull`：`pull_records_only → pull_trips → pull_learning`
-- `sync_full`：records 走**全量对比 + 删除策略 + 5 分钟阈值**；trips/learning 走 pull + push 增量
-- `get_sync_logs(limit?)` 读 `sync_log`
+见上文 `config.rs` 段落对 `sync_turso` / `test_turso_connection` 的说明。**没有独立 `sync.rs`**：libSQL Embedded Replica 直接由 `Database::sync()` 完成双向同步，业务代码不再手写 push/pull/冲突判定。
 
 ### 6.4 db 模块要点
 
 | 文件 | 职责 |
 |---|---|
-| `connection.rs` | `Database { conn: Arc<Mutex<Connection>> }`；debug 模式数据库存 `<project>/database/app_data.db`，release 存 `~/Library/Application Support/accounting-app/app_data.db`；启用 WAL + 外键 |
-| `schema.rs` | 创建 7 张表 + 内置迁移（`migrate_chat_history`、各表 `local_updated_at`、`retry_count`、`last_error` 两步迁移）；启动时用 `include_str!("../../prompts/dispatch.md")` **强制覆盖** dispatch prompt；首次启动 seed preferences；清理废弃 `user_preferences`、`record` prompt、旧版 correction；`seed_default_config` 写入 `ocr_enabled=true`、`budget_monthly=3500.0` |
-| `records.rs` | `RecordInput / RecordUpdateInput / RecordRow`；`get_records`（分页 + 过滤 + 排序 + COUNT(*)）、`create/update/delete`（更新后强制 `synced=0, retry_count=0, last_error=NULL`） |
-| `trips.rs` | `TripInput / TripUpdateInput / TripRow`；`create_trip` 自动计算 `trip_allowance=days*100`、`transport_allowance=days*30`、`total` |
+| `connection.rs` | `Database { inner: Arc<libsql::Database> }`；libsql 连接自身 `Clone + Send + Sync`，`get_conn()` 每次返回新句柄。提供 `new()`（纯本地）与 `new_with_turso(url, token)`（Embedded Replica，`Builder::new_remote_replica`）两种打开方式；`sync()` 触发双向增量同步。debug 模式数据库存 `<project>/database/app_data.db`，release 存 `~/Library/Application Support/accounting-app/app_data.db`；启用 WAL + 外键 |
+| `schema.rs` | 创建 6 张业务表（`records / business_trip / learning_data / system_prompts / chat_history / app_config`）+ 内置迁移（`migrate_chat_history`、`business_trip` 的 destination/employee_name/reason 列删除、date 时间戳截断、status emoji 迁移）；启动时用 `include_str!("../../prompts/dispatch.md")` **强制覆盖** dispatch prompt；首次启动 seed preferences；清理废弃 `user_preferences`、`record` prompt、旧版 correction；`seed_default_config` 写入 `ocr_enabled=true`、`budget_monthly=3500.0`、`turso_sync_enabled=false`、`turso_url=""`、`turso_token=""` |
+| `records.rs` | `RecordInput / RecordUpdateInput / RecordRow`；`get_records`（分页 + 过滤 + 排序 + COUNT(*)）、`create/update/delete`；`INSERT/UPDATE` 时用 Rust 侧 `chrono::Local` 生成 `created_at` |
+| `trips.rs` | `TripInput / TripUpdateInput / TripRow`；`create_trip` 自动计算 `trip_allowance=days*100`、`transport_allowance=days*30`、`total`；`update_trip` 在 `days` 变化时重算三项金额 |
 | `prompts.rs` | `PromptRow`；`get_prompt / update_prompt`（UPSERT）；`update_preference_in_doc` 行级替换 |
 | `learning.rs` | `LearningCorrection { id, keyword, field, value }`，key 拆 `keyword|field`，兼容旧无 `|` 格式 |
-| `preferences.rs` | **已废弃**，仅 `#[allow(dead_code)]` 保留；schema.rs 启动时 DROP `user_preferences` 表 |
 | `chat_history.rs` | `ChatMessageRow / ChatMessageInput`；`save_message` 含取消态合并；`get_history(limit)` 按 `created_at DESC`；`get_sessions(limit)` 按 session 聚合 |
-| `sync_log.rs` | `SyncLogRow`；`log_sync(direction, collection, status, count, error?)` + `get_logs(limit)` |
 
-### 6.5 NocoBase 同步子模块（`db/nocobase/`）
+> 已删除：`db/nocobase/`（client / push / pull / trip_sync / learning_sync）、`db/sync_log.rs`、`db/preferences.rs`。相关 rusqlite Mutex 锁体系随之消失。
 
-| 文件 | 职责 |
-|---|---|
-| `client.rs` | `NocoBaseClient { base_url, token, http: reqwest::Client }`，方法 `create_record / update_record / list_records / delete_record / test_connection`；时间工具：`parse_local_naive`、`parse_iso_utc`、`iso_utc_to_local_db`、`local_db_to_iso_utc`、`normalize_to_date`（取前 10 位日期）、`diff_seconds_remote_minus_local`、`extract_record_object`（兼容 update 返回数组、create 返回对象） |
-| `push.rs` | records 推送：`SELECT ... WHERE synced=0 AND retry_count<3`；有 `nocobase_id` 走 update，update 返回空数据时按 UUID 查 list 再决定是否回退 create；无 `nocobase_id` 直接 create；成功后 `update_record_synced_status`（`synced=1`、保存 `nocobase_id`、`nocobase_updated_at` 转本地空格写入 `local_updated_at`）；失败 `mark_push_failure`（`retry_count++`、`last_error`） |
-| `pull.rs` | records 全量同步：拉云端 UUID/updated_at/id + 本地全量 → 双 HashMap 比对：云有本无 → pull；本有云无 → `synced=0 retry_count<3` push、`synced=1` delete、超限跳过；双有 → `diff > 300s` 判定冲突方向 |
-| `trip_sync.rs` | trips **增量**同步：`MAX(nocobase_updated_at)` 作为 `$gt` 过滤；同样 5 分钟阈值；推送时空响应回退 create；`paid_date` 用 `normalize_to_date` 截 10 位 |
-| `learning_sync.rs` | learning_data 增量同步，结构与 trip_sync 完全对称；推送字段 `{uuid, type, key, value, count}` |
-
-### 6.6 models（`src-tauri/src/models/mod.rs`）
+### 6.5 models（`src-tauri/src/models/mod.rs`）
 
 仅一个跨域共享模型：
 
@@ -432,14 +420,14 @@ pub struct AiService { id, name, api_url, api_key, model, active }
 
 其余领域模型分散在各 `db/*.rs`、`commands/*.rs` 内。
 
-### 6.7 Tauri 配置
+### 6.6 Tauri 配置
 
 [tauri.conf.json](file:///Users/szd/Documents/Code/accounting-app/src-tauri/tauri.conf.json)：
 - `productName = "AI 记账"`，`identifier = "com.accounting-app.app"`
 - `devUrl = http://localhost:5174`，`frontendDist = ../dist`
 - `beforeDevCommand = npm run dev:frontend`、`beforeBuildCommand = npm run build`
 - 窗口 1200×800，最小 900×600
-- CSP：`default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self'; connect-src 'self' https: http:; font-src 'self' https:;`（允许 LLM 与 NocoBase 直连，可为 http 局域网）
+- CSP：`default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self'; connect-src 'self' https: http:; font-src 'self' https:;`（允许 LLM 与 Turso 直连，可为 http 局域网）
 - `tauri-plugin-shell`：`"open": true`
 
 [capabilities/default.json](file:///Users/szd/Documents/Code/accounting-app/src-tauri/capabilities/default.json)：仅 `main` 窗口、`local=true`，授予 `shell:allow-open` + `core:event:default`（前端订阅 `app_log` / `ocr_install_log` / `ocr_discover_result` 事件必需）。
@@ -452,23 +440,25 @@ pub struct AiService { id, name, api_url, api_key, model, active }
 
 | 表 | 说明 | 关键字段 |
 |---|---|---|
-| `records` | 收支记录 | `uuid`, `datetime`, `type`, `category`, `amount`, `account`, `note`, `payment_method`, `synced`, `nocobase_id`, `nocobase_updated_at`, `local_updated_at`, `retry_count`, `last_error`, `created_at` |
-| `business_trip` | 差旅补助 | `uuid`, `trip_id`, `start_date`, `end_date`, `days`, `trip_allowance`, `transport_allowance`, `total`, `status`, `paid_trip_allowance`, `paid_transport_allowance`, `paid_date`, `notes`, `synced`, `nocobase_id`, `nocobase_updated_at`, `local_updated_at`, `retry_count`, `last_error`, `created_at` |
+| `records` | 收支记录 | `uuid`, `datetime`, `type`, `category`, `amount`, `account`, `note`, `payment_method`, `created_at` |
+| `business_trip` | 差旅补助 | `uuid`, `trip_id`, `start_date`, `end_date`, `days`, `trip_allowance`, `transport_allowance`, `total`, `status`, `paid_trip_allowance`, `paid_transport_allowance`, `paid_date`, `notes`, `created_at` |
 | `system_prompts` | AI Prompt | `name`（dispatch / preferences）, `content`, `updated_at` |
-| `learning_data` | 学习/纠错数据 | `uuid`, `type`（'correction'）, `key`（`keyword\|field`）, `value`(json), `count`, 同步字段 |
+| `learning_data` | 学习/纠错数据 | `uuid`, `type`（'correction'）, `key`（`keyword\|field`）, `value`(json), `count`, `created_at` |
 | `chat_history` | 对话历史 | `uuid`, `session_id`, `role`, `content`, `data`(json: `llmMessages` / `_steps` / `record` / `result` / `_cancelled`), `created_at` |
-| `sync_log` | 同步日志 | `direction`, `collection`, `status`, `count`, `error`, `created_at` |
-| `app_config` | 应用配置 | `key`（`ai_services` / `nocobase_url` / `budget_monthly` / `ocr_enabled` / `active_python_path` …）, `value`(json) |
+| `app_config` | 应用配置 | `key`（`ai_services` / `budget_monthly` / `ocr_enabled` / `active_python_path_macos` / `active_python_path_windows` / `turso_sync_enabled` / `turso_url` / `turso_token` / `last_confirmed_ttl_minutes` / `force_confirm_corrections` …）, `value`(json/string) |
 
 > **不存在**独立的 `accounts`、`budgets`、`categories`、`payment_methods` 表，均作为记录的自由文本字段使用。
+>
+> **NocoBase 遗留结构已清理**（2026-07-09）：三张业务表中的 `synced / nocobase_id / nocobase_updated_at / local_updated_at / retry_count / last_error` 六列以及 `sync_log` 表已从本地 SQLite 与 Turso 云端一并删除。清理脚本：[`scripts/cleanup-nocobase-legacy/`](../scripts/cleanup-nocobase-legacy/README.md)。
 
 ### 7.2 时间字段格式约定
 
 | 字段 | 格式 | 说明 |
 |---|---|---|
-| `datetime`、`local_updated_at`、`created_at`、`updated_at` | `YYYY-MM-DD HH:MM:SS`（**本地时区**，空格分隔） | SQLite TEXT 存储；字符串字典序 = 时间顺序，可直接 `>=` 比较 |
+| `datetime`、`created_at`、`updated_at` | `YYYY-MM-DD HH:MM:SS`（**本地时区**，空格分隔） | SQLite TEXT 存储；字符串字典序 = 时间顺序，可直接 `>=` 比较；Rust 侧统一用 `chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S")` 生成 |
 | `paid_date`、`start_date`、`end_date` | `YYYY-MM-DD` | 纯日期 |
-| `nocobase_updated_at` | RFC3339 ISO 8601 UTC（如 `2026-06-14T09:30:00.000Z`） | 与 NocoBase 通信前后用 `iso_utc_to_local_db` / `local_db_to_iso_utc` 转换 |
+
+> `CREATE TABLE` 保留 `DEFAULT (datetime('now', 'localtime'))` 作为兜底；**业务写入不依赖它**，一律显式 bind 参数以规避 libsql 与 SQLite 引擎不同版本对默认值执行时机的差异。
 
 ### 7.3 LLM 字段来源标注 `_source`
 
@@ -543,31 +533,52 @@ LLM 返回的每个字段必须附带 `_source`：
 
 ---
 
-## 9. NocoBase 同步机制
+## 9. Turso 同步机制
 
-**设计决策与同步策略**请见 [docs/03-活跃设计文档.md §3 NocoBase 全量对比同步](docs/03-活跃设计文档.md#3-nocobase-全量对比同步)。
+**设计决策与阶段迁移记录**请见 [docs/02-开发路线图.md §Phase 4.6 同步后端迁移](docs/02-开发路线图.md#46-同步后端迁移nocobase--tursolibsql)。
 
-### 9.1 整体策略
+### 9.1 架构总览
 
-| 操作 | records | business_trip | learning_data |
+```
+                   本地 app_data.db (libsql)  ────►  Turso 云端 libSQL
+                        │                                 ▲
+   业务 CRUD ───────────┤                                 │
+                        │                                 │
+                        └──── db.sync() ──────────────────┘
+                             （双向增量、幂等）
+```
+
+- 本地始终保留完整 SQLite 副本，业务读写全部走本地 → **离线可用**
+- 同步方向：**双向**（本地→云端 + 云端→本地），由 libsql 内部处理冲突（基于其内建 CRDT/frame 机制）
+- 触发方式：
+  1. **启动时不触发**（`new_with_turso` 只 open replica，不 `sync()`）——避免启动阻塞与 `database is locked` 竞争
+  2. **主界面挂载后 3s 延迟触发**（Home.vue `scheduleBackgroundSync()`）：静默 `sync_turso`；成功后 `loadData()` 静默刷新首页数据 + toast 提示（有新数据/无新数据不同文案）
+  3. **用户手动点击「立即同步」**（Settings → 数据同步）
+
+### 9.2 配置项（`app_config` 表）
+
+| Key | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `sync_full` | **全量对比**（双 HashMap）+ **删除策略** + 5 分钟冲突阈值 | 增量 pull + push | 增量 pull + push |
-| `sync_push` | push_records | push_trips | push_learning |
-| `sync_pull` | pull_records_only | pull_trips | pull_learning |
+| `turso_sync_enabled` | `"true"` / `"false"`（历史上也接受 `"1"` / `"0"`） | `"false"` | 启动时决定是否以 Embedded Replica 打开数据库；关闭时纯本地模式 |
+| `turso_url` | libsql:// URL | `""` | 例：`libsql://accounting-user.turso.io` |
+| `turso_token` | Bearer JWT | `""` | 由 `turso db tokens create` 生成 |
 
-### 9.2 关键约束
+**修改配置后必须重启应用**：`main.rs` 只在启动阶段读取一次；Settings 页面保存后会 `ElMessage.success('...重启应用后生效')` 提示用户。
 
-- **重试上限**：所有 push 路径检查 `retry_count < 3`，失败 `mark_push_failure` 递增；用户编辑（`update_record` / `update_trip`）显式 `retry_count=0, last_error=NULL`。
-- **删除策略**：`sync_full` 中本地有云端无的记录，若 `synced=1` 则**本地硬删**（认为云端被删除）；若 `synced=0 retry_count<3` 则 push；超限跳过。
-- **冲突判定**：双 HashMap 比对时 `diff_seconds_remote_minus_local > 300s` → 用更新方覆盖另一侧。
-- **空响应回退**：NocoBase update 对不存在 ID 仍返回 HTTP 200 但 `data: []`；同步逻辑检测空数组后回退为 create。
-- **时间格式归一化**：所有比较前统一为 `YYYY-MM-DD HH:MM:SS` 本地时间。
-- **过滤字段名**：发送给 NocoBase 的 filter 用数据库列名（下划线），不用 API 响应字段名（驼峰）。
-- **业务字段剔除**：推送 `business_trip` 时剔除 `local_updated_at` / `synced` / `nocobase_id` / `nocobase_updated_at` 等本地专用字段。
+### 9.3 相关 Tauri commands
 
-### 9.3 本地删除
+| 命令 | 行为 |
+|---|---|
+| `sync_turso()` | 调用 `Database::sync().await`（libsql `db.inner.sync()`）触发一次双向同步；纯本地模式下会得到 libsql 底层错误，透传给前端 |
+| `test_turso_connection(url, token)` | 把 `libsql://` 替换为 `https://`，`GET {base}/health` 并带 `Authorization: Bearer <token>`；只做可达性探测，**不打开 replica、不改动本地数据库文件** |
 
-当前 `sync_push` **不处理**本地删除（硬删）的记录推送到 NocoBase，云端不会感知本地删除（除非走 `sync_full` 中的反向"云端被删→本地删"分支）。
+### 9.4 一次性数据迁移
+
+从 NocoBase / 旧本地库迁移到 Turso 云端使用独立 Node 脚本 [`scripts/migrate-to-turso/`](scripts/migrate-to-turso/README.md)：
+- `better-sqlite3` 只读打开本地库，`@libsql/client` 写入 Turso
+- 自动剔除 NocoBase 遗留列
+- `--dry-run` 预演、`--drop` 推倒重建、`--verify` 抽样校验
+- `INSERT OR IGNORE` 按 `uuid` 幂等，可重复执行
 
 ---
 
@@ -579,7 +590,7 @@ LLM 返回的每个字段必须附带 `_source`：
 
 - 启动后调用 `check_ocr_status_fast`（不跑脚本，仅读配置）。
 - 用户在 Settings 触发 `start_ocr_discover`：异步线程扫描系统 Python，emit `ocr_discover_result` 事件，前端展示候选列表。
-- `select_python(path)` 校验版本 3.8–3.12 后将路径写入 `app_config.active_python_path`。
+- `select_python(path)` 校验版本 3.8–3.12 后将路径写入 `app_config.active_python_path_<os>`（macOS 用 `_macos`，Windows 用 `_windows`；平台相关 key 避免 Turso 同步时互相覆盖）。旧的单一 `active_python_path` key 在 `AppConfig::new` 启动时自动迁移到当前平台的新 key。
 - 安装 PaddleOCR：`install_paddleocr_for_python` 流式 `ocr_install_log` 事件输出 pip 日志。
 - 内置 Python：`install_bundled_python` 调用 `python_manager.{sh,ps1}`，下载/解压自带 Python。
 
@@ -604,7 +615,7 @@ ChatInput 接收图片 →
 - Node.js（package.json 兼容现代版本，推荐 ≥ 18）
 - Rust 工具链（推荐 stable 最新版本，含 `cargo`）
 - macOS：Xcode Command Line Tools；Windows：Visual Studio Build Tools
-- 可选：Python 3.8–3.12（OCR 功能）；NocoBase 服务（同步功能）
+- 可选：Python 3.8–3.12（OCR 功能）；Turso 账号 + libSQL 数据库（云同步功能，见 [scripts/migrate-to-turso/README.md](scripts/migrate-to-turso/README.md)）
 
 ### 11.2 开发命令
 
@@ -627,7 +638,7 @@ npm run tauri build  # 完整桌面应用打包
 
 1. 在 Settings 页：
    - **AI 服务**：配置百炼或 OpenAI 兼容服务（`api_url` / `api_key` / `model`），点击「激活」+「测试连接」。
-   - **NocoBase**（可选）：填入 `nocobase_url`、`nocobase_token`，触发 `nocobase_test_connection` 验证。
+   - **数据同步 → Turso 云同步**（可选）：填入 `turso_url`（`libsql://...`）与 `turso_token`（`turso db tokens create` 生成），点击「测试连接」验证；打开「启用同步」开关；**重启应用**后进入 Embedded Replica 模式；此后可点击「立即同步一次」按钮触发 `db.sync()`。
    - **OCR**（可选）：选择系统 Python 或安装内置 Python，安装 PaddleOCR，然后开启 `ocr_enabled`。
    - **预算**：设置 `budget_monthly`（默认 3500）。
 2. 数据库位置：
@@ -652,7 +663,7 @@ Rust 函数 `datetime_gte: String` ↔ 前端 invoke 传 `{ datetimeGte: value }
 
 ### 12.2 SQLite 时间格式
 
-所有 TEXT 时间字段使用 `YYYY-MM-DD HH:MM:SS`（空格分隔、本地时区）；Rust 用 `chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S")` 生成；前端 `utils/dateRange.ts` 输出同格式。字符串字典序 = 时间顺序，可直接 `>=` 比较。
+所有 TEXT 时间字段使用 `YYYY-MM-DD HH:MM:SS`（空格分隔、本地时区）；Rust 用 `chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S")` 生成并显式 bind 参数；前端 `utils/dateRange.ts` 输出同格式。字符串字典序 = 时间顺序，可直接 `>=` 比较。`CREATE TABLE` 中的 `DEFAULT (datetime('now', 'localtime'))` 仅作兜底，业务写入不依赖。
 
 ### 12.3 数据库与迁移
 
@@ -660,33 +671,26 @@ Rust 函数 `datetime_gte: String` ↔ 前端 invoke 传 `{ datetimeGte: value }
 - SQLite ADD COLUMN 不支持非常量默认值，需两步迁移（先加列再 UPDATE）。
 - 记录删除采用硬删除（无软删除标记）。
 - 重复判定：`amount + type + datetime(精确到秒)` 完全一致。
+- NocoBase 遗留结构（6 列 + `sync_log` 表）已于 2026-07-09 通过 `scripts/cleanup-nocobase-legacy/` 从本地与 Turso 云端一并清理，schema 与业务代码均不再包含。
 
-### 12.4 同步与重试
+### 12.4 Turso 同步
 
-- 推送须 `retry_count < 3`，超限跳过。
-- 用户编辑记录时 `retry_count=0, last_error=NULL` 重置。
-- 推送操作必须在 await 前显式释放数据库锁，防止阻塞。
-- 查询未同步记录时必须把 `nocobase_id` 一并取出，减少 N+1。
+- 同步仅通过 libSQL Embedded Replica 提供；触发只走 `sync_turso` command（`Database::sync()`）
+- 配置存 `app_config`：`turso_sync_enabled` / `turso_url` / `turso_token`
+- 修改配置后**必须重启**才能生效（`main.rs` 只在启动阶段读取）
+- 禁止在业务 CRUD 命令内隐式触发同步；禁止新增手写 HTTP 同步逻辑
+- 连接测试用 `test_turso_connection`：`libsql://` → `https://`，GET `/health`
 
-### 12.5 NocoBase
-
-- 时间戳归一化为 `YYYY-MM-DD HH:MM:SS` 后再比较。
-- Filter 字段名使用数据库列名（下划线）。
-- `business_trip` 推送必须剔除 `local_updated_at` / `synced` / `nocobase_id` / `nocobase_updated_at`。
-- `local_updated_at` 是纯本地字段，禁止推送。
-- update 响应可能是数组形式，需兼容解析。
-- 对不存在 ID 的 update 返回 HTTP 200 + 空数据，必须检测后回退为 create。
-
-### 12.6 LLM 字段来源 `_source`
+### 12.5 LLM 字段来源 `_source`
 
 每个字段必须附 `_source: extracted | inferred | default`，由 `AgentEngine.getFieldSource` 判定，`StepList` 据此显示。
 
-### 12.7 UI 状态推导
+### 12.6 UI 状态推导
 
 - 已确认/已取消的记录消息均持久化到 `chat_history.data`，刷新后由 `data.result.success` 与 `data._cancelled` 推导显示状态。
 - `ConfirmCard` 必须根据状态显示「已保存 / 已取消 / 请确认」标签。
 
-### 12.8 文档先行
+### 12.7 文档先行
 
 任何需求变更、架构调整、界面改动或代码修改，需先讨论确认并同步更新文档：
 - 需求/架构 → `docs/01-项目概览.md`
@@ -743,8 +747,8 @@ Rust 函数 `datetime_gte: String` ↔ 前端 invoke 传 `{ datetimeGte: value }
 
 ## 附录 C：已知的潜在改进点
 
-- `sync_push` 不会推送本地删除（硬删的记录无法通知云端），仅靠 `sync_full` 的反向同步策略可能造成不一致。
+- Turso 目前只有 "启动后 3s 延迟一次同步 + 手动同步" 两种触发；后续可考虑写后延迟同步、周期同步、多窗口 Broadcast 通道等。
 
 ---
 
-_文档版本：v1.0 ｜ 生成日期：2026-06-24 ｜ 基于代码状态：commit 当前 workspace_
+_文档版本：v2.0 ｜ 生成日期：2026-07-09 ｜ 基于代码状态：libsql 架构切换完成、Turso 同步启用_

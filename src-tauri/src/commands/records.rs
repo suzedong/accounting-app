@@ -25,7 +25,8 @@ pub async fn get_records(
         datetime_gte.as_deref(),
         datetime_lte.as_deref(),
         sort.as_deref(),
-    )?;
+    )
+    .await?;
 
     Ok(serde_json::json!({
         "data": records,
@@ -38,7 +39,7 @@ pub async fn get_record(
     state: State<'_, Database>,
     id: i64,
 ) -> Result<serde_json::Value, String> {
-    let record = crate::db::records::get_record(state.inner(), id)?;
+    let record = crate::db::records::get_record(state.inner(), id).await?;
     match record {
         Some(r) => Ok(serde_json::json!({ "data": r })),
         None => Err("Record not found".to_string()),
@@ -50,7 +51,7 @@ pub async fn create_record(
     state: State<'_, Database>,
     fields: RecordInput,
 ) -> Result<serde_json::Value, String> {
-    let record = crate::db::records::create_record(state.inner(), fields)?;
+    let record = crate::db::records::create_record(state.inner(), fields).await?;
     Ok(serde_json::json!({ "data": record }))
 }
 
@@ -60,7 +61,7 @@ pub async fn update_record(
     id: i64,
     fields: RecordUpdateInput,
 ) -> Result<serde_json::Value, String> {
-    let record = crate::db::records::update_record(state.inner(), id, fields)?;
+    let record = crate::db::records::update_record(state.inner(), id, fields).await?;
     Ok(serde_json::json!({ "data": record }))
 }
 
@@ -69,7 +70,7 @@ pub async fn delete_record(
     state: State<'_, Database>,
     id: i64,
 ) -> Result<(), String> {
-    crate::db::records::delete_record(state.inner(), id)
+    crate::db::records::delete_record(state.inner(), id).await
 }
 
 /// Get distinct categories from existing records
@@ -78,7 +79,7 @@ pub async fn get_categories(
     state: State<'_, Database>,
     record_type: Option<String>,
 ) -> Result<Vec<String>, String> {
-    crate::db::records::get_categories(state.inner(), record_type.as_deref())
+    crate::db::records::get_categories(state.inner(), record_type.as_deref()).await
 }
 
 /// Get distinct payment methods from existing records
@@ -86,5 +87,5 @@ pub async fn get_categories(
 pub async fn get_payment_methods(
     state: State<'_, Database>,
 ) -> Result<Vec<String>, String> {
-    crate::db::records::get_payment_methods(state.inner())
+    crate::db::records::get_payment_methods(state.inner()).await
 }

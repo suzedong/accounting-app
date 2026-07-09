@@ -36,7 +36,7 @@
 | ✨ 新增业务功能 | `AGENTS.md` + `CODE_WIKI.md` | `docs/01-项目概览.md` |
 | 🎨 修改 UI / 聊天交互 | `AGENTS.md` + `CODE_WIKI.md`（第 5 节 Chat 组件） | `docs/01-项目概览.md`（界面设计） |
 | 🗃️ 修改数据库 schema | `AGENTS.md`（硬性约束 - 数据库与迁移） + `CODE_WIKI.md`（第 7 节） | - |
-| 🔁 修改 NocoBase 同步 | `AGENTS.md`（硬性约束 - NocoBase） + `CODE_WIKI.md`（第 9 节） | - |
+| 🔁 修改 Turso 同步 | `AGENTS.md`（硬性约束 - Turso） + `CODE_WIKI.md`（第 9 节） | - |
 | 🧠 修改 AI Agent 逻辑 | `AGENTS.md` + `CODE_WIKI.md`（第 5.2、8 节） | `docs/03-活跃设计文档.md` |
 | 🔧 重构 | `AGENTS.md` + `CODE_WIKI.md` | `docs/03-活跃设计文档.md` |
 | 📝 文档更新 | `AGENTS.md`（开发流程章节） | - |
@@ -94,7 +94,8 @@ npm run tauri build # 打包生成桌面安装包（macOS .dmg / Windows .exe）
 ## 1. 项目基本信息
 
 - **项目名称**：Accounting-App（本地优先桌面记账应用）
-- **技术栈**：Vue 3 + TypeScript + Element Plus + Pinia | Rust + Tauri 2 + SQLite | 阿里云百炼 LLM | PaddleOCR
+- **技术栈**：Vue 3 + TypeScript + Element Plus + Pinia | Rust + Tauri 2 + **libSQL 0.9** | 阿里云百炼 LLM | PaddleOCR
+- **同步方案**：Turso Embedded Replica（libSQL 内建双向同步，取代原 NocoBase REST 同步）
 - **平台**：macOS、Windows
 - **详细代码文档**：[CODE_WIKI.md](CODE_WIKI.md)
 - **设计文档目录**：[docs/](docs/)
@@ -108,7 +109,7 @@ npm run tauri build # 打包生成桌面安装包（macOS .dmg / Windows .exe）
 | Vue 组件 | PascalCase | `ChatWidget.vue` |
 | TypeScript 模块/工具函数 | camelCase | `agentEngine`, `dateRange.ts` |
 | Rust 文件/函数/字段 | snake_case | `chat_history.rs`, `get_record` |
-| 数据库表/列 | snake_case | `business_trip`, `local_updated_at` |
+| 数据库表/列 | snake_case | `business_trip`, `paid_date` |
 | Tauri command 名 | snake_case | `get_stats_summary` |
 | **前端调用 Tauri 时的参数键** | **camelCase** | `{ datetimeGte: '...' }`（详见 §3.1） |
 | 常量 | 大写下划线 | `SYNC_INTERVAL_MS` |
@@ -128,12 +129,20 @@ npm run tauri build # 打包生成桌面安装包（macOS .dmg / Windows .exe）
 
 ### 3.2 SQLite 时间格式（统一约定）
 
-- `datetime` / `local_updated_at` / `created_at` / `updated_at`：本地时间 `YYYY-MM-DD HH:MM:SS`
+- `datetime` / `created_at` / `updated_at`：本地时间 `YYYY-MM-DD HH:MM:SS`
 - `paid_date` / `start_date` / `end_date`：纯日期 `YYYY-MM-DD`
-- `nocobase_updated_at`：原始 ISO 8601 UTC（如 `2026-06-14T09:30:00.000Z`）
 - 比较规则：字符串字典序 = 时间顺序，可直接 `>=` 比较
+- **写入方式**：Rust 侧 `INSERT` / `UPDATE` 生成时间时**必须**用 `chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S")` 作为参数传入；`CREATE TABLE` 中保留的 `DEFAULT (datetime('now', 'localtime'))` 仅作为兜底
 
-### 3.3 LLM 字段来源标注 `_source`
+### 3.3 libSQL 异步 API
+
+- 数据库层基于 `libsql@0.9`，所有 `conn.execute` / `conn.query` 均为 `async`
+- Tauri commands 必须是 `async fn`，返回 `Result<T, String>`
+- 从 `Rows` 取列用 `row.get::<T>(idx)?`，不再有 rusqlite 的 `column_index`
+- 无需再手动 `Arc<Mutex<Connection>>`：libsql 连接自身 `Clone + Send + Sync`，`Database::get_conn()` 每次返回新句柄
+- 应用启动在 `main.rs` 中通过 `tauri::async_runtime::block_on(...)` 完成 `Database::new()` 或 `Database::new_with_turso(url, token)` 初始化
+
+### 3.4 LLM 字段来源标注 `_source`
 
 LLM 返回的每个字段必须附带 `_source`：
 
@@ -143,7 +152,7 @@ LLM 返回的每个字段必须附带 `_source`：
 
 前端按此值标注字段来源（绿色提取 / 蓝色推断 / 灰色默认）。
 
-### 3.4 UI 状态推导
+### 3.5 UI 状态推导
 
 - 存储事实，UI 状态从事实推导
 - 对话消息状态由 `data.result.success` 和 `_cancelled` 标志推导
@@ -160,41 +169,32 @@ LLM 返回的每个字段必须附带 `_source`：
 - SQLite `ALTER TABLE ADD COLUMN` 不支持非常量默认值（如 `datetime('now')`），需两步迁移（先加列再更新）
 - 本地记录采用**硬删除**（直接从数据库移除，不使用软删除标记）
 - 重复记录判定：amount、type、datetime 完全一致
+- **NocoBase 遗留结构已清理**（2026-07-09）：`records / business_trip / learning_data` 三张表中的 `synced / nocobase_id / nocobase_updated_at / retry_count / last_error / local_updated_at`（共 6 列）以及 `sync_log` 表已通过 [`scripts/cleanup-nocobase-legacy/`](scripts/cleanup-nocobase-legacy/README.md) 从本地 SQLite 和 Turso 云端彻底移除；业务代码与 schema 均不再引用。
 
-### 4.2 NocoBase 同步
+### 4.2 Turso 同步
 
-- 同步只处理 ISO 8601 时间戳；非法时间戳存为 NULL
-- 过滤查询必须使用**数据库列名**（下划线），不要用 API 响应字段名（驼峰）
-- `list_records` 必须用 POST + body 中的 filter，**禁止** GET + URL 编码
-- 推送前必须**剔除本地专用字段**：`local_updated_at`、`synced`、`nocobase_id`、`nocobase_updated_at`
-- update API 即使单条也返回数组形式；必须兼容对象与数组
-- update 对不存在的 ID 仍返回 HTTP 200；必须检测空数据数组并回退为 create
-- 当前 `sync_push` **不处理本地删除**；删除动作不会同步到 NocoBase
+- 同步机制由 `libsql` Embedded Replica 提供：本地保留完整 SQLite 副本，`db.sync()` 触发双向增量同步
+- 开关配置存于 `app_config` 表，三个 key：`turso_sync_enabled`（`"true"` / `"false"`，默认 `"false"`）、`turso_url`、`turso_token`
+- 应用启动时 `main.rs` 读取上述配置：若 `enabled && url && token` 均满足则以 Embedded Replica 打开数据库，否则退回纯本地模式
+- **启动不做同步**（本地优先）：`Database::new_with_turso()` 只 open replica，不调用 `db.sync()`；主界面挂载后由前端延迟 3s 静默调用 `sync_turso`，同步完成 toast 提示并静默刷新首页数据。这样既避免了启动阻塞，也避免了 schema init + 后台 sync worker + 前端并发查询之间的 `database is locked`
+- **Turso 配置只在启动时生效**：修改 URL / Token / 开关后必须重启应用
+- 触发同步只走 `sync_turso` Tauri command（内部调用 `Database::sync()`）；**禁止**在业务 CRUD 命令内隐式触发同步
+- 连接测试走 `test_turso_connection`：把 `libsql://` 替换为 `https://` 后 GET `/health` 端点（带 Bearer Token）；不打开 replica、不改动本地数据库文件
+- **禁止**新增基于 HTTP 的手写同步逻辑；如有需求先在 [docs/03-活跃设计文档.md](docs/03-活跃设计文档.md) 提案
 
-### 4.3 同步重试与并发
+### 4.3 脚本与数据处理
 
-- 推送限制 3 次重试（`retry_count` 字段）；`retry_count >= 3` 跳过
-- 用户编辑记录时必须重置 `retry_count = 0` 并清空 `last_error`
-- 推送操作必须在 await 之前显式释放数据库锁
-- 查询未同步记录时初次查询必须包含 `nocobase_id`，避免 N+1
-
-### 4.4 时间字段比较
-
-- 本地与 NocoBase 比较前，必须先把 ISO UTC 转为本地时间
-- 增量同步过滤条件向 NocoBase 发送时，必须把本地时间转 ISO UTC
-
-### 4.5 脚本与数据处理
-
-- 数据库数据处理（含 NocoBase）**必须用独立脚本**，不要在应用代码中处理
+- 数据库数据处理（含 Turso 云端）**必须用独立脚本**，不要在应用代码中处理
+- 一次性数据搬运脚本存放于 [`scripts/migrate-to-turso/`](scripts/migrate-to-turso/README.md)
 - 脚本必须跨平台兼容（macOS / Linux / Windows）并配备标准化文档
 - SQL 脚本必须包含标准化头部（目的、用法、注意事项、校验步骤）
-- 数据归一化脚本应整合到单一文件中
 
-### 4.6 安全
+### 4.4 安全
 
-- API Key 等敏感信息存入 SQLite `app_config` 表，禁止硬编码
+- API Key / Turso Token 等敏感信息存入 SQLite `app_config` 表，禁止硬编码
 - Tauri capabilities 必须最小授权
 - 跨平台特定的本地配置不要提交到 git
+- 日志（Rust `app_log` / LLM 日志）严禁输出 API Key、Turso Token 等敏感字段
 
 ---
 
@@ -233,12 +233,13 @@ LLM 返回的每个字段必须附带 `_source`：
 
 ## 7. 经验教训（避坑清单）
 
-- 用 `now` 作为时间戳字段的回退值会导致 PostgreSQL 解析错误；应改用 NULL
 - 已取消的记录需同时更新 UI 状态并持久化到数据库，刷新后才能保持一致
-- NocoBase API 字段名（驼峰）与数据库列名（下划线）不同，同步逻辑必须兼容两种格式
-- `business_trip` 的 NocoBase collection 响应可能缺失 `created_at` / `updated_at`，需要回填脚本
-- 本地（空格分隔）与 NocoBase（ISO）时间戳格式不一致会导致同步比较错误
-- 未验证记录存在性就让 update 回退为 create，会产生重复条目
+- rusqlite → libsql 迁移期间：`Connection::execute` 从同步变为异步，忘记 `.await` 会得到 `Future` 而不是行数
+- libsql `Rows::next()` 返回 `Result<Option<Row>>`，双层错误处理必须完整
+- Turso Embedded Replica **启动不做同步**（避免锁竞争 + 秒开）；同步由前端 Home.vue 挂载 3s 后延迟触发 `sync_turso`，同步完成后静默刷新数据并 toast 提示
+- **平台相关配置必须用平台后缀 key**：`active_python_path_macos` / `active_python_path_windows` 分别存储，避免 Turso 同步时互相覆盖（macOS 上的 `/opt/homebrew/...` 会覆盖 Windows 上的 `C:\...\python.exe`）。旧的单 key `active_python_path` 由 `AppConfig::new()` 启动时自动迁移并删除。类似场景（本地文件路径、系统命令路径）都遵循此约定。
+- NocoBase 遗留列（synced / nocobase_* / retry_count / last_error / local_updated_at）与 `sync_log` 表已于 2026-07-09 通过 `scripts/cleanup-nocobase-legacy/` 彻底删除；如需从旧备份恢复，参见该脚本 README 的"回滚"章节
+- Rust 侧生成时间戳统一用 `chrono::Local`；`DEFAULT (datetime('now', 'localtime'))` 仅在跳过参数时才被 SQLite 引擎使用，混用容易得到 UTC 值
 
 ---
 
@@ -255,4 +256,4 @@ LLM 返回的每个字段必须附带 `_source`：
 
 ---
 
-**最后更新**：2026-06-24
+**最后更新**：2026-07-09

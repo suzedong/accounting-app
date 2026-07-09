@@ -248,10 +248,18 @@ async function main() {
 
   const schemaSql = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
   // libsql 客户端只支持单条 execute；这里手动按语句分割
-  const stmts = schemaSql
+  // 先剥掉行首/整行注释（-- ...），再按 ; 分割，避免"注释开头的 CREATE 语句"被整段过滤掉
+  const stripped = schemaSql
+    .split('\n')
+    .map((line) => {
+      const idx = line.indexOf('--');
+      return idx === -1 ? line : line.slice(0, idx);
+    })
+    .join('\n');
+  const stmts = stripped
     .split(/;\s*(?:\n|$)/)
     .map((s) => s.trim())
-    .filter((s) => s && !s.startsWith('--'));
+    .filter((s) => s.length > 0);
   for (const stmt of stmts) {
     await dst.execute(stmt);
   }

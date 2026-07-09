@@ -6,7 +6,7 @@ use crate::db::Database;
 pub async fn get_learning_corrections(
     state: State<'_, Database>,
 ) -> Result<serde_json::Value, String> {
-    let corrections = crate::db::learning::get_corrections(state.inner())?;
+    let corrections = crate::db::learning::get_corrections(state.inner()).await?;
     Ok(serde_json::json!({ "data": corrections }))
 }
 
@@ -17,12 +17,12 @@ pub async fn save_correction(
     field: String,
     value: String,
 ) -> Result<(), String> {
-    crate::db::learning::save_correction(state.inner(), &keyword, &field, &value)
+    crate::db::learning::save_correction(state.inner(), &keyword, &field, &value).await
 }
 
 #[tauri::command]
 pub async fn clear_corrections(state: State<'_, Database>) -> Result<(), String> {
-    crate::db::learning::clear_corrections(state.inner())
+    crate::db::learning::clear_corrections(state.inner()).await
 }
 
 #[tauri::command]
@@ -30,5 +30,5 @@ pub async fn delete_correction(
     state: State<'_, Database>,
     id: i64,
 ) -> Result<(), String> {
-    crate::db::learning::delete_correction(state.inner(), id)
+    crate::db::learning::delete_correction(state.inner(), id).await
 }

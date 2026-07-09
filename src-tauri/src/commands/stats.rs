@@ -1,4 +1,5 @@
 use chrono::Datelike;
+use libsql::params;
 use serde::Serialize;
 
 use crate::db::connection::Database;
@@ -18,25 +19,26 @@ pub async fn get_stats_summary(
     datetime_gte: String,
     datetime_lte: Option<String>,
 ) -> Result<StatsSummary, String> {
-    let conn = state.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let conn = state.get_conn().await?;
     let date_filter = build_date_filter(&datetime_gte, datetime_lte.as_deref());
 
-    let (expense_total, expense_count) = guard
-        .query_row(
-            &format!("SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '支出' {}", date_filter),
-            [],
-            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i64>(1)?)),
-        )
-        .map_err(|e| e.to_string())?;
+    let (expense_total, expense_count) = query_sum_count(
+        &conn,
+        &format!(
+            "SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '支出' {}",
+            date_filter
+        ),
+    )
+    .await?;
 
-    let (income_total, income_count) = guard
-        .query_row(
-            &format!("SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '收入' {}", date_filter),
-            [],
-            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i64>(1)?)),
-        )
-        .map_err(|e| e.to_string())?;
+    let (income_total, income_count) = query_sum_count(
+        &conn,
+        &format!(
+            "SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '收入' {}",
+            date_filter
+        ),
+    )
+    .await?;
 
     Ok(StatsSummary {
         expense_total,
@@ -61,29 +63,26 @@ pub async fn get_stats_by_category(
     r#type: String,
     datetime_lte: Option<String>,
 ) -> Result<Vec<CategoryStat>, String> {
-    let conn = state.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let conn = state.get_conn().await?;
     let date_filter = build_date_filter(&datetime_gte, datetime_lte.as_deref());
 
-    let mut stmt = guard
-        .prepare(&format!(
-            "SELECT category, COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM records WHERE type = ? {} GROUP BY category ORDER BY total DESC",
-            date_filter
-        ))
+    let sql = format!(
+        "SELECT category, COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM records WHERE type = ? {} GROUP BY category ORDER BY total DESC",
+        date_filter
+    );
+    let mut rows = conn
+        .query(&sql, params![r#type])
+        .await
         .map_err(|e| e.to_string())?;
 
-    let result: Vec<CategoryStat> = stmt
-        .query_map([&r#type], |row| {
-            Ok(CategoryStat {
-                category: row.get(0)?,
-                total: row.get(1)?,
-                count: row.get(2)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        result.push(CategoryStat {
+            category: row.get::<Option<String>>(0).map_err(|e| e.to_string())?.unwrap_or_else(|| "未分类".into()),
+            total: row_get_f64(&row, 1)?,
+            count: row_get_i64(&row, 2)?,
+        });
+    }
     Ok(result)
 }
 
@@ -100,29 +99,23 @@ pub async fn get_stats_by_account(
     datetime_gte: String,
     datetime_lte: Option<String>,
 ) -> Result<Vec<AccountStat>, String> {
-    let conn = state.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let conn = state.get_conn().await?;
     let date_filter = build_date_filter(&datetime_gte, datetime_lte.as_deref());
 
-    let mut stmt = guard
-        .prepare(&format!(
-            "SELECT account, COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM records WHERE type = '支出' {} GROUP BY account ORDER BY total DESC",
-            date_filter
-        ))
-        .map_err(|e| e.to_string())?;
+    let sql = format!(
+        "SELECT account, COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM records WHERE type = '支出' {} GROUP BY account ORDER BY total DESC",
+        date_filter
+    );
+    let mut rows = conn.query(&sql, ()).await.map_err(|e| e.to_string())?;
 
-    let result: Vec<AccountStat> = stmt
-        .query_map([], |row| {
-            Ok(AccountStat {
-                account: row.get(0)?,
-                total: row.get(1)?,
-                count: row.get(2)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        result.push(AccountStat {
+            account: row.get::<Option<String>>(0).map_err(|e| e.to_string())?.unwrap_or_else(|| "未分类".into()),
+            total: row_get_f64(&row, 1)?,
+            count: row_get_i64(&row, 2)?,
+        });
+    }
     Ok(result)
 }
 
@@ -138,12 +131,11 @@ pub async fn get_monthly_trend(
     state: tauri::State<'_, Database>,
     months: Option<u32>,
 ) -> Result<Vec<MonthTrend>, String> {
-    let conn = state.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
-    let n = months.unwrap_or(6);
+    let conn = state.get_conn().await?;
+    let n = months.unwrap_or(6) as i64;
 
-    let mut stmt = guard
-        .prepare(
+    let mut rows = conn
+        .query(
             "SELECT strftime('%Y-%m', datetime) as month,
                     COALESCE(SUM(CASE WHEN type = '收入' THEN amount ELSE 0 END), 0) as income,
                     COALESCE(SUM(CASE WHEN type = '支出' THEN amount ELSE 0 END), 0) as expense
@@ -151,20 +143,19 @@ pub async fn get_monthly_trend(
              GROUP BY month
              ORDER BY month DESC
              LIMIT ?",
+            params![n],
         )
+        .await
         .map_err(|e| e.to_string())?;
 
-    let mut results: Vec<MonthTrend> = stmt
-        .query_map([n], |row| {
-            Ok(MonthTrend {
-                month: row.get(0)?,
-                income: row.get(1)?,
-                expense: row.get(2)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+    let mut results = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        results.push(MonthTrend {
+            month: row.get::<Option<String>>(0).map_err(|e| e.to_string())?.unwrap_or_default(),
+            income: row_get_f64(&row, 1)?,
+            expense: row_get_f64(&row, 2)?,
+        });
+    }
 
     results.reverse();
     Ok(results)
@@ -186,15 +177,14 @@ pub struct ComparisonResult {
 
 #[tauri::command]
 pub async fn get_comparison(state: tauri::State<'_, Database>) -> Result<ComparisonResult, String> {
-    let conn = state.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let conn = state.get_conn().await?;
     let now = chrono::Local::now();
     let current_month = now.format("%Y-%m").to_string();
     let prev = now - chrono::Months::new(1);
     let prev_month = prev.format("%Y-%m").to_string();
 
-    let current = get_month_stats(&guard, &current_month)?;
-    let previous = get_month_stats(&guard, &prev_month)?;
+    let current = get_month_stats(&conn, &current_month).await?;
+    let previous = get_month_stats(&conn, &prev_month).await?;
 
     Ok(ComparisonResult { current, previous })
 }
@@ -218,12 +208,18 @@ pub async fn get_budget_analysis(
     _period: String,
     budget_monthly: f64,
 ) -> Result<BudgetAnalysis, String> {
-    let conn = state.get_conn();
-    let guard = conn.lock().map_err(|e| e.to_string())?;
+    let conn = state.get_conn().await?;
     let now = chrono::Local::now();
     let month = now.format("%Y-%m").to_string();
     let total_days = match now.date_naive().month() {
-        2 => { let y = now.year(); if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 29 } else { 28 } },
+        2 => {
+            let y = now.year();
+            if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                29
+            } else {
+                28
+            }
+        }
         4 | 6 | 9 | 11 => 30,
         _ => 31,
     } as i64;
@@ -232,13 +228,15 @@ pub async fn get_budget_analysis(
 
     let date_gte = format!("{}-01 00:00:00", month);
 
-    let actual_expense: f64 = guard
-        .query_row(
-            &format!("SELECT COALESCE(SUM(amount), 0) FROM records WHERE type = '支出' AND account = '个人' AND datetime >= '{}'", date_gte),
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
+    let sql = format!(
+        "SELECT COALESCE(SUM(amount), 0) FROM records WHERE type = '支出' AND account = '个人' AND datetime >= '{}'",
+        date_gte
+    );
+    let mut rows = conn.query(&sql, ()).await.map_err(|e| e.to_string())?;
+    let actual_expense: f64 = match rows.next().await.map_err(|e| e.to_string())? {
+        Some(row) => row_get_f64(&row, 0)?,
+        None => 0.0,
+    };
 
     let usage_rate = if budget_monthly > 0.0 {
         (actual_expense / budget_monthly) * 100.0
@@ -248,7 +246,11 @@ pub async fn get_budget_analysis(
 
     let remaining = budget_monthly - actual_expense;
     let daily_avg = if day > 0 { actual_expense / day as f64 } else { 0.0 };
-    let daily_remaining = if remaining_days > 0 { remaining / remaining_days as f64 } else { 0.0 };
+    let daily_remaining = if remaining_days > 0 {
+        remaining / remaining_days as f64
+    } else {
+        0.0
+    };
 
     let status = if usage_rate > 100.0 {
         "超支".to_string()
@@ -278,20 +280,52 @@ fn build_date_filter(gte: &str, lte: Option<&str>) -> String {
     }
 }
 
-fn get_month_stats(conn: &rusqlite::Connection, month: &str) -> Result<ComparisonPeriod, String> {
-    let (income, expense) = conn
-        .query_row(
-            &format!(
-                "SELECT
-                    COALESCE(SUM(CASE WHEN type = '收入' THEN amount ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN type = '支出' THEN amount ELSE 0 END), 0)
-                 FROM records WHERE datetime LIKE '{}%'",
-                month
-            ),
-            [],
-            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
-        )
-        .map_err(|e| e.to_string())?;
+async fn query_sum_count(conn: &libsql::Connection, sql: &str) -> Result<(f64, i64), String> {
+    let mut rows = conn.query(sql, ()).await.map_err(|e| e.to_string())?;
+    match rows.next().await.map_err(|e| e.to_string())? {
+        Some(row) => Ok((row_get_f64(&row, 0)?, row_get_i64(&row, 1)?)),
+        None => Ok((0.0, 0)),
+    }
+}
+
+/// 从 row 取 f64，兼容 Integer/Real/Null（libsql 0.9 严格 f64 遇到 Integer/Null 会 panic）
+fn row_get_f64(row: &libsql::Row, idx: i32) -> Result<f64, String> {
+    match row.get_value(idx).map_err(|e| e.to_string())? {
+        libsql::Value::Real(v) => Ok(v),
+        libsql::Value::Integer(v) => Ok(v as f64),
+        libsql::Value::Null => Ok(0.0),
+        libsql::Value::Text(s) => s.parse::<f64>().map_err(|e| e.to_string()),
+        libsql::Value::Blob(_) => Err("blob cannot convert to f64".into()),
+    }
+}
+
+/// 从 row 取 i64，兼容 Real/Integer/Null
+fn row_get_i64(row: &libsql::Row, idx: i32) -> Result<i64, String> {
+    match row.get_value(idx).map_err(|e| e.to_string())? {
+        libsql::Value::Integer(v) => Ok(v),
+        libsql::Value::Real(v) => Ok(v as i64),
+        libsql::Value::Null => Ok(0),
+        libsql::Value::Text(s) => s.parse::<i64>().map_err(|e| e.to_string()),
+        libsql::Value::Blob(_) => Err("blob cannot convert to i64".into()),
+    }
+}
+
+async fn get_month_stats(
+    conn: &libsql::Connection,
+    month: &str,
+) -> Result<ComparisonPeriod, String> {
+    let sql = format!(
+        "SELECT
+            COALESCE(SUM(CASE WHEN type = '收入' THEN amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN type = '支出' THEN amount ELSE 0 END), 0)
+         FROM records WHERE datetime LIKE '{}%'",
+        month
+    );
+    let mut rows = conn.query(&sql, ()).await.map_err(|e| e.to_string())?;
+    let (income, expense) = match rows.next().await.map_err(|e| e.to_string())? {
+        Some(row) => (row_get_f64(&row, 0)?, row_get_f64(&row, 1)?),
+        None => (0.0, 0.0),
+    };
 
     Ok(ComparisonPeriod {
         label: month.to_string(),

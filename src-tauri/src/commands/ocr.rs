@@ -354,25 +354,43 @@ fn discover_all_pythons(bundled_installed: bool) -> Vec<SystemPython> {
 
 // --- Config helpers ---
 
+/// 平台相关的 `active_python_path` key。macOS 与 Windows 上的 Python 路径完全不同，
+/// 但 Turso 双向同步会把 `app_config` 表整表复制到另一端；因此不能用同一个 key，否则
+/// macOS 上写的 `/opt/homebrew/...` 会同步覆盖 Windows 上的 `C:\...\python.exe`。
+///
+/// 解决办法：使用编译期常量 `PY_KEY`，macOS 用 `active_python_path_macos`，Windows 用
+/// `active_python_path_windows`。两台电脑通过 Turso 同步时互不干扰。
+///
+/// 旧数据（单一 key `active_python_path`）会在 `AppConfig::new()` 启动时自动迁移到
+/// 当前平台的新 key，然后删除旧 key（见 `commands/config.rs`）。
+#[cfg(target_os = "macos")]
+const PY_KEY: &str = "active_python_path_macos";
+#[cfg(target_os = "windows")]
+const PY_KEY: &str = "active_python_path_windows";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const PY_KEY: &str = "active_python_path_linux";
+
 fn get_active_python_path(app_config: &State<'_, AppConfig>) -> Option<String> {
     let config_guard = app_config.data.lock().ok()?;
-    config_guard.get("active_python_path").cloned()
+    config_guard.get(PY_KEY).cloned()
 }
 
 fn set_active_python_path(app_config: &State<'_, AppConfig>, db: &State<'_, Database>, path: &str) -> Result<(), String> {
-    {
-        let conn = db.get_conn();
-        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        conn_guard
-            .execute(
-                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
-                ("active_python_path", path),
-            )
-            .map_err(|e| e.to_string())?;
-    }
+    // 使用阻塞 runtime 桥接 libsql 的 async API（此函数目前从同步上下文调用）
+    let path_owned = path.to_string();
+    tauri::async_runtime::block_on(async {
+        let conn = db.get_conn().await?;
+        conn.execute(
+            "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+            libsql::params![PY_KEY, path_owned],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok::<(), String>(())
+    })?;
     {
         let mut config_guard = app_config.data.lock().map_err(|e| e.to_string())?;
-        config_guard.insert("active_python_path".to_string(), path.to_string());
+        config_guard.insert(PY_KEY.to_string(), path.to_string());
     }
     Ok(())
 }
@@ -1039,14 +1057,13 @@ pub async fn set_ocr_enabled(
 ) -> Result<(), String> {
     let val = if enabled { "true" } else { "false" };
     {
-        let conn = state.get_conn();
-        let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        conn_guard
-            .execute(
-                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
-                ("ocr_enabled", val),
-            )
-            .map_err(|e| e.to_string())?;
+        let conn = state.get_conn().await?;
+        conn.execute(
+            "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+            libsql::params!["ocr_enabled", val],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
     }
     {
         let mut config_guard = app_config.data.lock().map_err(|e| e.to_string())?;

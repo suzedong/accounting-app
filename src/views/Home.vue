@@ -136,8 +136,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { getStatsSummary, getStatsByCategory, getStatsByAccount, getBudgetAnalysis } from '@/api/tauri';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ElMessage } from 'element-plus';
+import { getStatsSummary, getStatsByCategory, getStatsByAccount, getBudgetAnalysis, getConfig, syncTurso } from '@/api/tauri';
 import { formatMoney } from '@/utils/formatters';
 import { getDateRange } from '@/utils/dateRange';
 
@@ -175,7 +176,7 @@ const budgetTip = computed(() => {
   return `预算执行正常！剩余 ${formatMoney(b.remaining)}，剩余 ${b.remaining_days} 天还可日均消费 ${formatMoney(b.daily_remaining)}。`;
 });
 
-onMounted(async () => {
+async function loadData() {
   const { dateFrom } = getDateRange('month');
   loading.value = true;
   try {
@@ -190,11 +191,55 @@ onMounted(async () => {
     } catch {
       // Budget analysis may fail if no data
     }
+    error.value = '';
   } catch (e) {
     error.value = String(e);
     console.error('[Home] Failed to load stats:', e);
   } finally {
     loading.value = false;
+  }
+}
+
+/**
+ * 延迟触发后台同步：
+ * - 启动阶段不再阻塞用户界面
+ * - 首页 mounted 后 3 秒静默调用 sync_turso（若已启用）
+ * - 同步成功后重新 loadData 拉取最新数据，并 toast 提示
+ * - 同步失败静默忽略（可能是未启用 Turso、网络问题；不影响用户使用本地数据）
+ */
+let syncTimer: number | undefined;
+async function scheduleBackgroundSync() {
+  try {
+    const enabled = await getConfig('turso_sync_enabled').catch(() => 'false');
+    if (enabled !== 'true') return;
+  } catch {
+    return;
+  }
+  syncTimer = window.setTimeout(async () => {
+    try {
+      await syncTurso();
+      // 记住同步前的关键指标，用于判断是否有新数据
+      const prevExpense = stats.value.expense_total || 0;
+      const prevCount = (stats.value.expense_count || 0) + (stats.value.income_count || 0);
+      await loadData();
+      const newCount = (stats.value.expense_count || 0) + (stats.value.income_count || 0);
+      const changed = newCount !== prevCount || (stats.value.expense_total || 0) !== prevExpense;
+      ElMessage.success(changed ? '云端已同步（数据已更新）' : '云端已同步');
+    } catch (e) {
+      // 静默：未启用 Turso 或网络问题都不打扰用户
+      console.warn('[Home] Background sync failed:', e);
+    }
+  }, 3000);
+}
+
+onMounted(async () => {
+  await loadData();
+  scheduleBackgroundSync();
+});
+
+onBeforeUnmount(() => {
+  if (syncTimer !== undefined) {
+    window.clearTimeout(syncTimer);
   }
 });
 </script>

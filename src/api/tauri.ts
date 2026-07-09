@@ -268,39 +268,13 @@ export async function setOcrEnabled(enabled: boolean): Promise<void> {
   return invoke('set_ocr_enabled', { enabled });
 }
 
-// 同步相关
-export async function syncFull(): Promise<{ 
-  records_pushed: number; records_pulled: number; records_deleted: number; records_conflicts: number;
-  trips_pushed: number; trips_pulled: number;
-  learning_pushed: number; learning_pulled: number;
-  total_pushed: number; total_pulled: number; total_deleted: number; total_conflicts: number;
-  errors: string[] 
-}> {
-  return invoke('sync_full');
+// Turso 同步
+export async function syncTurso(): Promise<string> {
+  return invoke('sync_turso');
 }
 
-export async function syncPush(): Promise<{ 
-  records_pushed: number; records_pulled: number; records_deleted: number; records_conflicts: number;
-  trips_pushed: number; trips_pulled: number;
-  learning_pushed: number; learning_pulled: number;
-  total_pushed: number; total_pulled: number; total_deleted: number; total_conflicts: number;
-  errors: string[] 
-}> {
-  return invoke('sync_push');
-}
-
-export async function syncPull(): Promise<{ 
-  records_pushed: number; records_pulled: number; records_deleted: number; records_conflicts: number;
-  trips_pushed: number; trips_pulled: number;
-  learning_pushed: number; learning_pulled: number;
-  total_pushed: number; total_pulled: number; total_deleted: number; total_conflicts: number;
-  errors: string[] 
-}> {
-  return invoke('sync_pull');
-}
-
-export async function getSyncLogs(limit?: number): Promise<{ data: any[] }> {
-  return invoke('get_sync_logs', { limit });
+export async function testTursoConnection(url: string, token: string): Promise<string> {
+  return invoke('test_turso_connection', { url, token });
 }
 
 export async function installBundledPython(sessionId: string): Promise<string> {

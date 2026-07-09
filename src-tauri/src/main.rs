@@ -8,11 +8,38 @@ mod models;
 mod logger;
 
 fn main() {
-    // Initialize database (opens connection in constructor)
-    let database = db::Database::new();
+    // Initialize database (async): first try to read Turso config, fall back to pure local.
+    let database = tauri::async_runtime::block_on(async {
+        // Step 1: 打开纯本地 DB，读取配置
+        let local = db::Database::new()
+            .await
+            .expect("Failed to open local database");
+
+        let (enabled, url, token) = read_turso_config(&local).await;
+        if enabled && !url.is_empty() && !token.is_empty() {
+            // Turso 已启用，使用 Embedded Replica 重新打开
+            match db::Database::new_with_turso(url.clone(), token.clone()).await {
+                Ok(db) => {
+                    eprintln!("[main] Turso Embedded Replica 已启用");
+                    db
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[main] Turso 启用失败，回退纯本地模式: {}",
+                        e
+                    );
+                    local
+                }
+            }
+        } else {
+            local
+        }
+    });
 
     // Initialize app config (loads from SQLite)
-    let app_config = commands::config::AppConfig::new(&database);
+    let app_config = tauri::async_runtime::block_on(async {
+        commands::config::AppConfig::new(&database).await
+    });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -87,12 +114,9 @@ fn main() {
             commands::config::save_ai_services,
             commands::config::activate_ai_service,
             commands::config::open_folder,
-            // Sync
-            commands::sync::nocobase_test_connection,
-            commands::sync::sync_push,
-            commands::sync::sync_pull,
-            commands::sync::sync_full,
-            commands::sync::get_sync_logs,
+            // Turso sync
+            commands::config::sync_turso,
+            commands::config::test_turso_connection,
             // OCR
             commands::ocr::check_ocr_status,
             commands::ocr::check_ocr_status_fast,
@@ -110,4 +134,45 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Read Turso sync config from app_config table (async, called during startup).
+async fn read_turso_config(db: &db::Database) -> (bool, String, String) {
+    let conn = match db.get_conn().await {
+        Ok(c) => c,
+        Err(_) => return (false, String::new(), String::new()),
+    };
+    let mut enabled = false;
+    let mut url = String::new();
+    let mut token = String::new();
+
+    if let Ok(mut rows) = conn
+        .query(
+            "SELECT key, value FROM app_config WHERE key IN ('turso_sync_enabled','turso_url','turso_token')",
+            (),
+        )
+        .await
+    {
+        while let Ok(Some(row)) = rows.next().await {
+            // 用 get_value 避免遇到 NULL 时 libsql panic
+            let k_val = match row.get_value(0) { Ok(v) => v, Err(_) => continue };
+            let v_val = match row.get_value(1) { Ok(v) => v, Err(_) => continue };
+            let k = match k_val {
+                libsql::Value::Text(s) => s,
+                _ => continue,
+            };
+            let v = match v_val {
+                libsql::Value::Text(s) => s,
+                libsql::Value::Null => String::new(),
+                _ => continue,
+            };
+            match k.as_str() {
+                "turso_sync_enabled" => enabled = v == "true" || v == "1",
+                "turso_url" => url = v,
+                "turso_token" => token = v,
+                _ => {}
+            }
+        }
+    }
+    (enabled, url, token)
 }

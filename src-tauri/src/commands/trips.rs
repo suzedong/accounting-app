@@ -8,7 +8,7 @@ pub async fn get_business_trips(
     state: State<'_, Database>,
     status: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let trips = crate::db::trips::get_trips(state.inner(), status.as_deref())?;
+    let trips = crate::db::trips::get_trips(state.inner(), status.as_deref()).await?;
     Ok(serde_json::json!({ "data": trips }))
 }
 
@@ -17,7 +17,7 @@ pub async fn create_business_trip(
     state: State<'_, Database>,
     fields: TripInput,
 ) -> Result<serde_json::Value, String> {
-    let trip = crate::db::trips::create_trip(state.inner(), fields)?;
+    let trip = crate::db::trips::create_trip(state.inner(), fields).await?;
     Ok(serde_json::json!({ "data": trip }))
 }
 
@@ -27,7 +27,7 @@ pub async fn update_business_trip(
     id: i64,
     fields: TripUpdateInput,
 ) -> Result<serde_json::Value, String> {
-    let trip = crate::db::trips::update_trip(state.inner(), id, fields)?;
+    let trip = crate::db::trips::update_trip(state.inner(), id, fields).await?;
     Ok(serde_json::json!({ "data": trip }))
 }
 
@@ -36,5 +36,5 @@ pub async fn delete_business_trip(
     state: State<'_, Database>,
     id: i64,
 ) -> Result<(), String> {
-    crate::db::trips::delete_trip(state.inner(), id)
+    crate::db::trips::delete_trip(state.inner(), id).await
 }

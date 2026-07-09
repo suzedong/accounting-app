@@ -114,89 +114,49 @@
       </el-tab-pane>
 
       <el-tab-pane label="数据同步" name="sync">
-    <!-- NocoBase 同步设置 -->
+    <!-- Turso 云同步设置 -->
     <el-card class="section">
-      <template #header>NocoBase 同步</template>
-      <el-form :model="syncForm" label-width="120px" style="max-width: 600px">
-        <el-form-item label="服务器地址">
-          <el-input v-model="syncForm.nocobase_url" placeholder="https://your-nocobase.example.com" />
+      <template #header>Turso 云同步（libSQL Embedded Replica）</template>
+      <p class="prompt-hint">
+        本地数据库保留完整副本，可离线使用；开启同步后，后台会在读写时向 Turso 云端做双向增量同步，另一台设备上打开应用会自动拉到最新数据。
+        未配置 URL / Token 或关闭开关时，应用运行在纯本地模式，与关闭同步前完全等价。
+      </p>
+      <el-form :model="syncForm" label-width="140px" style="max-width: 720px">
+        <el-form-item label="启用同步">
+          <el-switch v-model="syncForm.enabled" @change="saveTursoEnabled" :loading="savingTursoEnabled" />
+          <span class="hint" style="margin-left: 8px">
+            {{ syncForm.enabled ? '已启用（重启应用后生效）' : '已关闭：纯本地模式' }}
+          </span>
         </el-form-item>
-        <el-form-item label="JWT Token">
-          <el-input v-model="syncForm.nocobase_token" type="password" show-password />
+        <el-form-item label="Turso URL">
+          <el-input v-model="syncForm.url" placeholder="libsql://xxx-user.turso.io" />
+        </el-form-item>
+        <el-form-item label="Auth Token">
+          <el-input v-model="syncForm.token" type="password" show-password placeholder="eyJhbGciOi..." />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="saveSyncConfig" :loading="saving">保存配置</el-button>
-          <el-button @click="testNocobaseConnection" :loading="testingSync">测试连接</el-button>
-        </el-form-item>
-      </el-form>
-
-      <!-- 本地数据库信息 -->
-      <el-form label-width="120px" style="max-width: 600px; margin-top: 12px">
-        <el-form-item label="本地数据库">
-          <div style="display: flex; align-items: center; gap: 8px; width: 100%">
-            <el-input :value="localDbPath" readonly size="small" style="flex: 1" />
-            <el-button size="small" @click="openDbFolder">打开文件夹</el-button>
-          </div>
+          <el-button type="primary" @click="saveTursoConfig" :loading="saving">保存配置</el-button>
+          <el-button @click="handleTestTursoConnection" :loading="testingSync">测试连接</el-button>
         </el-form-item>
       </el-form>
 
       <el-divider />
 
-      <!-- 同步操作区 -->
-      <div style="max-width: 600px">
-        <div style="display: flex; gap: 8px; margin-bottom: 12px">
-          <el-button type="primary" @click="handleSyncFull" :loading="syncing" :disabled="!syncConfigured">
-            双向同步
+      <!-- 手动同步 -->
+      <div style="max-width: 720px">
+        <div style="display: flex; gap: 8px; margin-bottom: 12px; align-items: center">
+          <el-button type="primary" @click="handleSyncTurso" :loading="syncing" :disabled="!syncForm.enabled">
+            立即同步一次
           </el-button>
-          <el-button @click="handleSyncPush" :loading="syncing" :disabled="!syncConfigured">
-            推送本地
-          </el-button>
-          <el-button @click="handleSyncPull" :loading="syncing" :disabled="!syncConfigured">
-            拉取远程
-          </el-button>
+          <span v-if="lastSyncMessage" class="hint">{{ lastSyncMessage }}</span>
         </div>
         <el-alert
-          v-if="!syncConfigured"
-          title="请先保存 NocoBase 配置"
-          type="warning"
+          v-if="!syncForm.enabled"
+          title="启用同步开关后才可手动触发"
+          type="info"
           :closable="false"
           style="margin-bottom: 12px"
         />
-
-        <!-- 同步结果 -->
-        <div v-if="syncResult" class="sync-result">
-          <el-descriptions :column="2" border size="small">
-            <el-descriptions-item label="记账记录-推送">{{ syncResult.records_pushed }} 条</el-descriptions-item>
-            <el-descriptions-item label="记账记录-拉取">{{ syncResult.records_pulled }} 条</el-descriptions-item>
-            <el-descriptions-item label="差旅补助-推送">{{ syncResult.trips_pushed }} 条</el-descriptions-item>
-            <el-descriptions-item label="差旅补助-拉取">{{ syncResult.trips_pulled }} 条</el-descriptions-item>
-            <el-descriptions-item label="学习数据-推送">{{ syncResult.learning_pushed }} 条</el-descriptions-item>
-            <el-descriptions-item label="学习数据-拉取">{{ syncResult.learning_pulled }} 条</el-descriptions-item>
-            <el-descriptions-item label="合计-推送">{{ syncResult.total_pushed }} 条</el-descriptions-item>
-            <el-descriptions-item label="合计-拉取">{{ syncResult.total_pulled }} 条</el-descriptions-item>
-          </el-descriptions>
-          <div v-if="syncResult.errors.length > 0" class="sync-errors">
-            <el-alert
-              v-for="(err, idx) in syncResult.errors"
-              :key="idx"
-              :title="err"
-              type="error"
-              :closable="false"
-              style="margin-top: 8px"
-            />
-          </div>
-        </div>
-
-        <!-- 同步日志 -->
-        <div v-if="showSyncTerminal" class="sync-terminal">
-          <div class="sync-terminal-header">
-            <span>同步日志</span>
-            <el-button size="small" text @click="showSyncTerminal = false">关闭</el-button>
-          </div>
-          <div ref="syncTerminalBodyRef" class="sync-terminal-body">
-            <div v-for="(line, idx) in syncTerminalLines" :key="idx" class="sync-line">{{ line }}</div>
-          </div>
-        </div>
       </div>
     </el-card>
       </el-tab-pane>
@@ -431,8 +391,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Loading, Download, InfoFilled } from '@element-plus/icons-vue';
 import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
-import { getAllConfig, setConfig, getConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, syncFull, syncPush, syncPull } from '@/api/tauri';
+import { getAllConfig, setConfig, getConfig, testAiConnection as testAi, getAiServices, saveAiServices, activateAiService, checkOcrStatusFast, startOcrDiscover, selectPython, setOcrEnabled, uninstallPaddleocrForPython, installPaddleocrForPython, reinstallPaddleocrForPython, installBundledPython, uninstallBundledPython, reinstallBundledPython, refreshPromptFromFile, syncTurso, testTursoConnection } from '@/api/tauri';
 import { agentEngine } from '@/ai/agent-engine';
 import { useChatStore } from '@/stores/chat';
 import type { AiService } from '@/types';
@@ -475,33 +434,18 @@ const editForm = ref({
 
 const editingExisting = computed(() => services.value.some(s => s.id === editingId.value));
 
-// Sync config
+// Turso 同步配置
 const syncForm = ref({
-  nocobase_url: '',
-  nocobase_token: '',
+  enabled: false,
+  url: '',
+  token: '',
 });
-const syncConfigured = computed(() => syncForm.value.nocobase_url && syncForm.value.nocobase_token);
 
-// 本地数据库路径
-const localDbPath = 'D:\\Code\\accounting-app\\database\\app_data.db';
-
-// 打开数据库文件夹
-async function openDbFolder() {
-  try {
-    await invoke('open_folder', { path: 'D:\\Code\\accounting-app\\database' });
-  } catch (e) {
-    console.error('打开文件夹失败:', e);
-    ElMessage.error('无法打开文件夹');
-  }
-}
-
-// Sync state
+// 同步状态
 const syncing = ref(false);
 const testingSync = ref(false);
-const syncResult = ref<any>(null);
-const showSyncTerminal = ref(false);
-const syncTerminalLines = ref<string[]>([]);
-const syncTerminalBodyRef = ref<HTMLElement | null>(null);
+const savingTursoEnabled = ref(false);
+const lastSyncMessage = ref('');
 
 const budgetMonthly = ref(3500);
 const lastConfirmedTtlMinutes = ref(30);
@@ -638,10 +582,20 @@ onMounted(async () => {
 
   // Process config
   if (configResult.status === 'fulfilled') {
-    syncForm.value.nocobase_url = configResult.value.nocobase_url || '';
-    syncForm.value.nocobase_token = configResult.value.nocobase_token || '';
     budgetMonthly.value = configResult.value.budget_monthly;
   }
+
+  // Turso 同步配置（存在 app_config 单独 key 里）
+  try {
+    const [enabledStr, urlStr, tokenStr] = await Promise.all([
+      getConfig('turso_sync_enabled').catch(() => ''),
+      getConfig('turso_url').catch(() => ''),
+      getConfig('turso_token').catch(() => ''),
+    ]);
+    syncForm.value.enabled = enabledStr === '1' || enabledStr === 'true';
+    syncForm.value.url = urlStr || '';
+    syncForm.value.token = tokenStr || '';
+  } catch { /* 未设置则保持默认 */ }
 
   // "上一条"引用有效时长（app_config.last_confirmed_ttl_minutes，未设置时默认 30）
   try {
@@ -795,14 +749,28 @@ async function testAiConnection() {
   }
 }
 
-async function saveSyncConfig() {
+async function saveTursoConfig() {
   saving.value = true;
   try {
-    await setConfig('nocobase_url', syncForm.value.nocobase_url);
-    await setConfig('nocobase_token', syncForm.value.nocobase_token);
-    ElMessage.success('同步设置已保存');
+    await setConfig('turso_url', syncForm.value.url);
+    await setConfig('turso_token', syncForm.value.token);
+    ElMessage.success('Turso 配置已保存，启用同步后重启应用生效');
   } finally {
     saving.value = false;
+  }
+}
+
+async function saveTursoEnabled(v: boolean) {
+  savingTursoEnabled.value = true;
+  try {
+    await setConfig('turso_sync_enabled', v ? 'true' : 'false');
+    ElMessage.success(v ? '同步已启用（重启应用后生效）' : '同步已关闭（重启应用后生效）');
+  } catch (e) {
+    // 保存失败回滚 UI
+    syncForm.value.enabled = !v;
+    ElMessage.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    savingTursoEnabled.value = false;
   }
 }
 
@@ -844,76 +812,37 @@ async function saveForceConfirmCorrections(v: boolean) {
   }
 }
 
-async function testNocobaseConnection() {
-    if (!syncForm.value.nocobase_url) {
-      ElMessage.warning('请先填写服务器地址');
-      return;
-    }
-    testingSync.value = true;
-    try {
-      await invoke('nocobase_test_connection', {
-        params: {
-          url: syncForm.value.nocobase_url,
-          token: syncForm.value.nocobase_token,
-        },
-      });
-      ElMessage.success('NocoBase 连接成功');
-    } catch (e: unknown) {
-      ElMessage.error(`连接失败: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      testingSync.value = false;
-    }
+async function handleTestTursoConnection() {
+  if (!syncForm.value.url) {
+    ElMessage.warning('请先填写 Turso URL');
+    return;
   }
-
-async function handleSyncFull() {
-  syncResult.value = null;
-  syncing.value = true;
+  if (!syncForm.value.token) {
+    ElMessage.warning('请先填写 Auth Token');
+    return;
+  }
+  testingSync.value = true;
   try {
-    const result = await syncFull();
-    syncResult.value = result;
-    if (result.errors.length > 0) {
-      ElMessage.warning(`同步完成，但有 ${result.errors.length} 个错误`);
-    } else {
-      ElMessage.success(`同步完成：推送 ${result.total_pushed} 条，拉取 ${result.total_pulled} 条`);
-    }
+    const msg = await testTursoConnection(syncForm.value.url, syncForm.value.token);
+    ElMessage.success(msg || 'Turso 连接成功');
   } catch (e: unknown) {
-    ElMessage.error(`同步失败: ${e instanceof Error ? e.message : String(e)}`);
+    ElMessage.error(`连接失败: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
-    syncing.value = false;
+    testingSync.value = false;
   }
 }
 
-async function handleSyncPush() {
-  syncResult.value = null;
+async function handleSyncTurso() {
   syncing.value = true;
+  lastSyncMessage.value = '';
   try {
-    const result = await syncPush();
-    syncResult.value = result;
-    if (result.errors.length > 0) {
-      ElMessage.warning(`推送完成，但有 ${result.errors.length} 个错误`);
-    } else {
-      ElMessage.success(`推送完成：${result.total_pushed} 条`);
-    }
+    const msg = await syncTurso();
+    lastSyncMessage.value = `${new Date().toLocaleTimeString()} ${msg || '同步成功'}`;
+    ElMessage.success(msg || '同步成功');
   } catch (e: unknown) {
-    ElMessage.error(`推送失败: ${e instanceof Error ? e.message : String(e)}`);
-  } finally {
-    syncing.value = false;
-  }
-}
-
-async function handleSyncPull() {
-  syncResult.value = null;
-  syncing.value = true;
-  try {
-    const result = await syncPull();
-    syncResult.value = result;
-    if (result.errors.length > 0) {
-      ElMessage.warning(`拉取完成，但有 ${result.errors.length} 个错误`);
-    } else {
-      ElMessage.success(`拉取完成：${result.total_pulled} 条`);
-    }
-  } catch (e: unknown) {
-    ElMessage.error(`拉取失败: ${e instanceof Error ? e.message : String(e)}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    lastSyncMessage.value = `${new Date().toLocaleTimeString()} 同步失败：${msg}`;
+    ElMessage.error(`同步失败: ${msg}`);
   } finally {
     syncing.value = false;
   }
@@ -1172,46 +1101,6 @@ function openPythonDownload() {
   color: #666;
   font-size: 0.9em;
   margin-bottom: 8px;
-}
-
-.sync-result {
-  margin-top: 12px;
-}
-
-.sync-errors {
-  margin-top: 8px;
-}
-
-.sync-terminal {
-  margin-top: 12px;
-  border: 1px solid #eee;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.sync-terminal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  background: #f5f5f5;
-  font-weight: bold;
-  font-size: 0.9em;
-}
-
-.sync-terminal-body {
-  padding: 8px;
-  background: #1e1e1e;
-  color: #d4d4d4;
-  font-family: monospace;
-  font-size: 0.85em;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.sync-line {
-  white-space: pre-wrap;
-  line-height: 1.5;
 }
 
 .ocr-status {

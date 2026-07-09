@@ -5,5 +5,4 @@ pub mod prompts;
 pub mod learning;
 pub mod chat;
 pub mod config;
-pub mod sync;
 pub mod ocr;

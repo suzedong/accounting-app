@@ -7,7 +7,7 @@ pub async fn get_system_prompt(
     state: State<'_, Database>,
     name: String,
 ) -> Result<serde_json::Value, String> {
-    match crate::db::prompts::get_prompt(state.inner(), &name)? {
+    match crate::db::prompts::get_prompt(state.inner(), &name).await? {
         Some(p) => Ok(serde_json::json!({ "data": p })),
         None => Err(format!("Prompt '{}' not found", name)),
     }
@@ -19,7 +19,7 @@ pub async fn update_system_prompt(
     name: String,
     content: String,
 ) -> Result<(), String> {
-    crate::db::prompts::update_prompt(state.inner(), &name, &content)
+    crate::db::prompts::update_prompt(state.inner(), &name, &content).await
 }
 
 #[tauri::command]
@@ -39,7 +39,7 @@ pub async fn refresh_prompt_from_file(
         .find_map(|p| std::fs::read_to_string(p).ok())
         .ok_or_else(|| format!("找不到 prompts/{name}.md，请检查项目结构"))?;
 
-    crate::db::prompts::update_prompt(state.inner(), &name, &content)?;
+    crate::db::prompts::update_prompt(state.inner(), &name, &content).await?;
     Ok(format!("已刷新 {} ({})", name, content.len()))
 }
 
@@ -49,5 +49,5 @@ pub async fn update_preference(
     key: String,
     value: String,
 ) -> Result<(), String> {
-    crate::db::prompts::update_preference_in_doc(state.inner(), &key, &value)
+    crate::db::prompts::update_preference_in_doc(state.inner(), &key, &value).await
 }
