@@ -140,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Check, Edit, Close } from '@element-plus/icons-vue';
 import { formatDateTimeShort } from '@/utils/formatters';
 
@@ -174,6 +174,15 @@ function cancelEdit() {
   isEditing.value = false;
   editFields.value = {};
 }
+
+// 保存后父组件会将 msg.status 置为非 pending，readonly 变为 true；
+// 此时必须重置 isEditing，否则模板仍会渲染可编辑的输入控件
+watch(() => props.readonly, (v) => {
+  if (v) {
+    isEditing.value = false;
+    editFields.value = {};
+  }
+});
 
 // Show field if it has a value (handle both extracted and edited states)
 function showField(key: string): boolean {
