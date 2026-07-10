@@ -54,8 +54,8 @@ npm run tauri build   # 打包桌面安装包（macOS .dmg / Windows .exe）
 | [AGENTS.md](AGENTS.md) | 开发规则与规范（**开发前必读**） |
 | [CODE_WIKI.md](CODE_WIKI.md) | 代码实现现状（架构、模块、API、数据库、数据流） |
 | [docs/01-项目概览.md](docs/01-项目概览.md) | 业务需求 + 界面设计蓝图 |
-| [docs/02-开发路线图.md](docs/02-开发路线图.md) | 开发计划与里程碑 |
-| [docs/03-活跃设计文档.md](docs/03-活跃设计文档.md) | 进行中的设计与重构 |
+| [docs/02-开发路线图.md](docs/02-开发路线图.md) | 开发历史记录（Phase 1-4 已完成） |
+| [docs/03-活跃设计文档.md](docs/03-活跃设计文档.md) | 设计文档归档（已完成方案存档） |
 | [scripts/README.md](scripts/README.md) | 数据迁移/校验脚本说明 |
 
 ---

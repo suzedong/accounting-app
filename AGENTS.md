@@ -25,8 +25,8 @@
 | 🔴 P0 必读 | `AGENTS.md`（本文档） | 任何任务开始前 |
 | 🟠 P1 强烈推荐 | `CODE_WIKI.md` | 涉及代码改动、API 调用、数据库操作前 |
 | 🟡 P2 按需 | `docs/01-项目概览.md` | 实现新业务功能或修改 UI 前 |
-| 🟡 P2 按需 | `docs/02-开发路线图.md` | 调整开发计划前 |
-| 🟡 P2 按需 | `docs/03-活跃设计文档.md` | 参与进行中的设计/重构前 |
+| 🟡 P2 按需 | `docs/02-开发路线图.md` | 回溯开发历史 |
+| 🟡 P2 按需 | `docs/03-活跃设计文档.md` | 参考历史设计/重构方案 |
 
 ### Step 3 - 任务类型 → 文档映射
 
@@ -37,9 +37,9 @@
 | 🎨 修改 UI / 聊天交互 | `AGENTS.md` + `CODE_WIKI.md`（第 5 节 Chat 组件） | `docs/01-项目概览.md`（界面设计） |
 | 🗃️ 修改数据库 schema | `AGENTS.md`（硬性约束 - 数据库与迁移） + `CODE_WIKI.md`（第 7 节） | - |
 | 🔁 修改 Turso 同步 | `AGENTS.md`（硬性约束 - Turso） + `CODE_WIKI.md`（第 9 节） | - |
-| 🧠 修改 AI Agent 逻辑 | `AGENTS.md` + `CODE_WIKI.md`（第 5.2、8 节） | `docs/03-活跃设计文档.md` |
-| 🔧 重构 | `AGENTS.md` + `CODE_WIKI.md` | `docs/03-活跃设计文档.md` |
-| 📝 文档更新 | `AGENTS.md`（开发流程章节） | - |
+| 🧠 修改 AI Agent 逻辑 | `AGENTS.md` + `CODE_WIKI.md`（第 5.2、8 节） | `docs/03-设计文档归档.md` |
+| 🔧 重构 | `AGENTS.md` + `CODE_WIKI.md` | `docs/03-设计文档归档.md` |
+| 📝 文档更新 | `AGENTS.md`（变更流程章节） | - |
 
 ### Step 4 - 关键规则（最重要 ⚠️）
 
@@ -94,6 +94,7 @@ npm run tauri build # 打包生成桌面安装包（macOS .dmg / Windows .exe）
 ## 1. 项目基本信息
 
 - **项目名称**：Accounting-App（本地优先桌面记账应用）
+- **当前状态**：稳定维护期（Phase 1-4 全部完成）
 - **技术栈**：Vue 3 + TypeScript + Element Plus + Pinia | Rust + Tauri 2 + **libSQL 0.9** | 阿里云百炼 LLM | PaddleOCR
 - **同步方案**：Turso Embedded Replica（libSQL 内建双向同步，取代原 NocoBase REST 同步）
 - **平台**：macOS、Windows
@@ -180,7 +181,7 @@ LLM 返回的每个字段必须附带 `_source`：
 - **Turso 配置只在启动时生效**：修改 URL / Token / 开关后必须重启应用
 - 触发同步只走 `sync_turso` Tauri command（内部调用 `Database::sync()`）；**禁止**在业务 CRUD 命令内隐式触发同步
 - 连接测试走 `test_turso_connection`：把 `libsql://` 替换为 `https://` 后 GET `/health` 端点（带 Bearer Token）；不打开 replica、不改动本地数据库文件
-- **禁止**新增基于 HTTP 的手写同步逻辑；如有需求先在 [docs/03-活跃设计文档.md](docs/03-活跃设计文档.md) 提案
+- **禁止**新增基于 HTTP 的手写同步逻辑；如有需求先在 [docs/03-设计文档归档.md](docs/03-活跃设计文档.md) 提案
 
 ### 4.3 脚本与数据处理
 
@@ -198,14 +199,14 @@ LLM 返回的每个字段必须附带 `_source`：
 
 ---
 
-## 5. 开发流程
+## 5. 变更流程
 
-1. **需求/架构变更** → 先讨论 → 更新 [docs/01-项目概览.md](docs/01-项目概览.md)
-2. **开发计划调整** → 更新 [docs/02-开发路线图.md](docs/02-开发路线图.md)
-3. **重构方案** → 更新 [docs/03-活跃设计文档.md](docs/03-活跃设计文档.md)
-4. **代码实现** → 遵循本文档规范
-5. **代码现状变更**（表/API/组件）→ 同步更新 [CODE_WIKI.md](CODE_WIKI.md)
-6. **规范本身变更** → 仅修改本文档
+1. **需求/架构变更** -> 先讨论 -> 更新 [docs/01-项目概览.md](docs/01-项目概览.md)
+2. **开发历史记录** -> 追加到 [docs/02-开发历史记录.md](docs/02-开发路线图.md) 底部
+3. **重构方案** -> 记录到 [docs/03-设计文档归档.md](docs/03-活跃设计文档.md)
+4. **代码实现** -> 遵循本文档规范
+5. **代码现状变更**（表/API/组件）-> 同步更新 [CODE_WIKI.md](CODE_WIKI.md)
+6. **规范本身变更** -> 仅修改本文档
 
 ---
 
@@ -243,12 +244,12 @@ LLM 返回的每个字段必须附带 `_source`：
 | 文档 | 用途 |
 |---|---|
 | [README.md](README.md) | 项目入口，快速开始 |
-| [AGENTS.md](AGENTS.md)（本文档） | 开发规则与规范（开发前必读） |
+| [AGENTS.md](AGENTS.md)（本文档） | 开发规则与规范（变更前必读） |
 | [CODE_WIKI.md](CODE_WIKI.md) | 代码实现现状（架构、模块、API、数据库、数据流） |
 | [docs/01-项目概览.md](docs/01-项目概览.md) | 业务需求 + 界面设计蓝图 |
-| [docs/02-开发路线图.md](docs/02-开发路线图.md) | 开发计划与里程碑 |
-| [docs/03-活跃设计文档.md](docs/03-活跃设计文档.md) | 进行中的设计与重构 |
+| [docs/02-开发路线图.md](docs/02-开发路线图.md) | 开发历史记录（Phase 1-4 已完成） |
+| [docs/03-活跃设计文档.md](docs/03-活跃设计文档.md) | 设计文档归档（已完成方案存档） |
 
 ---
 
-**最后更新**：2026-07-09
+**最后更新**：2026-07-10
