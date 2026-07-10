@@ -7,7 +7,7 @@
 -- ============================================================================
 
 -- 记账记录
--- 剔除字段：synced / retry_count / last_error / nocobase_id / nocobase_updated_at
+-- 剔除字段：synced / retry_count / last_error / nocobase_id / nocobase_updated_at / local_updated_at
 CREATE TABLE IF NOT EXISTS records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid TEXT UNIQUE NOT NULL,
@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS records (
     account TEXT DEFAULT '个人',
     note TEXT,
     payment_method TEXT,
-    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_records_datetime ON records(datetime);
@@ -26,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_records_type ON records(type);
 CREATE INDEX IF NOT EXISTS idx_records_category ON records(category);
 
 -- 差旅补助
--- 剔除字段：synced / retry_count / last_error / nocobase_id / nocobase_updated_at
+-- 剔除字段：synced / retry_count / last_error / nocobase_id / nocobase_updated_at / local_updated_at
 CREATE TABLE IF NOT EXISTS business_trip (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid TEXT UNIQUE NOT NULL,
@@ -42,7 +41,6 @@ CREATE TABLE IF NOT EXISTS business_trip (
     paid_transport_allowance REAL DEFAULT 0,
     paid_date TEXT,
     notes TEXT,
-    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
@@ -54,7 +52,7 @@ CREATE TABLE IF NOT EXISTS system_prompts (
 );
 
 -- 学习数据
--- 剔除字段：synced / retry_count / last_error / nocobase_id / nocobase_updated_at
+-- 剔除字段：synced / retry_count / last_error / nocobase_id / nocobase_updated_at / local_updated_at
 CREATE TABLE IF NOT EXISTS learning_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uuid TEXT UNIQUE NOT NULL,
@@ -62,7 +60,6 @@ CREATE TABLE IF NOT EXISTS learning_data (
     key TEXT,
     value TEXT,
     count INTEGER DEFAULT 1,
-    local_updated_at TEXT DEFAULT (datetime('now', 'localtime')),
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
 

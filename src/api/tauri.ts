@@ -248,10 +248,6 @@ export async function selectPython(path: string): Promise<void> {
   return invoke('select_python', { path });
 }
 
-export async function installOcrDependencies(sessionId: string): Promise<string> {
-  return invoke('install_ocr_dependencies', { sessionId });
-}
-
 export async function installPaddleocrForPython(pythonPath: string, sessionId: string): Promise<string> {
   return invoke('install_paddleocr_for_python', { pythonPath, sessionId });
 }

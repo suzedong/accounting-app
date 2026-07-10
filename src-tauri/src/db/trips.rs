@@ -66,13 +66,6 @@ fn row_to_trip(row: &libsql::Row) -> Result<TripRow, libsql::Error> {
     })
 }
 
-fn now_local() -> String {
-    chrono::Local::now()
-        .naive_local()
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string()
-}
-
 pub async fn get_trips(state: &Database, status: Option<&str>) -> Result<Vec<TripRow>, String> {
     let conn = state.get_conn().await?;
 
@@ -190,11 +183,7 @@ pub async fn update_trip(
         params_vec.push(Value::from(total));
     }
 
-    // 更新 local_updated_at
-    sets.push("local_updated_at = ?".to_string());
-    params_vec.push(Value::from(now_local()));
-
-    if sets.len() == 1 {
+    if sets.is_empty() {
         return get_trip(state, id)
             .await?
             .ok_or_else(|| "Trip not found".to_string());

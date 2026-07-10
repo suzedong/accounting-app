@@ -22,7 +22,7 @@ npm run tauri build   # 打包桌面安装包（macOS .dmg / Windows .exe）
 
 - Node.js ≥ 18、Rust toolchain（稳定版）
 - macOS / Windows（两端均需可构建）
-- Python 3.x + PaddleOCR（首次运行可由 `src-tauri/scripts/python_manager.*` 自动管理）
+- Python 3.8–3.12 + PaddleOCR（首次运行可由 `src-tauri/scripts/python_manager.*` 自动管理）
 
 ### 首次运行
 

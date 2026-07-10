@@ -57,13 +57,6 @@ fn row_to_record(row: &libsql::Row) -> Result<RecordRow, libsql::Error> {
     })
 }
 
-fn now_local() -> String {
-    chrono::Local::now()
-        .naive_local()
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string()
-}
-
 pub async fn get_records(
     state: &Database,
     page: u32,
@@ -162,11 +155,10 @@ pub async fn get_record(state: &Database, id: i64) -> Result<Option<RecordRow>, 
 pub async fn create_record(state: &Database, input: RecordInput) -> Result<RecordRow, String> {
     let conn = state.get_conn().await?;
     let uuid = uuid::Uuid::new_v4().to_string();
-    let now = now_local();
     let account = input.account.unwrap_or_else(|| "个人".to_string());
 
     conn.execute(
-        "INSERT INTO records (uuid, datetime, type, category, amount, account, note, payment_method, local_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO records (uuid, datetime, type, category, amount, account, note, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             uuid.clone(),
             input.datetime,
@@ -176,7 +168,6 @@ pub async fn create_record(state: &Database, input: RecordInput) -> Result<Recor
             account,
             input.note,
             input.payment_method,
-            now,
         ],
     )
     .await
@@ -224,12 +215,8 @@ pub async fn update_record(
         params_vec.push(Value::from(v));
     }
 
-    // 更新 local_updated_at
-    sets.push("local_updated_at = ?".to_string());
-    params_vec.push(Value::from(now_local()));
-
-    if sets.len() == 1 {
-        // 除了 local_updated_at 外没有其它字段变化，直接返回
+    if sets.is_empty() {
+        // 没有字段变化，直接返回
         return get_record(state, id)
             .await?
             .ok_or_else(|| "Record not found".to_string());

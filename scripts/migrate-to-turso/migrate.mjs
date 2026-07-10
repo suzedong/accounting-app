@@ -115,7 +115,11 @@ Options:
 // 常量：要迁移的业务表 + app_config 中允许迁移的 key
 // ---------------------------------------------------------------------------
 
-/** app_config 中要迁到云端的业务 key；nocobase_* / turso_* / *_token 都不迁 */
+/** app_config 中要迁到云端的业务 key；
+ *  - turso_* / *_token 属于连接凭证，云端存无意义、且泄露风险高
+ *  - active_python_path_* 平台相关，两端各自维护
+ *  - 完整白名单说明见 README.md 的 "迁移策略 → app_config 迁移白名单"
+ */
 const BUSINESS_CONFIG_KEYS = new Set([
   'budget_monthly',
   'ai_services',
@@ -137,17 +141,17 @@ const BUSINESS_CONFIG_KEYS = new Set([
 const MIGRATION_PLAN = [
   {
     name: 'records',
-    sourceCols: ['id', 'uuid', 'datetime', 'type', 'category', 'amount', 'account', 'note', 'payment_method', 'local_updated_at', 'created_at'],
+    sourceCols: ['id', 'uuid', 'datetime', 'type', 'category', 'amount', 'account', 'note', 'payment_method', 'created_at'],
     uniqueBy: 'uuid',
   },
   {
     name: 'business_trip',
-    sourceCols: ['id', 'uuid', 'trip_id', 'start_date', 'end_date', 'days', 'trip_allowance', 'transport_allowance', 'total', 'status', 'paid_trip_allowance', 'paid_transport_allowance', 'paid_date', 'notes', 'local_updated_at', 'created_at'],
+    sourceCols: ['id', 'uuid', 'trip_id', 'start_date', 'end_date', 'days', 'trip_allowance', 'transport_allowance', 'total', 'status', 'paid_trip_allowance', 'paid_transport_allowance', 'paid_date', 'notes', 'created_at'],
     uniqueBy: 'uuid',
   },
   {
     name: 'learning_data',
-    sourceCols: ['id', 'uuid', 'type', 'key', 'value', 'count', 'local_updated_at', 'created_at'],
+    sourceCols: ['id', 'uuid', 'type', 'key', 'value', 'count', 'created_at'],
     uniqueBy: 'uuid',
   },
   {

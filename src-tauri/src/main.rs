@@ -122,7 +122,6 @@ fn main() {
             commands::ocr::check_ocr_status_fast,
             commands::ocr::start_ocr_discover,
             commands::ocr::select_python,
-            commands::ocr::install_ocr_dependencies,
             commands::ocr::install_paddleocr_for_python,
             commands::ocr::uninstall_paddleocr_for_python,
             commands::ocr::reinstall_paddleocr_for_python,

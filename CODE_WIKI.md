@@ -48,7 +48,7 @@
 │         │                                                               │
 │         ├─ AI 引擎层 (src/ai)                                            │
 │         │     • AgentEngine   ← LLM 调用 + Function Calling 解析         │
-│         │     • ToolRegistry  ← 20 个工具（Zod schema）                  │
+│         │     • ToolRegistry  ← 27 个工具（Zod schema）                  │
 │         │                                                               │
 │         ├─ Chat 组件 (ChatWidget / ConfirmCard / StepList / …)           │
 │         │                                                               │
@@ -279,7 +279,7 @@ Chat        getChatHistory / saveChatMessage / clearChatHistory / getChatSession
 LLM         callLLM / callLLMWithTools
 AI Service  getAiServices / saveAiServices / activateAiService / testAiConnection
 OCR         checkOcrStatusFast / startOcrDiscover / checkOcrStatus / selectPython
-            installOcrDependencies / install|uninstall|reinstallPaddleocrForPython
+            install|uninstall|reinstallPaddleocrForPython
             setOcrEnabled / install|uninstall|reinstallBundledPython / ocrRecognize
 Sync        syncTurso / testTursoConnection
 ```
@@ -304,6 +304,8 @@ Sync        syncTurso / testTursoConnection
 | `ChatWidget.vue` | 主容器：悬浮按钮 + 侧边面板 + 消息列表 + 设置入口；自动滚动 |
 | `ChatInput.vue` | 文本 + 图片上传/粘贴；发送时触发 OCR；`@send(text, imageBase64, imageFullSrc)` |
 | `ConfirmCard.vue` | 确认卡：识别普通记账 / 差旅创建 / 差旅发放三态；按 `_cancelled` 和 `data.result.success` 推导"待确认 / 已保存 / 已取消"标题；支持字段编辑 |
+| `CandidateSelectCard.vue` | 候选选择卡：多记录匹配时列出候选供用户选择 |
+| `DeleteConfirmCard.vue` | 删除确认卡：普通记账 / 差旅记录删除确认 |
 | `FollowUpCard.vue` | 追问卡：缺失字段时列出按钮供用户选择 |
 | `RecordCard.vue` | 已创建记录卡片：含修正/删除按钮 |
 | `CorrectionConfirmCard.vue` | 高风险修正确认卡：target + diff + 风险原因 |
@@ -340,7 +342,7 @@ Schema 初始化在 `Database::init_and_wrap` 内完成：`PRAGMA journal_mode=W
 | Chat | `get_chat_history` `save_chat_message` `clear_chat_history` `get_chat_sessions` |
 | Config / LLM | `get_config` `set_config` `get_all_config` `test_ai_connection` `call_llm` `call_llm_with_tools` `get_ai_services` `save_ai_services` `activate_ai_service` `open_folder` |
 | Turso Sync | `sync_turso` `test_turso_connection` |
-| OCR | `check_ocr_status` `check_ocr_status_fast` `start_ocr_discover` `select_python` `install_ocr_dependencies` `install_paddleocr_for_python` `uninstall_paddleocr_for_python` `reinstall_paddleocr_for_python` `set_ocr_enabled` `ocr_recognize` `install_bundled_python` `uninstall_bundled_python` `reinstall_bundled_python` |
+| OCR | `check_ocr_status` `check_ocr_status_fast` `start_ocr_discover` `select_python` `install_paddleocr_for_python` `uninstall_paddleocr_for_python` `reinstall_paddleocr_for_python` `set_ocr_enabled` `ocr_recognize` `install_bundled_python` `uninstall_bundled_python` `reinstall_bundled_python` |
 
 > 原 `nocobase_test_connection` / `sync_push` / `sync_pull` / `sync_full` / `get_sync_logs` 5 个命令已删除。
 
@@ -392,10 +394,6 @@ struct BudgetAnalysis    { budget_monthly, actual_expense, usage_rate, remaining
 - 内置 Python：`install/uninstall/reinstall_bundled_python` 调用 `scripts/python_manager.{sh,ps1}`。
 - 识别：`ocr_recognize(image_base64)` 写临时 base64 文件，调 `import ocr_service; recognize_image(b64)`，60s 超时。
 
-#### Turso 同步（config.rs）
-
-见上文 `config.rs` 段落对 `sync_turso` / `test_turso_connection` 的说明。**没有独立 `sync.rs`**：libSQL Embedded Replica 直接由 `Database::sync()` 完成双向同步，业务代码不再手写 push/pull/冲突判定。
-
 ### 6.4 db 模块要点
 
 | 文件 | 职责 |
@@ -436,7 +434,7 @@ pub struct AiService { id, name, api_url, api_key, model, active }
 
 ## 7. 数据模型与数据库
 
-### 7.1 7 张 SQLite 表
+### 7.1 6 张 SQLite 表
 
 | 表 | 说明 | 关键字段 |
 |---|---|---|
@@ -449,28 +447,15 @@ pub struct AiService { id, name, api_url, api_key, model, active }
 
 > **不存在**独立的 `accounts`、`budgets`、`categories`、`payment_methods` 表，均作为记录的自由文本字段使用。
 >
-> **NocoBase 遗留结构已清理**（2026-07-09）：三张业务表中的 `synced / nocobase_id / nocobase_updated_at / local_updated_at / retry_count / last_error` 六列以及 `sync_log` 表已从本地 SQLite 与 Turso 云端一并删除。清理脚本：[`scripts/cleanup-nocobase-legacy/`](../scripts/cleanup-nocobase-legacy/README.md)。
+> **NocoBase 遗留结构已清理**（2026-07-09）：三张业务表中的 `synced / nocobase_id / nocobase_updated_at / local_updated_at / retry_count / last_error` 六列以及 `sync_log` 表已从本地 SQLite 与 Turso 云端一并删除。清理由一次性脚本 `scripts/cleanup-nocobase-legacy/` 完成，任务收尾后目录已删除；如需回滚，可从 git 历史找回。
 
-### 7.2 时间字段格式约定
+### 7.2 时间字段格式
 
-| 字段 | 格式 | 说明 |
-|---|---|---|
-| `datetime`、`created_at`、`updated_at` | `YYYY-MM-DD HH:MM:SS`（**本地时区**，空格分隔） | SQLite TEXT 存储；字符串字典序 = 时间顺序，可直接 `>=` 比较；Rust 侧统一用 `chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S")` 生成 |
-| `paid_date`、`start_date`、`end_date` | `YYYY-MM-DD` | 纯日期 |
-
-> `CREATE TABLE` 保留 `DEFAULT (datetime('now', 'localtime'))` 作为兜底；**业务写入不依赖它**，一律显式 bind 参数以规避 libsql 与 SQLite 引擎不同版本对默认值执行时机的差异。
+见 [AGENTS.md §3.2](AGENTS.md#32-sqlite-时间格式统一约定)。
 
 ### 7.3 LLM 字段来源标注 `_source`
 
-LLM 返回的每个字段必须附带 `_source`：
-
-| 值 | 含义 | 示例 |
-|---|---|---|
-| `extracted` | 用户输入中明确提到 | "花了 35 元" → `amount_source: extracted` |
-| `inferred` | 根据上下文推断 | "吃饭" → `category_source: inferred` |
-| `default` | 系统默认填充 | 未提账户 → `account_source: default` |
-
-前端 `StepList` 据此用绿/蓝/灰三色标注。
+见 [AGENTS.md §3.4](AGENTS.md#34-llm-字段来源标注-_source)。
 
 ---
 
@@ -535,7 +520,7 @@ LLM 返回的每个字段必须附带 `_source`：
 
 ## 9. Turso 同步机制
 
-**设计决策与阶段迁移记录**请见 [docs/02-开发路线图.md §Phase 4.6 同步后端迁移](docs/02-开发路线图.md#46-同步后端迁移nocobase--tursolibsql)。
+**设计决策与阶段迁移记录**请见 [docs/02-开发路线图.md §4.6 同步后端迁移](docs/02-开发路线图.md)。
 
 ### 9.1 架构总览
 
@@ -574,7 +559,7 @@ LLM 返回的每个字段必须附带 `_source`：
 
 ### 9.4 一次性数据迁移
 
-从 NocoBase / 旧本地库迁移到 Turso 云端使用独立 Node 脚本 [`scripts/migrate-to-turso/`](scripts/migrate-to-turso/README.md)：
+从旧本地 SQLite 库迁移到 Turso 云端使用独立 Node 脚本 [`scripts/migrate-to-turso/`](scripts/migrate-to-turso/README.md)：
 - `better-sqlite3` 只读打开本地库，`@libsql/client` 写入 Turso
 - 自动剔除 NocoBase 遗留列
 - `--dry-run` 预演、`--drop` 推倒重建、`--verify` 抽样校验
@@ -642,8 +627,10 @@ npm run tauri build  # 完整桌面应用打包
    - **OCR**（可选）：选择系统 Python 或安装内置 Python，安装 PaddleOCR，然后开启 `ocr_enabled`。
    - **预算**：设置 `budget_monthly`（默认 3500）。
 2. 数据库位置：
-   - **debug**：`<project>/database/app_data.db`
-   - **release**：`~/Library/Application Support/accounting-app/app_data.db`（macOS） / 对应平台用户数据目录
+   - **纯本地模式**（`turso_sync_enabled=false`）：
+     - debug：`<project>/database/app_data.db`
+     - release：`~/Library/Application Support/accounting-app/app_data.db`（macOS） / 对应平台用户数据目录
+   - **Turso 启用模式**：应用改用独立文件 `app_data_sync.db`（Embedded Replica，libsql 内部管理，含 `.info` / `-wal` / `-shm` 等 sidecar），路径规则同上。之所以要独立文件，是因为 libsql 拒绝在已被 File mode 打开过的 SQLite 文件上启用 Embedded Replica（缺 metadata sidecar）。两者互不干扰。
 
 ### 11.4 测试与质量
 
@@ -655,48 +642,7 @@ npm run tauri build  # 完整桌面应用打包
 
 ## 12. 关键工程约定
 
-> 以下为 [AGENTS.md](file:///Users/szd/Documents/Code/accounting-app/AGENTS.md) 中的硬性约束摘要，开发与重构均需遵守。
-
-### 12.1 Tauri 2 camelCase 序列化
-
-Rust 函数 `datetime_gte: String` ↔ 前端 invoke 传 `{ datetimeGte: value }`。**绝不**使用 `snake_case` 键。`Option<T>` 参数用条件展开 `...(value ? { key: value } : {})`，不要传 `null`。
-
-### 12.2 SQLite 时间格式
-
-所有 TEXT 时间字段使用 `YYYY-MM-DD HH:MM:SS`（空格分隔、本地时区）；Rust 用 `chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S")` 生成并显式 bind 参数；前端 `utils/dateRange.ts` 输出同格式。字符串字典序 = 时间顺序，可直接 `>=` 比较。`CREATE TABLE` 中的 `DEFAULT (datetime('now', 'localtime'))` 仅作兜底，业务写入不依赖。
-
-### 12.3 数据库与迁移
-
-- 结构变更必须使用增量迁移（ALTER TABLE），**禁止** DROP TABLE 保留数据。
-- SQLite ADD COLUMN 不支持非常量默认值，需两步迁移（先加列再 UPDATE）。
-- 记录删除采用硬删除（无软删除标记）。
-- 重复判定：`amount + type + datetime(精确到秒)` 完全一致。
-- NocoBase 遗留结构（6 列 + `sync_log` 表）已于 2026-07-09 通过 `scripts/cleanup-nocobase-legacy/` 从本地与 Turso 云端一并清理，schema 与业务代码均不再包含。
-
-### 12.4 Turso 同步
-
-- 同步仅通过 libSQL Embedded Replica 提供；触发只走 `sync_turso` command（`Database::sync()`）
-- 配置存 `app_config`：`turso_sync_enabled` / `turso_url` / `turso_token`
-- 修改配置后**必须重启**才能生效（`main.rs` 只在启动阶段读取）
-- 禁止在业务 CRUD 命令内隐式触发同步；禁止新增手写 HTTP 同步逻辑
-- 连接测试用 `test_turso_connection`：`libsql://` → `https://`，GET `/health`
-
-### 12.5 LLM 字段来源 `_source`
-
-每个字段必须附 `_source: extracted | inferred | default`，由 `AgentEngine.getFieldSource` 判定，`StepList` 据此显示。
-
-### 12.6 UI 状态推导
-
-- 已确认/已取消的记录消息均持久化到 `chat_history.data`，刷新后由 `data.result.success` 与 `data._cancelled` 推导显示状态。
-- `ConfirmCard` 必须根据状态显示「已保存 / 已取消 / 请确认」标签。
-
-### 12.7 文档先行
-
-任何需求变更、架构调整、界面改动或代码修改，需先讨论确认并同步更新文档：
-- 需求/架构 → `docs/01-项目概览.md`
-- 开发计划 → `docs/02-开发路线图.md`
-- 重构方案 → `docs/03-活跃设计文档.md`
-- Agent 协作规范 → `AGENTS.md`
+开发与重构的硬性约束（Tauri 2 序列化、SQLite 时间格式、数据库迁移、Turso 同步、LLM 字段来源、UI 状态推导、文档先行）均定义在 [AGENTS.md](AGENTS.md) §3-§5，此处不再重复。
 
 ---
 

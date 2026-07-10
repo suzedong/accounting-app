@@ -169,7 +169,7 @@ LLM 返回的每个字段必须附带 `_source`：
 - SQLite `ALTER TABLE ADD COLUMN` 不支持非常量默认值（如 `datetime('now')`），需两步迁移（先加列再更新）
 - 本地记录采用**硬删除**（直接从数据库移除，不使用软删除标记）
 - 重复记录判定：amount、type、datetime 完全一致
-- **NocoBase 遗留结构已清理**（2026-07-09）：`records / business_trip / learning_data` 三张表中的 `synced / nocobase_id / nocobase_updated_at / retry_count / last_error / local_updated_at`（共 6 列）以及 `sync_log` 表已通过 [`scripts/cleanup-nocobase-legacy/`](scripts/cleanup-nocobase-legacy/README.md) 从本地 SQLite 和 Turso 云端彻底移除；业务代码与 schema 均不再引用。
+- **NocoBase 遗留结构已清理**（2026-07-09）：`records / business_trip / learning_data` 三张表中的 `synced / nocobase_id / nocobase_updated_at / retry_count / last_error / local_updated_at`（共 6 列）以及 `sync_log` 表已通过一次性清理脚本（`scripts/cleanup-nocobase-legacy/`，任务完成后目录已删除，可从 git 历史找回）从本地 SQLite 和 Turso 云端彻底移除；业务代码与 schema 均不再引用。
 
 ### 4.2 Turso 同步
 
@@ -233,13 +233,8 @@ LLM 返回的每个字段必须附带 `_source`：
 
 ## 7. 经验教训（避坑清单）
 
-- 已取消的记录需同时更新 UI 状态并持久化到数据库，刷新后才能保持一致
-- rusqlite → libsql 迁移期间：`Connection::execute` 从同步变为异步，忘记 `.await` 会得到 `Future` 而不是行数
-- libsql `Rows::next()` 返回 `Result<Option<Row>>`，双层错误处理必须完整
-- Turso Embedded Replica **启动不做同步**（避免锁竞争 + 秒开）；同步由前端 Home.vue 挂载 3s 后延迟触发 `sync_turso`，同步完成后静默刷新数据并 toast 提示
 - **平台相关配置必须用平台后缀 key**：`active_python_path_macos` / `active_python_path_windows` 分别存储，避免 Turso 同步时互相覆盖（macOS 上的 `/opt/homebrew/...` 会覆盖 Windows 上的 `C:\...\python.exe`）。旧的单 key `active_python_path` 由 `AppConfig::new()` 启动时自动迁移并删除。类似场景（本地文件路径、系统命令路径）都遵循此约定。
-- NocoBase 遗留列（synced / nocobase_* / retry_count / last_error / local_updated_at）与 `sync_log` 表已于 2026-07-09 通过 `scripts/cleanup-nocobase-legacy/` 彻底删除；如需从旧备份恢复，参见该脚本 README 的"回滚"章节
-- Rust 侧生成时间戳统一用 `chrono::Local`；`DEFAULT (datetime('now', 'localtime'))` 仅在跳过参数时才被 SQLite 引擎使用，混用容易得到 UTC 值
+- 其他经验（已取消记录持久化、libsql 异步 API 要点、Turso 启动不做同步、时间戳用 chrono::Local）已在 §3 / §4 中定义，不再重复。
 
 ---
 
