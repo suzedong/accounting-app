@@ -157,7 +157,7 @@ accounting-app/
 │   │   └── learning.ts      # 纠错学习数据
 │   ├── components/
 │   │   ├── chat/            # ChatWidget/ConfirmCard/StepList/...
-│   │   ├── stats/           # 4 个 ECharts 图表组件
+│   │   ├── stats/           # AccountAnalysisCard（个人/家庭消费分析卡片）
 │   │   ├── layout/AppNavbar.vue
 │   │   └── ErrorBoundary.vue
 │   ├── composables/         # useOCR、useParse
@@ -293,7 +293,7 @@ Sync        syncTurso / testTursoConnection
 | [Home.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Home.vue) | 首页仪表盘：本月支出/收入/结余三卡 + 类别 / 账户分析格栅 |
 | [Records.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Records.vue) | 记录列表：筛选（类型/账户/日期） + 新增/编辑对话框；监听 `records:highlight-duplicate` 高亮闪烁重复记录 |
 | [Budget.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Budget.vue) | 预算管理：月度预算进度条（超支/紧张/正常），可修改月度预算（`account='个人'` 口径） |
-| [Stats.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Stats.vue) | 统计：周期切换 + 4 个图表（分类排行 / 账户 / 趋势 / 对比） |
+| [Stats.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Stats.vue) | 统计：月份选择器（`el-date-picker type=month` + 左右切换 + 回到本月）+ 支出/收入/结余总览（含环比）+ 个人 vs 家庭 双栏消费分析（`AccountAnalysisCard`：金额/占比/环比 + Top 5 分类横向条形）+ 最近 6 个月 个人/家庭 支出双线趋势 |
 | [TripAllowance.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/TripAllowance.vue) | 差旅补助：状态筛选、补助总额/已发/待发/记录数 + CRUD + 发放 |
 | [Settings.vue](file:///Users/szd/Documents/Code/accounting-app/src/views/Settings.vue) | 设置：AI 服务多实例（激活、连接测试） + Prompt 编辑 + Turso 云同步（URL/Token/启用开关/测试连接/立即同步） + OCR/Python 管理 + 数据库路径 |
 
@@ -336,7 +336,7 @@ Schema 初始化在 `Database::init_and_wrap` 内完成：`PRAGMA journal_mode=W
 |---|---|
 | Records | `get_records` `get_record` `create_record` `update_record` `delete_record` `get_categories` `get_payment_methods` |
 | Trips | `get_business_trips` `create_business_trip` `update_business_trip` `delete_business_trip` |
-| Stats | `get_stats_summary` `get_stats_by_category` `get_stats_by_account` `get_monthly_trend` `get_comparison` `get_budget_analysis` |
+| Stats | `get_stats_summary` `get_stats_by_category` `get_stats_by_account` `get_monthly_trend` `get_comparison` `get_budget_analysis`（`get_stats_summary` / `get_stats_by_category` / `get_monthly_trend` 支持可选 `account` 参数，按「个人 / 家庭 / 公司」过滤） |
 | Prompts | `get_system_prompt` `update_system_prompt` `update_preference` `refresh_prompt_from_file` |
 | Learning | `get_learning_corrections` `save_correction` `delete_correction` `clear_corrections` |
 | Chat | `get_chat_history` `save_chat_message` `clear_chat_history` `get_chat_sessions` |

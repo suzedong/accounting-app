@@ -63,18 +63,20 @@ export async function deleteTrip(id: number): Promise<void> {
 }
 
 // Stats
-export async function getStatsSummary(datetimeGte: string, datetimeLte?: string): Promise<StatsSummary> {
+export async function getStatsSummary(datetimeGte: string, datetimeLte?: string, account?: string): Promise<StatsSummary> {
   return invoke('get_stats_summary', {
     datetimeGte,
     ...(datetimeLte ? { datetimeLte } : {}),
+    ...(account ? { account } : {}),
   });
 }
 
-export async function getStatsByCategory(datetimeGte: string, type: string, datetimeLte?: string): Promise<CategoryStat[]> {
+export async function getStatsByCategory(datetimeGte: string, type: string, datetimeLte?: string, account?: string): Promise<CategoryStat[]> {
   return invoke('get_stats_by_category', {
     datetimeGte,
     type,
     ...(datetimeLte ? { datetimeLte } : {}),
+    ...(account ? { account } : {}),
   });
 }
 
@@ -85,8 +87,11 @@ export async function getStatsByAccount(datetimeGte: string, datetimeLte?: strin
   });
 }
 
-export async function getMonthlyTrend(months?: number): Promise<MonthTrend[]> {
-  return invoke('get_monthly_trend', { months: months || undefined });
+export async function getMonthlyTrend(months?: number, account?: string): Promise<MonthTrend[]> {
+  return invoke('get_monthly_trend', {
+    months: months || undefined,
+    ...(account ? { account } : {}),
+  });
 }
 
 export async function getComparison(): Promise<ComparisonResult> {

@@ -18,15 +18,17 @@ pub async fn get_stats_summary(
     state: tauri::State<'_, Database>,
     datetime_gte: String,
     datetime_lte: Option<String>,
+    account: Option<String>,
 ) -> Result<StatsSummary, String> {
     let conn = state.get_conn().await?;
     let date_filter = build_date_filter(&datetime_gte, datetime_lte.as_deref());
+    let account_filter = build_account_filter(account.as_deref());
 
     let (expense_total, expense_count) = query_sum_count(
         &conn,
         &format!(
-            "SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '支出' {}",
-            date_filter
+            "SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '支出' {} {}",
+            date_filter, account_filter
         ),
     )
     .await?;
@@ -34,8 +36,8 @@ pub async fn get_stats_summary(
     let (income_total, income_count) = query_sum_count(
         &conn,
         &format!(
-            "SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '收入' {}",
-            date_filter
+            "SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM records WHERE type = '收入' {} {}",
+            date_filter, account_filter
         ),
     )
     .await?;
@@ -62,13 +64,15 @@ pub async fn get_stats_by_category(
     datetime_gte: String,
     r#type: String,
     datetime_lte: Option<String>,
+    account: Option<String>,
 ) -> Result<Vec<CategoryStat>, String> {
     let conn = state.get_conn().await?;
     let date_filter = build_date_filter(&datetime_gte, datetime_lte.as_deref());
+    let account_filter = build_account_filter(account.as_deref());
 
     let sql = format!(
-        "SELECT category, COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM records WHERE type = ? {} GROUP BY category ORDER BY total DESC",
-        date_filter
+        "SELECT category, COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM records WHERE type = ? {} {} GROUP BY category ORDER BY total DESC",
+        date_filter, account_filter
     );
     let mut rows = conn
         .query(&sql, params![r#type])
@@ -130,21 +134,25 @@ pub struct MonthTrend {
 pub async fn get_monthly_trend(
     state: tauri::State<'_, Database>,
     months: Option<u32>,
+    account: Option<String>,
 ) -> Result<Vec<MonthTrend>, String> {
     let conn = state.get_conn().await?;
     let n = months.unwrap_or(6) as i64;
+    let account_filter = build_account_filter(account.as_deref());
 
+    let sql = format!(
+        "SELECT strftime('%Y-%m', datetime) as month,
+                COALESCE(SUM(CASE WHEN type = '收入' THEN amount ELSE 0 END), 0) as income,
+                COALESCE(SUM(CASE WHEN type = '支出' THEN amount ELSE 0 END), 0) as expense
+         FROM records
+         WHERE 1=1 {}
+         GROUP BY month
+         ORDER BY month DESC
+         LIMIT ?",
+        account_filter
+    );
     let mut rows = conn
-        .query(
-            "SELECT strftime('%Y-%m', datetime) as month,
-                    COALESCE(SUM(CASE WHEN type = '收入' THEN amount ELSE 0 END), 0) as income,
-                    COALESCE(SUM(CASE WHEN type = '支出' THEN amount ELSE 0 END), 0) as expense
-             FROM records
-             GROUP BY month
-             ORDER BY month DESC
-             LIMIT ?",
-            params![n],
-        )
+        .query(&sql, params![n])
         .await
         .map_err(|e| e.to_string())?;
 
@@ -277,6 +285,15 @@ fn build_date_filter(gte: &str, lte: Option<&str>) -> String {
     match lte {
         Some(l) => format!("AND datetime >= '{}' AND datetime <= '{}'", gte, l),
         None => format!("AND datetime >= '{}'", gte),
+    }
+}
+
+/// 构造 account 过滤子句（用于按账户维度筛选：个人 / 家庭 / 公司）
+/// 由于 account 值来自枚举白名单（非用户自由输入），此处直接内联字符串即可
+fn build_account_filter(account: Option<&str>) -> String {
+    match account {
+        Some(a) if !a.is_empty() => format!("AND account = '{}'", a.replace('\'', "''")),
+        _ => String::new(),
     }
 }
 
